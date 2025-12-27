@@ -1,0 +1,32 @@
+mutation CreateUser @auth(level: USER) {
+  user_insert(data: {
+    displayName: "Demo User",
+    email: "demo@example.com",
+    createdAt_expr: "request.time",
+    id_expr: "uuidV4()"
+  })
+}
+
+query ListProjects @auth(level: USER) {
+  projects {
+    id
+    name
+    description
+  }
+}
+
+mutation UpdateTaskStatus($id: UUID!, $status: String!) @auth(level: USER) {
+  task_update(
+    id: $id,
+    data: {
+      status: $status
+    }
+  )
+}
+
+query ListPublicProjects @auth(level: PUBLIC, insecureReason: "This operation is safe to expose to the public") {
+  projects {
+    id
+    name
+  }
+}

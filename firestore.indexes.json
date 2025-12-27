@@ -1,0 +1,18 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "controleprojetos",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "clients",
+          "order": "ASCENDING"
+        }
+      ],
+      "apiScope": "MONGODB_COMPATIBLE_API",
+      "density": "DENSE",
+      "multikey": true
+    }
+  ],
+  "fieldOverrides": []
+}

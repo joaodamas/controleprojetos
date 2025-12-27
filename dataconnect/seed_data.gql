@@ -1,0 +1,70 @@
+mutation SeedData @transaction @auth(level: PUBLIC, insecureReason: "This mutation is intended for initial data seeding and does not require authentication.") {
+  user_insertMany(data: [
+    {
+      id: "67792d99-79d9-4276-b6f1-325ca44c56f4",
+      displayName: "Demo User 1",
+      email: "demouser1@example.com",
+      createdAt: "2024-01-01T00:00:00Z"
+    },
+    {
+      id: "90f8a16a-8a2a-4d9b-9b7c-7f5a6d3c2e1b",
+      displayName: "Demo User 2",
+      email: "demouser2@example.com",
+      createdAt: "2024-01-02T00:00:00Z"
+    }
+  ])
+  project_insertMany(data: [
+    {
+      id: "2e6e255c-9b8f-4f4a-9b4a-7f5b6d3c2e1a",
+      ownerId: "67792d99-79d9-4276-b6f1-325ca44c56f4",
+      name: "Demo Project 1",
+      createdAt: "2024-01-03T00:00:00Z",
+      startDate: "2024-01-10",
+      endDate: "204-03-10"
+    },
+    {
+      id: "a1b2c3d4-e5f6-4789-9012-3a4b5c6d7e8f",
+      ownerId: "90f8a16a-8a2a-4d9b-9b7c-7f5a6d3c2e1b",
+      name: "Demo Project 2",
+      createdAt: "2024-01-04T00:00:00Z",
+      startDate: "2024-01-15",
+      endDate: "2024-04-15"
+    }
+  ])
+  task_insertMany(data: [
+    {
+      id: "b3c4d5e6-f7a8-49bc-a234-4b5c6d7e8f9g",
+      projectId: "2e6e255c-9b8f-4f4a-9b4a-7f5b6d3c2e1a",
+      assigneeId: "90f8a16a-8a2a-4d9b-9b7c-7f5a6d3c2e1b",
+      title: "Demo Task 1",
+      status: "In Progress",
+      createdAt: "2024-01-05T00:00:00Z",
+      dueDate: "2024-02-01"
+    },
+    {
+      id: "c5d6e7f8-a9b0-4abc-b345-5c6d7e8f9g0h",
+      projectId: "a1b2c3d4-e5f6-4789-9012-3a4b5c6d7e8f",
+      assigneeId: "67792d99-79d9-4276-b6f1-325ca44c56f4",
+      title: "Demo Task 2",
+      status: "Completed",
+      createdAt: "2024-01-06T00:00:00Z",
+      dueDate: "2024-02-15"
+    }
+  ])
+  comment_insertMany(data: [
+    {
+      id: "d7e8f9g0-b0c1-4cde-b456-6d7e8f9g0h1i",
+      taskId: "b3c4d5e6-f7a8-49bc-a234-4b5c6d7e8f9g",
+      authorId: "67792d99-79d9-4276-b6f1-325ca44c56f4",
+      content: "Demo Comment 1",
+      createdAt: "2024-01-07T00:00:00Z"
+    },
+    {
+      id: "e9f0g1h2-c2d3-4def-c567-7e8f9g0h1i2j",
+      taskId: "c5d6e7f8-a9b0-4abc-b345-5c6d7e8f9g0h",
+      authorId: "90f8a16a-8a2a-4d9b-9b7c-7f5a6d3c2e1b",
+      content: "Demo Comment 2",
+      createdAt: "2024-01-08T00:00:00Z"
+    }
+  ])
+}
