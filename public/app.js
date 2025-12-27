@@ -266,6 +266,45 @@ function formatDateTime(date) {
   return `${dd}/${mm}/${yyyy} – ${hh}:${min}`;
 }
 
+function parseTaskDate(value) {
+  if (!value) return null;
+
+  if (typeof value === "number") {
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (iso) {
+    const y = Number(iso[1]);
+    const m = Number(iso[2]);
+    const d = Number(iso[3]);
+    return new Date(y, m - 1, d);
+  }
+
+  const br = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v);
+  if (br) {
+    const d = Number(br[1]);
+    const m = Number(br[2]);
+    const y = Number(br[3]);
+    return new Date(y, m - 1, d);
+  }
+
+  return null;
+}
+
+function formatDateBR(value) {
+  const dt = parseTaskDate(value);
+  if (!dt) return value || "-";
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const yyyy = dt.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
 function normalizePackageLabel(label) {
   if (!label) return "";
   return label.trim().replace(/\s+/g, " ");
@@ -616,11 +655,11 @@ function renderMain() {
       </div>
       <div class="meta-item">
         <div class="label">Data inicio</div>
-        <div class="value">${selectedProject.start || "-"}</div>
+        <div class="value">${formatDateBR(selectedProject.start) || "-"}</div>
       </div>
       <div class="meta-item">
         <div class="label">Go Live previsto</div>
-        <div class="value">${selectedProject.end || "-"}</div>
+        <div class="value">${formatDateBR(selectedProject.end) || "-"}</div>
       </div>
     </div>
     <div>
@@ -720,7 +759,7 @@ function renderMain() {
             const title = formatTaskTitle(task.title, sub.title);
             row.innerHTML = `
               <div>${title}</div>
-              <div style="color: var(--muted); font-weight:500;">${task.due}</div>
+              <div style="color: var(--muted); font-weight:500;">${formatDateBR(task.due)}</div>
               <button class="pill ${info.className} status-btn" data-task-index="${task._idx}">
                 ${info.label}
               </button>
@@ -740,7 +779,7 @@ function renderMain() {
         const info = statusInfo(task.status);
         row.innerHTML = `
           <div>${task.title}</div>
-          <div style="color: var(--muted); font-weight:500;">${task.due}</div>
+          <div style="color: var(--muted); font-weight:500;">${formatDateBR(task.due)}</div>
           <button class="pill ${info.className} status-btn" data-task-index="${task._idx}">
             ${info.label}
           </button>
@@ -1590,7 +1629,7 @@ function openDashboardFilterPopover(button) {
     input.value = value;
     input.checked = active.size === 0 || active.has(value);
     const text = document.createElement("span");
-    text.textContent = value;
+    text.textContent = column?.type === "date" ? formatDateBR(value) : value;
     label.appendChild(input);
     label.appendChild(text);
     options.appendChild(label);
@@ -1720,6 +1759,11 @@ async function init() {
 
 document.addEventListener("DOMContentLoaded", init);
 
+if (typeof window !== "undefined") {
+  window.formatDateBR = formatDateBR;
+  window.parseTaskDate = parseTaskDate;
+}
+
 async function ensureClientDoc(clientName) {
   const query = db.ref("clients").orderByChild("name").equalTo(clientName).limitToFirst(1);
   const existing = await query.once("value");
@@ -1823,7 +1867,7 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
     grouped.push({
       phase,
       tasks: sortTasksForDisplay(flatTasks),
-      subEpics: subEpics.sort((a, b) => b.latest - a.latest),
+      subEpics: subEpics.sort((a, b) => compareLatestDesc(a.latest, b.latest)),
       isEmpty: items.length === 0
     });
   });
@@ -1834,13 +1878,13 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
     const existing = grouped.find((group) => group.phase === "OUTROS");
     if (existing) {
       existing.tasks = sortTasksForDisplay(existing.tasks.concat(flatTasks));
-      existing.subEpics = existing.subEpics.concat(subEpics).sort((a, b) => b.latest - a.latest);
+      existing.subEpics = existing.subEpics.concat(subEpics).sort((a, b) => compareLatestDesc(a.latest, b.latest));
       existing.isEmpty = existing.tasks.length === 0 && existing.subEpics.length === 0;
     } else {
       grouped.push({
         phase: "OUTROS",
         tasks: sortTasksForDisplay(flatTasks),
-        subEpics: subEpics.sort((a, b) => b.latest - a.latest),
+        subEpics: subEpics.sort((a, b) => compareLatestDesc(a.latest, b.latest)),
         isEmpty: remaining.length === 0
       });
     }
@@ -1895,39 +1939,22 @@ function taskStatusRank(status) {
   return 2;
 }
 
-function parseDateValue(value) {
-  if (value === null || value === undefined || value === "") return Number.NaN;
-  if (typeof value === "number") return value;
-  const raw = String(value).trim();
-  const parsed = Date.parse(raw);
-  if (!Number.isNaN(parsed)) return parsed;
-  const match = raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
-  if (match) {
-    return new Date(`${match[3]}-${match[2]}-${match[1]}`).getTime();
-  }
-  return Number.NaN;
+function dateSortValue(value) {
+  const dt = parseTaskDate(value);
+  return dt ? dt.getTime() : Number.POSITIVE_INFINITY;
 }
 
-function taskSortDate(value) {
-  const parsed = parseDateValue(value);
-  return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
+function dateMetricValue(value) {
+  const dt = parseTaskDate(value);
+  return dt ? dt.getTime() : null;
 }
 
 function sortTasksForDisplay(tasks) {
   return tasks.slice().sort((a, b) => {
-    const aRank = taskStatusRank(a.status);
-    const bRank = taskStatusRank(b.status);
-    if (aRank !== bRank) return aRank - bRank;
-    const aDate = taskSortDate(a.due);
-    const bDate = taskSortDate(b.due);
-    if (aDate !== bDate) return aDate - bDate;
+    const d = dateSortValue(a.due) - dateSortValue(b.due);
+    if (d !== 0) return d;
     return (a.title || "").localeCompare(b.title || "");
   });
-}
-
-function dateValue(value) {
-  const parsed = parseDateValue(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function goLiveValue(value) {
@@ -1936,7 +1963,19 @@ function goLiveValue(value) {
 }
 
 function latestDate(tasks) {
-  return tasks.reduce((acc, t) => Math.max(acc, dateValue(t.due)), 0);
+  return tasks.reduce((acc, t) => {
+    const value = dateMetricValue(t.due);
+    if (value === null) return acc;
+    if (acc === null) return value;
+    return Math.max(acc, value);
+  }, null);
+}
+
+function compareLatestDesc(aValue, bValue) {
+  if (aValue === null && bValue === null) return 0;
+  if (aValue === null) return 1;
+  if (bValue === null) return -1;
+  return bValue - aValue;
 }
 
 function ensureDashboardState() {
@@ -2109,7 +2148,7 @@ function renderDashboard(container) {
           <td>${p.developer || "-"}</td>
           <td><span class="pill project-status ${info.className}">${info.label}</span></td>
           <td>${p.progress}%</td>
-          <td>${p.goLive || "-"}</td>
+          <td>${formatDateBR(p.goLive) || "-"}</td>
         </tr>
       `;
     })
