@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Controle de Projetos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <img class="brand-logo" src="logo.png" alt="JP Project Manager">
+      </div>
+      <nav class="nav">
+        <button class="nav-link active" data-section="inicio">Inicio</button>
+        <button class="nav-link" data-section="dashboard">Dashboard Projetos</button>
+        <div class="nav-group">
+          <button class="nav-link with-caret" data-section="meus-projetos">
+            Meus Projetos
+            <span class="caret">›</span>
+          </button>
+          <div class="nav-sub" id="client-list"></div>
+        </div>
+      </nav>
+      <div class="footer-links">
+        <button class="nav-link ghost" data-section="config">Configuracoes</button>
+        <button class="nav-link ghost" data-section="sair">Encerrar</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div class="crumbs">
+          <span>Home</span>
+          <span>/</span>
+          <span id="crumb-path">Inicio</span>
+        </div>
+        <div class="top-actions">
+          <button class="btn ghost" id="open-employee-modal">Cadastrar Funcionarios</button>
+          <button class="btn ghost" id="delete-project-btn">Excluir Projeto</button>
+          <button class="btn ghost" id="edit-project-btn">Editar Projeto</button>
+          <button class="btn primary" id="open-project-modal">+ Adicionar Projeto</button>
+          <div class="user">
+            <div class="user-name">Administrador</div>
+            <div class="user-avatar">AL</div>
+          </div>
+        </div>
+      </header>
+
+      <section class="content" id="content-area">
+        <div class="grid" id="dashboard-panels">
+          <!-- Cards preenchidos via JS -->
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="modal" id="project-modal">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Novo Projeto</h2>
+        <button class="icon-btn" data-close-modal>&times;</button>
+      </div>
+      <form id="project-form" class="form">
+        <label>
+          Nome do Projeto
+          <input type="text" name="name" required placeholder="Ex.: Armazem Industrial">
+        </label>
+        <label>
+          Cliente
+          <select name="client" id="project-client-select" required></select>
+        </label>
+        <label>
+          Responsavel
+          <input type="text" name="developer" required placeholder="Responsavel pelo projeto">
+        </label>
+        <div class="form-grid">
+          <label>
+            Data inicio
+            <input type="date" name="start" required>
+          </label>
+          <label>
+            Go Live previsto
+            <input type="date" name="end" required>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
+          <button type="submit" class="btn primary">Salvar Projeto</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" id="employee-modal">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Cadastrar Funcionario</h2>
+        <button class="icon-btn" data-close-modal>&times;</button>
+      </div>
+      <form id="employee-form" class="form">
+        <label>
+          Nome completo
+          <input type="text" name="name" required placeholder="Ex.: Ana Lima">
+        </label>
+        <label>
+          Cargo / Funcao
+          <input type="text" name="role" required placeholder="Gestor de Projetos">
+        </label>
+        <label>
+          E-mail
+          <input type="email" name="email" required placeholder="ana@empresa.com">
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
+          <button type="submit" class="btn primary">Salvar Funcionario</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" id="activity-modal">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Nova Atividade</h2>
+        <button class="icon-btn" data-close-modal>&times;</button>
+      </div>
+      <form id="activity-form" class="form">
+        <label>
+          Projeto atual
+          <input type="text" id="activity-project" disabled>
+        </label>
+        <label>
+          Titulo da atividade
+          <input type="text" name="title" required placeholder="Ex.: Integracao com WMS">
+        </label>
+        <label>
+          Epico
+          <select name="phase" id="activity-phase-select" required>
+            <option value="LEVANTAMENTO">LEVANTAMENTO</option>
+            <option value="DESENVOLVIMENTO">DESENVOLVIMENTO</option>
+            <option value="TESTES">TESTES</option>
+            <option value="DEPLOY">DEPLOY</option>
+          </select>
+        </label>
+        <label id="activity-package-field" class="hidden">
+          Pacote (opcional)
+          <select name="package" id="activity-package-select"></select>
+        </label>
+        <label>
+          Vencimento
+          <input type="date" name="due" required>
+        </label>
+        <label>
+          Status
+          <select name="status" required>
+            <option value="planejado" selected>Planejado</option>
+            <option value="em_andamento">Em andamento</option>
+            <option value="atrasado">Atrasado</option>
+            <option value="concluido">Concluido</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
+          <button type="submit" class="btn primary">Salvar Atividade</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="status-popover" id="status-popover">
+    <select id="status-select"></select>
+  </div>
+
+  <div class="task-actions-popover" id="task-actions-popover">
+    <button class="action-item" id="task-edit-action">Editar</button>
+    <button class="action-item danger" id="task-delete-action">Excluir</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
