@@ -1,8 +1,11 @@
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  // storageBucket, messagingSenderId, appId se desejar usar
+  apiKey: "AIzaSyAR1f27oMx0maMDQ_HRGaJQ5MDIVpUnkwQ",
+  authDomain: "controle-projetos-a55d5.firebaseapp.com",
+  projectId: "controle-projetos-a55d5",
+  storageBucket: "controle-projetos-a55d5.firebasestorage.app",
+  messagingSenderId: "211361267384",
+  appId: "1:211361267384:web:b263ea8fd2198fbffc3e4d",
+  measurementId: "G-1HCL23GXV4"
 };
 
 let db = null;
