@@ -2,6 +2,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyAR1f27oMx0maMDQ_HRGaJQ5MDIVpUnkwQ",
   authDomain: "controle-projetos-a55d5.firebaseapp.com",
   projectId: "controle-projetos-a55d5",
+  databaseURL: "https://controle-projetos-a55d5-default-rtdb.firebaseio.com",
   storageBucket: "controle-projetos-a55d5.firebasestorage.app",
   messagingSenderId: "211361267384",
   appId: "1:211361267384:web:b263ea8fd2198fbffc3e4d",
@@ -9,6 +10,8 @@ const firebaseConfig = {
 };
 
 let db = null;
+let auth = null;
+let appInitialized = false;
 
 const state = {
   clients: [
@@ -333,60 +336,89 @@ function saveLocalState() {
   }
 }
 
+function ensureFirebaseApp() {
+  if (!firebase.apps?.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+}
+
 async function initFirebase() {
   if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "YOUR_API_KEY") {
     console.warn("Firebase nao configurado. Usando dados locais.");
     return false;
   }
-  firebase.initializeApp(firebaseConfig);
-  db = firebase.firestore();
-  return true;
+  try {
+    ensureFirebaseApp();
+    db = firebase.database();
+    return true;
+  } catch (err) {
+    console.error("Falha ao inicializar Firebase.", err);
+    db = null;
+    return false;
+  }
 }
 
-async function loadStateFromDb() {
+async function loadStateFromDb(keepSelection = null) {
   if (!db) return;
-  const clientsSnap = await db.collection("clients").get();
-  const clients = await Promise.all(
-    clientsSnap.docs.map(async (clientDoc) => {
-      const clientData = clientDoc.data();
-      const projectsSnap = await clientDoc.ref.collection("projects").get();
-      const projects = await Promise.all(
-        projectsSnap.docs.map(async (projDoc) => {
-          const projData = projDoc.data();
-          const tasksSnap = await projDoc.ref.collection("tasks").get();
-          const tasks = tasksSnap.docs.map((taskDoc) => ({
-            id: taskDoc.id,
-            ...taskDoc.data()
-          }));
-          const progress = computeProgress(tasks);
-          const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
-          const packages = Array.isArray(projData.packages) ? projData.packages : [];
-          return {
-            id: projDoc.id,
-            clientId: clientDoc.id,
-            ...projData,
-            progress,
-            epics,
-            packages,
-            tasks
-          };
-        })
-      );
-      return { id: clientDoc.id, ...clientData, projects };
-    })
-  );
+  const snapshot = await db.ref("clients").once("value");
+  const clientsData = snapshot.val() || {};
+  const clients = Object.entries(clientsData).map(([clientId, clientData]) => {
+    const projectsData = clientData.projects || {};
+    const projects = Object.entries(projectsData).map(([projectId, projData]) => {
+      const tasksData = projData.tasks || {};
+      const tasks = Object.entries(tasksData).map(([taskId, taskData]) => ({
+        id: taskId,
+        ...taskData
+      }));
+      const progress = computeProgress(tasks);
+      const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
+      const packages = Array.isArray(projData.packages) ? projData.packages : [];
+      return {
+        id: projectId,
+        clientId,
+        ...projData,
+        progress,
+        epics,
+        packages,
+        tasks
+      };
+    });
+    return { id: clientId, ...clientData, projects };
+  });
 
   state.clients = clients;
-  state.selectedClient = clients[0] || null;
-  state.selectedProject = clients[0]?.projects?.[0] || null;
+  if (keepSelection && (keepSelection.clientId || keepSelection.projectId || keepSelection.clientName || keepSelection.projectName)) {
+    const normalize = (value) => (value || "").trim().toLowerCase();
+    const selectedClientById = keepSelection.clientId
+      ? clients.find((client) => client.id === keepSelection.clientId)
+      : null;
+    const selectedClientByName = !selectedClientById && keepSelection.clientName
+      ? clients.find((client) => normalize(client.name) === normalize(keepSelection.clientName))
+      : null;
+    state.selectedClient = selectedClientById || selectedClientByName || clients[0] || null;
+    if (state.selectedClient) {
+      const selectedProjectById = keepSelection.projectId
+        ? state.selectedClient.projects?.find((project) => project.id === keepSelection.projectId)
+        : null;
+      const selectedProjectByName = !selectedProjectById && keepSelection.projectName
+        ? state.selectedClient.projects?.find((project) => normalize(project.name) === normalize(keepSelection.projectName))
+        : null;
+      state.selectedProject = selectedProjectById || selectedProjectByName || state.selectedClient.projects?.[0] || null;
+    } else {
+      state.selectedProject = null;
+    }
+  } else {
+    state.selectedClient = clients[0] || null;
+    state.selectedProject = clients[0]?.projects?.[0] || null;
+  }
   renderClientList();
   renderMain();
   hydrateClientSelect();
 }
 
-async function init() {
+async function initApp() {
   loadHomeContext();
-  const firebaseReady = await initFirebase();
+  const firebaseReady = db ? true : await initFirebase();
   if (firebaseReady) {
     try {
       await loadStateFromDb();
@@ -506,10 +538,10 @@ function updateTopActions() {
   const openEmployeeBtn = byId("open-employee-modal");
   const isHome = state.currentSection === "inicio";
   const isProject = state.currentSection === "meus-projetos";
-  openProjectBtn.classList.toggle("hidden", isHome);
-  openEmployeeBtn.classList.toggle("hidden", isHome);
-  deleteProjectBtn.classList.toggle("hidden", !isProject);
-  editProjectBtn.classList.toggle("hidden", !isProject);
+  if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome);
+  if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome);
+  if (deleteProjectBtn) deleteProjectBtn.classList.toggle("hidden", !isProject);
+  if (editProjectBtn) editProjectBtn.classList.toggle("hidden", !isProject);
 }
 
 function renderHome(container) {
@@ -731,6 +763,10 @@ function renderMain() {
 function wireNav() {
   document.querySelectorAll(".nav-link").forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (btn.dataset.section === "sair") {
+        logout();
+        return;
+      }
       if (btn.dataset.section === "meus-projetos") {
         btn.classList.toggle("open");
         return;
@@ -752,9 +788,15 @@ function wireModals() {
   const editProjectBtn = byId("edit-project-btn");
   const openEmployeeBtn = byId("open-employee-modal");
 
-  openProjectBtn.addEventListener("click", () => openProjectModal("new"));
-  editProjectBtn.addEventListener("click", () => openProjectModal("edit"));
-  openEmployeeBtn.addEventListener("click", () => showModal(employeeModal));
+  if (openProjectBtn) {
+    openProjectBtn.addEventListener("click", () => openProjectModal("new"));
+  }
+  if (editProjectBtn) {
+    editProjectBtn.addEventListener("click", () => openProjectModal("edit"));
+  }
+  if (openEmployeeBtn && employeeModal) {
+    openEmployeeBtn.addEventListener("click", () => showModal(employeeModal));
+  }
   document.body.addEventListener("click", (e) => {
     if (e.target.closest("[data-open-activity]")) {
       openActivityModal("new");
@@ -763,169 +805,193 @@ function wireModals() {
 
   document.querySelectorAll("[data-close-modal]").forEach((el) => {
     el.addEventListener("click", () => {
-      hideModal(projectModal);
-      hideModal(employeeModal);
-      hideModal(activityModal);
+      if (projectModal) hideModal(projectModal);
+      if (employeeModal) hideModal(employeeModal);
+      if (activityModal) hideModal(activityModal);
       resetProjectModal();
       resetActivityModal();
     });
   });
 
-  deleteProjectBtn.addEventListener("click", () => handleDeleteProject());
+  if (deleteProjectBtn) {
+    deleteProjectBtn.addEventListener("click", () => handleDeleteProject());
+  }
 
   const projectForm = byId("project-form");
-  projectForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const data = new FormData(projectForm);
-    let clientName = data.get("client");
-    if (clientName === "__new__") {
-      const name = promptNewClientName();
-      if (!name) return;
-      const existing = findClientByName(name);
-      const client = existing || addClientToState(name);
-      if (db) {
-        ensureClientDoc(client.name).catch((err) => console.error(err));
+  if (projectForm) {
+    projectForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const data = new FormData(projectForm);
+      let clientName = data.get("client");
+      if (clientName === "__new__") {
+        const name = promptNewClientName();
+        if (!name) return;
+        const existing = findClientByName(name);
+        const client = existing || addClientToState(name);
+        if (db) {
+          ensureClientDoc(client.name).catch((err) => console.error(err));
+        }
+        hydrateClientSelect(client.name);
+        clientName = client.name;
       }
-      hydrateClientSelect(client.name);
-      clientName = client.name;
-    }
-    const payload = {
-      name: data.get("name"),
-      developer: data.get("developer"),
-      start: data.get("start"),
-      end: data.get("end"),
-      client: clientName
-    };
+      const payload = {
+        name: data.get("name"),
+        developer: data.get("developer"),
+        start: data.get("start"),
+        end: data.get("end"),
+        client: clientName
+      };
 
-    if (state.editingProjectId) {
-      if (db && state.selectedProject?.id && state.selectedProject?.clientId) {
-        updateProjectOnDb(state.selectedProject.clientId, state.selectedProject.id, payload)
+      if (state.editingProjectId) {
+        if (db && state.selectedProject?.id && state.selectedProject?.clientId) {
+          updateProjectOnDb(state.selectedProject.clientId, state.selectedProject.id, payload)
+            .then(async () => {
+              await loadStateFromDb();
+              resetProjectModal();
+              if (projectModal) hideModal(projectModal);
+            })
+            .catch((err) => {
+              console.error(err);
+              alert("Erro ao atualizar projeto no Firebase.");
+            });
+        } else {
+          updateProjectInState(payload);
+          saveLocalState();
+          renderClientList();
+          renderMain();
+          resetProjectModal();
+          if (projectModal) hideModal(projectModal);
+        }
+        return;
+      }
+
+      if (db) {
+        saveProjectToDb(payload)
           .then(async () => {
             await loadStateFromDb();
             resetProjectModal();
-            hideModal(projectModal);
+            if (projectModal) hideModal(projectModal);
           })
           .catch((err) => {
             console.error(err);
-            alert("Erro ao atualizar projeto no Firebase.");
+            alert("Erro ao salvar projeto no Firebase.");
           });
       } else {
-        updateProjectInState(payload);
+        const client = state.clients.find((c) => c.name === clientName);
+        if (!client) {
+          alert("Cliente nao encontrado.");
+          return;
+        }
+        const newProject = { ...payload, tasks: [], epics: DEFAULT_EPICS.slice(), packages: [] };
+        client.projects.push(newProject);
+        state.selectedClient = client;
+        state.selectedProject = newProject;
         saveLocalState();
         renderClientList();
         renderMain();
         resetProjectModal();
-        hideModal(projectModal);
+        if (projectModal) hideModal(projectModal);
       }
-      return;
-    }
-
-    if (db) {
-      saveProjectToDb(payload)
-        .then(async () => {
-          await loadStateFromDb();
-          resetProjectModal();
-          hideModal(projectModal);
-        })
-        .catch((err) => {
-          console.error(err);
-          alert("Erro ao salvar projeto no Firebase.");
-        });
-    } else {
-      const client = state.clients.find((c) => c.name === clientName);
-      if (!client) {
-        alert("Cliente nao encontrado.");
-        return;
-      }
-      const newProject = { ...payload, tasks: [], epics: DEFAULT_EPICS.slice(), packages: [] };
-      client.projects.push(newProject);
-      state.selectedClient = client;
-      state.selectedProject = newProject;
-      saveLocalState();
-      renderClientList();
-      renderMain();
-      resetProjectModal();
-      hideModal(projectModal);
-    }
-  });
+    });
+  } else {
+    console.warn("Formulario de projeto nao encontrado.");
+  }
 
   const employeeForm = byId("employee-form");
-  employeeForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const data = new FormData(employeeForm);
-    const employee = {
-      name: data.get("name"),
-      role: data.get("role"),
-      email: data.get("email")
-    };
-    state.employees.push(employee);
-    saveLocalState();
-    employeeForm.reset();
-    hideModal(employeeModal);
-    alert("Funcionario cadastrado!");
-  });
+  if (employeeForm) {
+    employeeForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const data = new FormData(employeeForm);
+      const employee = {
+        name: data.get("name"),
+        role: data.get("role"),
+        email: data.get("email")
+      };
+      state.employees.push(employee);
+      saveLocalState();
+      employeeForm.reset();
+      if (employeeModal) hideModal(employeeModal);
+      alert("Funcionario cadastrado!");
+    });
+  }
 
   const activityForm = byId("activity-form");
-  activityForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const { selectedProject } = state;
-    if (!selectedProject) {
-      alert("Nenhum projeto selecionado.");
-      return;
-    }
-    const data = new FormData(activityForm);
-    const task = {
-      title: data.get("title"),
-      phase: data.get("phase"),
-      package: data.get("package") || "",
-      due: data.get("due"),
-      status: data.get("status")
-    };
-    if (state.editingTaskIndex !== null && state.editingTaskIndex !== undefined) {
-      const idx = Number(state.editingTaskIndex);
-      const currentTask = selectedProject.tasks?.[idx];
-      if (!currentTask) return;
-      const payload = { ...currentTask, ...task };
-      if (db && selectedProject.id && selectedProject.clientId && currentTask.id) {
-        updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload)
+  if (activityForm) {
+    activityForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const keepClientId = state.selectedClient?.id;
+      const keepProjectId = state.selectedProject?.id;
+      const keepClientName = state.selectedClient?.name;
+      const keepProjectName = state.selectedProject?.name;
+      const { selectedProject } = state;
+      if (!selectedProject) {
+        alert("Nenhum projeto selecionado.");
+        return;
+      }
+      const data = new FormData(activityForm);
+      const task = {
+        title: data.get("title"),
+        phase: data.get("phase"),
+        package: data.get("package") || "",
+        due: data.get("due"),
+        status: data.get("status")
+      };
+      if (state.editingTaskIndex !== null && state.editingTaskIndex !== undefined) {
+        const idx = Number(state.editingTaskIndex);
+        const currentTask = selectedProject.tasks?.[idx];
+        if (!currentTask) return;
+        const payload = { ...currentTask, ...task };
+        if (db && selectedProject.id && selectedProject.clientId && currentTask.id) {
+          updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload)
+            .then(async () => {
+              await loadStateFromDb({
+                clientId: keepClientId,
+                projectId: keepProjectId,
+                clientName: keepClientName,
+                projectName: keepProjectName
+              });
+              resetActivityModal();
+              if (activityModal) hideModal(activityModal);
+            })
+            .catch((err) => {
+              console.error(err);
+              alert("Erro ao atualizar atividade no Firebase.");
+            });
+        } else {
+          selectedProject.tasks[idx] = payload;
+          saveLocalState();
+          renderMain();
+          resetActivityModal();
+          if (activityModal) hideModal(activityModal);
+        }
+        return;
+      }
+
+      if (db && selectedProject.id && selectedProject.clientId) {
+        saveTaskToDb(selectedProject.clientId, selectedProject.id, task)
           .then(async () => {
-            await loadStateFromDb();
+            await loadStateFromDb({
+              clientId: keepClientId,
+              projectId: keepProjectId,
+              clientName: keepClientName,
+              projectName: keepProjectName
+            });
             resetActivityModal();
-            hideModal(activityModal);
+            if (activityModal) hideModal(activityModal);
           })
           .catch((err) => {
             console.error(err);
-            alert("Erro ao atualizar atividade no Firebase.");
+            alert("Erro ao salvar atividade no Firebase.");
           });
       } else {
-        selectedProject.tasks[idx] = payload;
+        selectedProject.tasks.push(task);
         saveLocalState();
         renderMain();
         resetActivityModal();
-        hideModal(activityModal);
+        if (activityModal) hideModal(activityModal);
       }
-      return;
-    }
-
-    if (db && selectedProject.id && selectedProject.clientId) {
-      saveTaskToDb(selectedProject.clientId, selectedProject.id, task)
-        .then(async () => {
-          await loadStateFromDb();
-          resetActivityModal();
-          hideModal(activityModal);
-        })
-        .catch((err) => {
-          console.error(err);
-          alert("Erro ao salvar atividade no Firebase.");
-        });
-    } else {
-      selectedProject.tasks.push(task);
-      saveLocalState();
-      renderMain();
-      resetActivityModal();
-      hideModal(activityModal);
-    }
-  });
+    });
+  }
 
   const activityPhaseSelect = byId("activity-phase-select");
   if (activityPhaseSelect) {
@@ -1032,11 +1098,20 @@ function resetActivityModal() {
 function deleteTaskByIndex(idx) {
   const project = state.selectedProject;
   if (!project || !project.tasks || !project.tasks[idx]) return;
+  const keepClientId = state.selectedClient?.id;
+  const keepProjectId = state.selectedProject?.id;
+  const keepClientName = state.selectedClient?.name;
+  const keepProjectName = state.selectedProject?.name;
   const task = project.tasks[idx];
   if (db && project.id && project.clientId && task.id) {
     deleteTaskFromDb(project.clientId, project.id, task.id)
       .then(async () => {
-        await loadStateFromDb();
+        await loadStateFromDb({
+          clientId: keepClientId,
+          projectId: keepProjectId,
+          clientName: keepClientName,
+          projectName: keepProjectName
+        });
       })
       .catch((err) => {
         console.error(err);
@@ -1562,119 +1637,161 @@ function hideDashboardFilterPopover() {
   popover.classList.remove("show");
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  init();
-});
+function showLogin() {
+  byId("login-screen")?.classList.remove("hidden");
+  byId("app-shell")?.classList.add("hidden");
+  const errEl = byId("login-error");
+  if (errEl) {
+    errEl.textContent = "";
+    errEl.classList.add("hidden");
+  }
+}
+
+function showApp() {
+  byId("login-screen")?.classList.add("hidden");
+  byId("app-shell")?.classList.remove("hidden");
+}
+
+function wireLogin() {
+  const form = byId("login-form");
+  if (!form || form.dataset.wired) return;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = byId("login-email")?.value.trim() || "";
+    const pass = byId("login-password")?.value || "";
+    const errEl = byId("login-error");
+    if (errEl) {
+      errEl.textContent = "";
+      errEl.classList.add("hidden");
+    }
+    if (!email || !pass) {
+      if (errEl) {
+        errEl.textContent = "Falha no login. Verifique e-mail e senha.";
+        errEl.classList.remove("hidden");
+      }
+      return;
+    }
+    try {
+      await auth.signInWithEmailAndPassword(email, pass);
+    } catch (err) {
+      console.error(err);
+      if (errEl) {
+        errEl.textContent = "Falha no login. Verifique e-mail e senha.";
+        errEl.classList.remove("hidden");
+      }
+    }
+  });
+  form.dataset.wired = "true";
+}
+
+async function logout() {
+  if (!auth) return;
+  await auth.signOut();
+}
+
+async function init() {
+  showLogin();
+  const ok = await initFirebase();
+  if (!ok) return;
+  if (!firebase?.auth) {
+    console.error("Firebase Auth nao carregado.");
+    return;
+  }
+  auth = firebase.auth();
+  wireLogin();
+
+  auth.onAuthStateChanged(async (user) => {
+    if (!user) {
+      showLogin();
+      return;
+    }
+    showApp();
+    if (!appInitialized) {
+      appInitialized = true;
+      await initApp();
+      return;
+    }
+    await loadStateFromDb();
+    renderClientList();
+    renderMain();
+    hydrateClientSelect();
+  });
+}
+
+document.addEventListener("DOMContentLoaded", init);
 
 async function ensureClientDoc(clientName) {
-  const existing = await db
-    .collection("clients")
-    .where("name", "==", clientName)
-    .limit(1)
-    .get();
-  if (!existing.empty) return existing.docs[0].ref;
-  return db.collection("clients").add({ name: clientName });
+  const query = db.ref("clients").orderByChild("name").equalTo(clientName).limitToFirst(1);
+  const existing = await query.once("value");
+  if (existing.exists()) {
+    const clientId = Object.keys(existing.val())[0];
+    return { id: clientId, ref: db.ref(`clients/${clientId}`) };
+  }
+  const newRef = db.ref("clients").push();
+  await newRef.set({ name: clientName, projects: {} });
+  return { id: newRef.key, ref: newRef };
 }
 
 async function deleteProjectFromDb(clientId, projectId) {
-  const projectRef = db.collection("clients").doc(clientId).collection("projects").doc(projectId);
-  const tasks = await projectRef.collection("tasks").get();
-  const batch = db.batch();
-  tasks.forEach((doc) => batch.delete(doc.ref));
-  batch.delete(projectRef);
-  await batch.commit();
+  await db.ref(`clients/${clientId}/projects/${projectId}`).remove();
 }
 
 async function saveProjectToDb(payload) {
-  const clientRef = await ensureClientDoc(payload.client);
-  await clientRef.collection("projects").add({
+  const client = await ensureClientDoc(payload.client);
+  const projectRef = client.ref.child("projects").push();
+  await projectRef.set({
     name: payload.name,
     developer: payload.developer,
     start: payload.start,
     end: payload.end,
     epics: DEFAULT_EPICS.slice(),
     packages: [],
-    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    tasks: {},
+    createdAt: firebase.database.ServerValue.TIMESTAMP
   });
 }
 
 async function updateProjectOnDb(clientId, projectId, payload) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .update({
-      name: payload.name,
-      developer: payload.developer,
-      start: payload.start,
-      end: payload.end
-    });
+  await db.ref(`clients/${clientId}/projects/${projectId}`).update({
+    name: payload.name,
+    developer: payload.developer,
+    start: payload.start,
+    end: payload.end
+  });
 }
 
 async function saveTaskToDb(clientId, projectId, task) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .collection("tasks")
-    .add({
-      title: task.title,
-      phase: task.phase,
-      package: task.package,
-      due: task.due,
-      status: task.status,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+  const taskRef = db.ref(`clients/${clientId}/projects/${projectId}/tasks`).push();
+  await taskRef.set({
+    title: task.title,
+    phase: task.phase,
+    package: task.package,
+    due: task.due,
+    status: task.status,
+    createdAt: firebase.database.ServerValue.TIMESTAMP
+  });
 }
 
 async function updateTaskStatusOnDb(clientId, projectId, taskId, status) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .collection("tasks")
-    .doc(taskId)
-    .update({ status });
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({ status });
 }
 
 async function updateTaskOnDb(clientId, projectId, taskId, payload) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .collection("tasks")
-    .doc(taskId)
-    .update({
-      title: payload.title,
-      phase: payload.phase,
-      package: payload.package,
-      due: payload.due,
-      status: payload.status
-    });
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({
+    title: payload.title,
+    phase: payload.phase,
+    package: payload.package,
+    due: payload.due,
+    status: payload.status
+  });
 }
 
 async function deleteTaskFromDb(clientId, projectId, taskId) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .collection("tasks")
-    .doc(taskId)
-    .delete();
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).remove();
 }
 
 async function updateProjectPackagesOnDb(clientId, projectId, packages) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .update({ packages });
+  await db.ref(`clients/${clientId}/projects/${projectId}`).update({ packages });
 }
 
 function projectMetrics(tasks = []) {
@@ -1705,7 +1822,7 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
     const { subEpics, flatTasks } = groupBySubEpic(items);
     grouped.push({
       phase,
-      tasks: sortTasksByNewest(flatTasks),
+      tasks: sortTasksForDisplay(flatTasks),
       subEpics: subEpics.sort((a, b) => b.latest - a.latest),
       isEmpty: items.length === 0
     });
@@ -1716,13 +1833,13 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
     const { subEpics, flatTasks } = groupBySubEpic(remaining);
     const existing = grouped.find((group) => group.phase === "OUTROS");
     if (existing) {
-      existing.tasks = sortTasksByNewest(existing.tasks.concat(flatTasks));
+      existing.tasks = sortTasksForDisplay(existing.tasks.concat(flatTasks));
       existing.subEpics = existing.subEpics.concat(subEpics).sort((a, b) => b.latest - a.latest);
       existing.isEmpty = existing.tasks.length === 0 && existing.subEpics.length === 0;
     } else {
       grouped.push({
         phase: "OUTROS",
-        tasks: sortTasksByNewest(flatTasks),
+        tasks: sortTasksForDisplay(flatTasks),
         subEpics: subEpics.sort((a, b) => b.latest - a.latest),
         isEmpty: remaining.length === 0
       });
@@ -1758,7 +1875,7 @@ function groupBySubEpic(tasks) {
   });
   const subEpics = Array.from(subMap.entries()).map(([title, items]) => ({
     title,
-    tasks: sortTasksByNewest(items),
+    tasks: sortTasksForDisplay(items),
     latest: latestDate(items)
   }));
   return { subEpics, flatTasks: flat };
@@ -1769,15 +1886,48 @@ function getSubEpicTitle(task) {
   return label || null;
 }
 
-function sortTasksByNewest(tasks) {
-  return tasks
-    .slice()
-    .sort((a, b) => (dateValue(b.due) || 0) - (dateValue(a.due) || 0));
+function taskStatusRank(status) {
+  const key = (status || "").toLowerCase();
+  if (key === "em_andamento") return 0;
+  if (key === "atrasado") return 1;
+  if (key === "planejado") return 2;
+  if (key === "concluido") return 3;
+  return 2;
+}
+
+function parseDateValue(value) {
+  if (value === null || value === undefined || value === "") return Number.NaN;
+  if (typeof value === "number") return value;
+  const raw = String(value).trim();
+  const parsed = Date.parse(raw);
+  if (!Number.isNaN(parsed)) return parsed;
+  const match = raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
+  if (match) {
+    return new Date(`${match[3]}-${match[2]}-${match[1]}`).getTime();
+  }
+  return Number.NaN;
+}
+
+function taskSortDate(value) {
+  const parsed = parseDateValue(value);
+  return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
+}
+
+function sortTasksForDisplay(tasks) {
+  return tasks.slice().sort((a, b) => {
+    const aRank = taskStatusRank(a.status);
+    const bRank = taskStatusRank(b.status);
+    if (aRank !== bRank) return aRank - bRank;
+    const aDate = taskSortDate(a.due);
+    const bDate = taskSortDate(b.due);
+    if (aDate !== bDate) return aDate - bDate;
+    return (a.title || "").localeCompare(b.title || "");
+  });
 }
 
 function dateValue(value) {
-  if (!value || Number.isNaN(Date.parse(value))) return 0;
-  return new Date(value).getTime();
+  const parsed = parseDateValue(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function goLiveValue(value) {

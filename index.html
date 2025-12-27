@@ -8,11 +8,33 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="app-shell">
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="login-brand">
+        <img src="logo.png" alt="JP Project Manager" class="login-logo">
+      </div>
+
+      <form id="login-form" class="login-form">
+        <label class="login-label" for="login-email">E-mail</label>
+        <input id="login-email" type="email" class="login-input" placeholder="seu@email.com" required autocomplete="username">
+
+        <label class="login-label" for="login-password">Senha</label>
+        <input id="login-password" type="password" class="login-input" placeholder="Sua senha" required autocomplete="current-password">
+
+        <button class="login-button" type="submit">Entrar</button>
+        <p id="login-error" class="login-error hidden"></p>
+      </form>
+
+      <div class="login-footer">(c) 2025 - JP Project Manager</div>
+    </div>
+  </div>
+
+  <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar">
       <div class="brand">
         <img class="brand-logo" src="logo.png" alt="JP Project Manager">
@@ -30,7 +52,7 @@
       </nav>
       <div class="footer-links">
         <button class="nav-link ghost" data-section="config">Configuracoes</button>
-        <button class="nav-link ghost" data-section="sair">Encerrar</button>
+        <button class="nav-link ghost" data-section="sair" id="nav-logout">Encerrar</button>
       </div>
     </aside>
 
@@ -59,7 +81,6 @@
         </div>
       </section>
     </div>
-  </div>
 
   <div class="modal" id="project-modal">
     <div class="modal-backdrop" data-close-modal></div>
@@ -186,6 +207,8 @@
     <button class="action-item danger" id="task-delete-action">Excluir</button>
   </div>
 
-  <script src="app.js"></script>
+  </div>
+
+  <script src="./app.js?v=20251227-3" defer></script>
 </body>
 </html>

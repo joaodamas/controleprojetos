@@ -10,6 +10,8 @@ const firebaseConfig = {
 };
 
 let db = null;
+let auth = null;
+let appInitialized = false;
 
 const state = {
   clients: [
@@ -334,15 +336,19 @@ function saveLocalState() {
   }
 }
 
+function ensureFirebaseApp() {
+  if (!firebase.apps?.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+}
+
 async function initFirebase() {
   if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "YOUR_API_KEY") {
     console.warn("Firebase nao configurado. Usando dados locais.");
     return false;
   }
   try {
-    if (!firebase.apps?.length) {
-      firebase.initializeApp(firebaseConfig);
-    }
+    ensureFirebaseApp();
     db = firebase.database();
     return true;
   } catch (err) {
@@ -352,7 +358,7 @@ async function initFirebase() {
   }
 }
 
-async function loadStateFromDb() {
+async function loadStateFromDb(keepSelection = null) {
   if (!db) return;
   const snapshot = await db.ref("clients").once("value");
   const clientsData = snapshot.val() || {};
@@ -381,16 +387,38 @@ async function loadStateFromDb() {
   });
 
   state.clients = clients;
-  state.selectedClient = clients[0] || null;
-  state.selectedProject = clients[0]?.projects?.[0] || null;
+  if (keepSelection && (keepSelection.clientId || keepSelection.projectId || keepSelection.clientName || keepSelection.projectName)) {
+    const normalize = (value) => (value || "").trim().toLowerCase();
+    const selectedClientById = keepSelection.clientId
+      ? clients.find((client) => client.id === keepSelection.clientId)
+      : null;
+    const selectedClientByName = !selectedClientById && keepSelection.clientName
+      ? clients.find((client) => normalize(client.name) === normalize(keepSelection.clientName))
+      : null;
+    state.selectedClient = selectedClientById || selectedClientByName || clients[0] || null;
+    if (state.selectedClient) {
+      const selectedProjectById = keepSelection.projectId
+        ? state.selectedClient.projects?.find((project) => project.id === keepSelection.projectId)
+        : null;
+      const selectedProjectByName = !selectedProjectById && keepSelection.projectName
+        ? state.selectedClient.projects?.find((project) => normalize(project.name) === normalize(keepSelection.projectName))
+        : null;
+      state.selectedProject = selectedProjectById || selectedProjectByName || state.selectedClient.projects?.[0] || null;
+    } else {
+      state.selectedProject = null;
+    }
+  } else {
+    state.selectedClient = clients[0] || null;
+    state.selectedProject = clients[0]?.projects?.[0] || null;
+  }
   renderClientList();
   renderMain();
   hydrateClientSelect();
 }
 
-async function init() {
+async function initApp() {
   loadHomeContext();
-  const firebaseReady = await initFirebase();
+  const firebaseReady = db ? true : await initFirebase();
   if (firebaseReady) {
     try {
       await loadStateFromDb();
@@ -735,6 +763,10 @@ function renderMain() {
 function wireNav() {
   document.querySelectorAll(".nav-link").forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (btn.dataset.section === "sair") {
+        logout();
+        return;
+      }
       if (btn.dataset.section === "meus-projetos") {
         btn.classList.toggle("open");
         return;
@@ -887,6 +919,10 @@ function wireModals() {
   if (activityForm) {
     activityForm.addEventListener("submit", (e) => {
       e.preventDefault();
+      const keepClientId = state.selectedClient?.id;
+      const keepProjectId = state.selectedProject?.id;
+      const keepClientName = state.selectedClient?.name;
+      const keepProjectName = state.selectedProject?.name;
       const { selectedProject } = state;
       if (!selectedProject) {
         alert("Nenhum projeto selecionado.");
@@ -908,7 +944,12 @@ function wireModals() {
         if (db && selectedProject.id && selectedProject.clientId && currentTask.id) {
           updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload)
             .then(async () => {
-              await loadStateFromDb();
+              await loadStateFromDb({
+                clientId: keepClientId,
+                projectId: keepProjectId,
+                clientName: keepClientName,
+                projectName: keepProjectName
+              });
               resetActivityModal();
               if (activityModal) hideModal(activityModal);
             })
@@ -929,7 +970,12 @@ function wireModals() {
       if (db && selectedProject.id && selectedProject.clientId) {
         saveTaskToDb(selectedProject.clientId, selectedProject.id, task)
           .then(async () => {
-            await loadStateFromDb();
+            await loadStateFromDb({
+              clientId: keepClientId,
+              projectId: keepProjectId,
+              clientName: keepClientName,
+              projectName: keepProjectName
+            });
             resetActivityModal();
             if (activityModal) hideModal(activityModal);
           })
@@ -1052,11 +1098,20 @@ function resetActivityModal() {
 function deleteTaskByIndex(idx) {
   const project = state.selectedProject;
   if (!project || !project.tasks || !project.tasks[idx]) return;
+  const keepClientId = state.selectedClient?.id;
+  const keepProjectId = state.selectedProject?.id;
+  const keepClientName = state.selectedClient?.name;
+  const keepProjectName = state.selectedProject?.name;
   const task = project.tasks[idx];
   if (db && project.id && project.clientId && task.id) {
     deleteTaskFromDb(project.clientId, project.id, task.id)
       .then(async () => {
-        await loadStateFromDb();
+        await loadStateFromDb({
+          clientId: keepClientId,
+          projectId: keepProjectId,
+          clientName: keepClientName,
+          projectName: keepProjectName
+        });
       })
       .catch((err) => {
         console.error(err);
@@ -1582,9 +1637,88 @@ function hideDashboardFilterPopover() {
   popover.classList.remove("show");
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  init();
-});
+function showLogin() {
+  byId("login-screen")?.classList.remove("hidden");
+  byId("app-shell")?.classList.add("hidden");
+  const errEl = byId("login-error");
+  if (errEl) {
+    errEl.textContent = "";
+    errEl.classList.add("hidden");
+  }
+}
+
+function showApp() {
+  byId("login-screen")?.classList.add("hidden");
+  byId("app-shell")?.classList.remove("hidden");
+}
+
+function wireLogin() {
+  const form = byId("login-form");
+  if (!form || form.dataset.wired) return;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = byId("login-email")?.value.trim() || "";
+    const pass = byId("login-password")?.value || "";
+    const errEl = byId("login-error");
+    if (errEl) {
+      errEl.textContent = "";
+      errEl.classList.add("hidden");
+    }
+    if (!email || !pass) {
+      if (errEl) {
+        errEl.textContent = "Falha no login. Verifique e-mail e senha.";
+        errEl.classList.remove("hidden");
+      }
+      return;
+    }
+    try {
+      await auth.signInWithEmailAndPassword(email, pass);
+    } catch (err) {
+      console.error(err);
+      if (errEl) {
+        errEl.textContent = "Falha no login. Verifique e-mail e senha.";
+        errEl.classList.remove("hidden");
+      }
+    }
+  });
+  form.dataset.wired = "true";
+}
+
+async function logout() {
+  if (!auth) return;
+  await auth.signOut();
+}
+
+async function init() {
+  showLogin();
+  const ok = await initFirebase();
+  if (!ok) return;
+  if (!firebase?.auth) {
+    console.error("Firebase Auth nao carregado.");
+    return;
+  }
+  auth = firebase.auth();
+  wireLogin();
+
+  auth.onAuthStateChanged(async (user) => {
+    if (!user) {
+      showLogin();
+      return;
+    }
+    showApp();
+    if (!appInitialized) {
+      appInitialized = true;
+      await initApp();
+      return;
+    }
+    await loadStateFromDb();
+    renderClientList();
+    renderMain();
+    hydrateClientSelect();
+  });
+}
+
+document.addEventListener("DOMContentLoaded", init);
 
 async function ensureClientDoc(clientName) {
   const query = db.ref("clients").orderByChild("name").equalTo(clientName).limitToFirst(1);
@@ -1688,7 +1822,7 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
     const { subEpics, flatTasks } = groupBySubEpic(items);
     grouped.push({
       phase,
-      tasks: sortTasksByNewest(flatTasks),
+      tasks: sortTasksForDisplay(flatTasks),
       subEpics: subEpics.sort((a, b) => b.latest - a.latest),
       isEmpty: items.length === 0
     });
@@ -1699,13 +1833,13 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
     const { subEpics, flatTasks } = groupBySubEpic(remaining);
     const existing = grouped.find((group) => group.phase === "OUTROS");
     if (existing) {
-      existing.tasks = sortTasksByNewest(existing.tasks.concat(flatTasks));
+      existing.tasks = sortTasksForDisplay(existing.tasks.concat(flatTasks));
       existing.subEpics = existing.subEpics.concat(subEpics).sort((a, b) => b.latest - a.latest);
       existing.isEmpty = existing.tasks.length === 0 && existing.subEpics.length === 0;
     } else {
       grouped.push({
         phase: "OUTROS",
-        tasks: sortTasksByNewest(flatTasks),
+        tasks: sortTasksForDisplay(flatTasks),
         subEpics: subEpics.sort((a, b) => b.latest - a.latest),
         isEmpty: remaining.length === 0
       });
@@ -1741,7 +1875,7 @@ function groupBySubEpic(tasks) {
   });
   const subEpics = Array.from(subMap.entries()).map(([title, items]) => ({
     title,
-    tasks: sortTasksByNewest(items),
+    tasks: sortTasksForDisplay(items),
     latest: latestDate(items)
   }));
   return { subEpics, flatTasks: flat };
@@ -1752,15 +1886,48 @@ function getSubEpicTitle(task) {
   return label || null;
 }
 
-function sortTasksByNewest(tasks) {
-  return tasks
-    .slice()
-    .sort((a, b) => (dateValue(b.due) || 0) - (dateValue(a.due) || 0));
+function taskStatusRank(status) {
+  const key = (status || "").toLowerCase();
+  if (key === "em_andamento") return 0;
+  if (key === "atrasado") return 1;
+  if (key === "planejado") return 2;
+  if (key === "concluido") return 3;
+  return 2;
+}
+
+function parseDateValue(value) {
+  if (value === null || value === undefined || value === "") return Number.NaN;
+  if (typeof value === "number") return value;
+  const raw = String(value).trim();
+  const parsed = Date.parse(raw);
+  if (!Number.isNaN(parsed)) return parsed;
+  const match = raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
+  if (match) {
+    return new Date(`${match[3]}-${match[2]}-${match[1]}`).getTime();
+  }
+  return Number.NaN;
+}
+
+function taskSortDate(value) {
+  const parsed = parseDateValue(value);
+  return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
+}
+
+function sortTasksForDisplay(tasks) {
+  return tasks.slice().sort((a, b) => {
+    const aRank = taskStatusRank(a.status);
+    const bRank = taskStatusRank(b.status);
+    if (aRank !== bRank) return aRank - bRank;
+    const aDate = taskSortDate(a.due);
+    const bDate = taskSortDate(b.due);
+    if (aDate !== bDate) return aDate - bDate;
+    return (a.title || "").localeCompare(b.title || "");
+  });
 }
 
 function dateValue(value) {
-  if (!value || Number.isNaN(Date.parse(value))) return 0;
-  return new Date(value).getTime();
+  const parsed = parseDateValue(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function goLiveValue(value) {
