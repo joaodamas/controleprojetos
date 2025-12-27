@@ -2,6 +2,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyAR1f27oMx0maMDQ_HRGaJQ5MDIVpUnkwQ",
   authDomain: "controle-projetos-a55d5.firebaseapp.com",
   projectId: "controle-projetos-a55d5",
+  databaseURL: "https://controle-projetos-a55d5-default-rtdb.firebaseio.com",
   storageBucket: "controle-projetos-a55d5.firebasestorage.app",
   messagingSenderId: "211361267384",
   appId: "1:211361267384:web:b263ea8fd2198fbffc3e4d",
@@ -338,43 +339,46 @@ async function initFirebase() {
     console.warn("Firebase nao configurado. Usando dados locais.");
     return false;
   }
-  firebase.initializeApp(firebaseConfig);
-  db = firebase.firestore();
-  return true;
+  try {
+    if (!firebase.apps?.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    db = firebase.database();
+    return true;
+  } catch (err) {
+    console.error("Falha ao inicializar Firebase.", err);
+    db = null;
+    return false;
+  }
 }
 
 async function loadStateFromDb() {
   if (!db) return;
-  const clientsSnap = await db.collection("clients").get();
-  const clients = await Promise.all(
-    clientsSnap.docs.map(async (clientDoc) => {
-      const clientData = clientDoc.data();
-      const projectsSnap = await clientDoc.ref.collection("projects").get();
-      const projects = await Promise.all(
-        projectsSnap.docs.map(async (projDoc) => {
-          const projData = projDoc.data();
-          const tasksSnap = await projDoc.ref.collection("tasks").get();
-          const tasks = tasksSnap.docs.map((taskDoc) => ({
-            id: taskDoc.id,
-            ...taskDoc.data()
-          }));
-          const progress = computeProgress(tasks);
-          const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
-          const packages = Array.isArray(projData.packages) ? projData.packages : [];
-          return {
-            id: projDoc.id,
-            clientId: clientDoc.id,
-            ...projData,
-            progress,
-            epics,
-            packages,
-            tasks
-          };
-        })
-      );
-      return { id: clientDoc.id, ...clientData, projects };
-    })
-  );
+  const snapshot = await db.ref("clients").once("value");
+  const clientsData = snapshot.val() || {};
+  const clients = Object.entries(clientsData).map(([clientId, clientData]) => {
+    const projectsData = clientData.projects || {};
+    const projects = Object.entries(projectsData).map(([projectId, projData]) => {
+      const tasksData = projData.tasks || {};
+      const tasks = Object.entries(tasksData).map(([taskId, taskData]) => ({
+        id: taskId,
+        ...taskData
+      }));
+      const progress = computeProgress(tasks);
+      const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
+      const packages = Array.isArray(projData.packages) ? projData.packages : [];
+      return {
+        id: projectId,
+        clientId,
+        ...projData,
+        progress,
+        epics,
+        packages,
+        tasks
+      };
+    });
+    return { id: clientId, ...clientData, projects };
+  });
 
   state.clients = clients;
   state.selectedClient = clients[0] || null;
@@ -506,10 +510,10 @@ function updateTopActions() {
   const openEmployeeBtn = byId("open-employee-modal");
   const isHome = state.currentSection === "inicio";
   const isProject = state.currentSection === "meus-projetos";
-  openProjectBtn.classList.toggle("hidden", isHome);
-  openEmployeeBtn.classList.toggle("hidden", isHome);
-  deleteProjectBtn.classList.toggle("hidden", !isProject);
-  editProjectBtn.classList.toggle("hidden", !isProject);
+  if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome);
+  if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome);
+  if (deleteProjectBtn) deleteProjectBtn.classList.toggle("hidden", !isProject);
+  if (editProjectBtn) editProjectBtn.classList.toggle("hidden", !isProject);
 }
 
 function renderHome(container) {
@@ -752,9 +756,15 @@ function wireModals() {
   const editProjectBtn = byId("edit-project-btn");
   const openEmployeeBtn = byId("open-employee-modal");
 
-  openProjectBtn.addEventListener("click", () => openProjectModal("new"));
-  editProjectBtn.addEventListener("click", () => openProjectModal("edit"));
-  openEmployeeBtn.addEventListener("click", () => showModal(employeeModal));
+  if (openProjectBtn) {
+    openProjectBtn.addEventListener("click", () => openProjectModal("new"));
+  }
+  if (editProjectBtn) {
+    editProjectBtn.addEventListener("click", () => openProjectModal("edit"));
+  }
+  if (openEmployeeBtn && employeeModal) {
+    openEmployeeBtn.addEventListener("click", () => showModal(employeeModal));
+  }
   document.body.addEventListener("click", (e) => {
     if (e.target.closest("[data-open-activity]")) {
       openActivityModal("new");
@@ -763,169 +773,179 @@ function wireModals() {
 
   document.querySelectorAll("[data-close-modal]").forEach((el) => {
     el.addEventListener("click", () => {
-      hideModal(projectModal);
-      hideModal(employeeModal);
-      hideModal(activityModal);
+      if (projectModal) hideModal(projectModal);
+      if (employeeModal) hideModal(employeeModal);
+      if (activityModal) hideModal(activityModal);
       resetProjectModal();
       resetActivityModal();
     });
   });
 
-  deleteProjectBtn.addEventListener("click", () => handleDeleteProject());
+  if (deleteProjectBtn) {
+    deleteProjectBtn.addEventListener("click", () => handleDeleteProject());
+  }
 
   const projectForm = byId("project-form");
-  projectForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const data = new FormData(projectForm);
-    let clientName = data.get("client");
-    if (clientName === "__new__") {
-      const name = promptNewClientName();
-      if (!name) return;
-      const existing = findClientByName(name);
-      const client = existing || addClientToState(name);
-      if (db) {
-        ensureClientDoc(client.name).catch((err) => console.error(err));
+  if (projectForm) {
+    projectForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const data = new FormData(projectForm);
+      let clientName = data.get("client");
+      if (clientName === "__new__") {
+        const name = promptNewClientName();
+        if (!name) return;
+        const existing = findClientByName(name);
+        const client = existing || addClientToState(name);
+        if (db) {
+          ensureClientDoc(client.name).catch((err) => console.error(err));
+        }
+        hydrateClientSelect(client.name);
+        clientName = client.name;
       }
-      hydrateClientSelect(client.name);
-      clientName = client.name;
-    }
-    const payload = {
-      name: data.get("name"),
-      developer: data.get("developer"),
-      start: data.get("start"),
-      end: data.get("end"),
-      client: clientName
-    };
+      const payload = {
+        name: data.get("name"),
+        developer: data.get("developer"),
+        start: data.get("start"),
+        end: data.get("end"),
+        client: clientName
+      };
 
-    if (state.editingProjectId) {
-      if (db && state.selectedProject?.id && state.selectedProject?.clientId) {
-        updateProjectOnDb(state.selectedProject.clientId, state.selectedProject.id, payload)
+      if (state.editingProjectId) {
+        if (db && state.selectedProject?.id && state.selectedProject?.clientId) {
+          updateProjectOnDb(state.selectedProject.clientId, state.selectedProject.id, payload)
+            .then(async () => {
+              await loadStateFromDb();
+              resetProjectModal();
+              if (projectModal) hideModal(projectModal);
+            })
+            .catch((err) => {
+              console.error(err);
+              alert("Erro ao atualizar projeto no Firebase.");
+            });
+        } else {
+          updateProjectInState(payload);
+          saveLocalState();
+          renderClientList();
+          renderMain();
+          resetProjectModal();
+          if (projectModal) hideModal(projectModal);
+        }
+        return;
+      }
+
+      if (db) {
+        saveProjectToDb(payload)
           .then(async () => {
             await loadStateFromDb();
             resetProjectModal();
-            hideModal(projectModal);
+            if (projectModal) hideModal(projectModal);
           })
           .catch((err) => {
             console.error(err);
-            alert("Erro ao atualizar projeto no Firebase.");
+            alert("Erro ao salvar projeto no Firebase.");
           });
       } else {
-        updateProjectInState(payload);
+        const client = state.clients.find((c) => c.name === clientName);
+        if (!client) {
+          alert("Cliente nao encontrado.");
+          return;
+        }
+        const newProject = { ...payload, tasks: [], epics: DEFAULT_EPICS.slice(), packages: [] };
+        client.projects.push(newProject);
+        state.selectedClient = client;
+        state.selectedProject = newProject;
         saveLocalState();
         renderClientList();
         renderMain();
         resetProjectModal();
-        hideModal(projectModal);
+        if (projectModal) hideModal(projectModal);
       }
-      return;
-    }
-
-    if (db) {
-      saveProjectToDb(payload)
-        .then(async () => {
-          await loadStateFromDb();
-          resetProjectModal();
-          hideModal(projectModal);
-        })
-        .catch((err) => {
-          console.error(err);
-          alert("Erro ao salvar projeto no Firebase.");
-        });
-    } else {
-      const client = state.clients.find((c) => c.name === clientName);
-      if (!client) {
-        alert("Cliente nao encontrado.");
-        return;
-      }
-      const newProject = { ...payload, tasks: [], epics: DEFAULT_EPICS.slice(), packages: [] };
-      client.projects.push(newProject);
-      state.selectedClient = client;
-      state.selectedProject = newProject;
-      saveLocalState();
-      renderClientList();
-      renderMain();
-      resetProjectModal();
-      hideModal(projectModal);
-    }
-  });
+    });
+  } else {
+    console.warn("Formulario de projeto nao encontrado.");
+  }
 
   const employeeForm = byId("employee-form");
-  employeeForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const data = new FormData(employeeForm);
-    const employee = {
-      name: data.get("name"),
-      role: data.get("role"),
-      email: data.get("email")
-    };
-    state.employees.push(employee);
-    saveLocalState();
-    employeeForm.reset();
-    hideModal(employeeModal);
-    alert("Funcionario cadastrado!");
-  });
+  if (employeeForm) {
+    employeeForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const data = new FormData(employeeForm);
+      const employee = {
+        name: data.get("name"),
+        role: data.get("role"),
+        email: data.get("email")
+      };
+      state.employees.push(employee);
+      saveLocalState();
+      employeeForm.reset();
+      if (employeeModal) hideModal(employeeModal);
+      alert("Funcionario cadastrado!");
+    });
+  }
 
   const activityForm = byId("activity-form");
-  activityForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const { selectedProject } = state;
-    if (!selectedProject) {
-      alert("Nenhum projeto selecionado.");
-      return;
-    }
-    const data = new FormData(activityForm);
-    const task = {
-      title: data.get("title"),
-      phase: data.get("phase"),
-      package: data.get("package") || "",
-      due: data.get("due"),
-      status: data.get("status")
-    };
-    if (state.editingTaskIndex !== null && state.editingTaskIndex !== undefined) {
-      const idx = Number(state.editingTaskIndex);
-      const currentTask = selectedProject.tasks?.[idx];
-      if (!currentTask) return;
-      const payload = { ...currentTask, ...task };
-      if (db && selectedProject.id && selectedProject.clientId && currentTask.id) {
-        updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload)
+  if (activityForm) {
+    activityForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const { selectedProject } = state;
+      if (!selectedProject) {
+        alert("Nenhum projeto selecionado.");
+        return;
+      }
+      const data = new FormData(activityForm);
+      const task = {
+        title: data.get("title"),
+        phase: data.get("phase"),
+        package: data.get("package") || "",
+        due: data.get("due"),
+        status: data.get("status")
+      };
+      if (state.editingTaskIndex !== null && state.editingTaskIndex !== undefined) {
+        const idx = Number(state.editingTaskIndex);
+        const currentTask = selectedProject.tasks?.[idx];
+        if (!currentTask) return;
+        const payload = { ...currentTask, ...task };
+        if (db && selectedProject.id && selectedProject.clientId && currentTask.id) {
+          updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload)
+            .then(async () => {
+              await loadStateFromDb();
+              resetActivityModal();
+              if (activityModal) hideModal(activityModal);
+            })
+            .catch((err) => {
+              console.error(err);
+              alert("Erro ao atualizar atividade no Firebase.");
+            });
+        } else {
+          selectedProject.tasks[idx] = payload;
+          saveLocalState();
+          renderMain();
+          resetActivityModal();
+          if (activityModal) hideModal(activityModal);
+        }
+        return;
+      }
+
+      if (db && selectedProject.id && selectedProject.clientId) {
+        saveTaskToDb(selectedProject.clientId, selectedProject.id, task)
           .then(async () => {
             await loadStateFromDb();
             resetActivityModal();
-            hideModal(activityModal);
+            if (activityModal) hideModal(activityModal);
           })
           .catch((err) => {
             console.error(err);
-            alert("Erro ao atualizar atividade no Firebase.");
+            alert("Erro ao salvar atividade no Firebase.");
           });
       } else {
-        selectedProject.tasks[idx] = payload;
+        selectedProject.tasks.push(task);
         saveLocalState();
         renderMain();
         resetActivityModal();
-        hideModal(activityModal);
+        if (activityModal) hideModal(activityModal);
       }
-      return;
-    }
-
-    if (db && selectedProject.id && selectedProject.clientId) {
-      saveTaskToDb(selectedProject.clientId, selectedProject.id, task)
-        .then(async () => {
-          await loadStateFromDb();
-          resetActivityModal();
-          hideModal(activityModal);
-        })
-        .catch((err) => {
-          console.error(err);
-          alert("Erro ao salvar atividade no Firebase.");
-        });
-    } else {
-      selectedProject.tasks.push(task);
-      saveLocalState();
-      renderMain();
-      resetActivityModal();
-      hideModal(activityModal);
-    }
-  });
+    });
+  }
 
   const activityPhaseSelect = byId("activity-phase-select");
   if (activityPhaseSelect) {
@@ -1567,114 +1587,77 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function ensureClientDoc(clientName) {
-  const existing = await db
-    .collection("clients")
-    .where("name", "==", clientName)
-    .limit(1)
-    .get();
-  if (!existing.empty) return existing.docs[0].ref;
-  return db.collection("clients").add({ name: clientName });
+  const query = db.ref("clients").orderByChild("name").equalTo(clientName).limitToFirst(1);
+  const existing = await query.once("value");
+  if (existing.exists()) {
+    const clientId = Object.keys(existing.val())[0];
+    return { id: clientId, ref: db.ref(`clients/${clientId}`) };
+  }
+  const newRef = db.ref("clients").push();
+  await newRef.set({ name: clientName, projects: {} });
+  return { id: newRef.key, ref: newRef };
 }
 
 async function deleteProjectFromDb(clientId, projectId) {
-  const projectRef = db.collection("clients").doc(clientId).collection("projects").doc(projectId);
-  const tasks = await projectRef.collection("tasks").get();
-  const batch = db.batch();
-  tasks.forEach((doc) => batch.delete(doc.ref));
-  batch.delete(projectRef);
-  await batch.commit();
+  await db.ref(`clients/${clientId}/projects/${projectId}`).remove();
 }
 
 async function saveProjectToDb(payload) {
-  const clientRef = await ensureClientDoc(payload.client);
-  await clientRef.collection("projects").add({
+  const client = await ensureClientDoc(payload.client);
+  const projectRef = client.ref.child("projects").push();
+  await projectRef.set({
     name: payload.name,
     developer: payload.developer,
     start: payload.start,
     end: payload.end,
     epics: DEFAULT_EPICS.slice(),
     packages: [],
-    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    tasks: {},
+    createdAt: firebase.database.ServerValue.TIMESTAMP
   });
 }
 
 async function updateProjectOnDb(clientId, projectId, payload) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .update({
-      name: payload.name,
-      developer: payload.developer,
-      start: payload.start,
-      end: payload.end
-    });
+  await db.ref(`clients/${clientId}/projects/${projectId}`).update({
+    name: payload.name,
+    developer: payload.developer,
+    start: payload.start,
+    end: payload.end
+  });
 }
 
 async function saveTaskToDb(clientId, projectId, task) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .collection("tasks")
-    .add({
-      title: task.title,
-      phase: task.phase,
-      package: task.package,
-      due: task.due,
-      status: task.status,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+  const taskRef = db.ref(`clients/${clientId}/projects/${projectId}/tasks`).push();
+  await taskRef.set({
+    title: task.title,
+    phase: task.phase,
+    package: task.package,
+    due: task.due,
+    status: task.status,
+    createdAt: firebase.database.ServerValue.TIMESTAMP
+  });
 }
 
 async function updateTaskStatusOnDb(clientId, projectId, taskId, status) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .collection("tasks")
-    .doc(taskId)
-    .update({ status });
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({ status });
 }
 
 async function updateTaskOnDb(clientId, projectId, taskId, payload) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .collection("tasks")
-    .doc(taskId)
-    .update({
-      title: payload.title,
-      phase: payload.phase,
-      package: payload.package,
-      due: payload.due,
-      status: payload.status
-    });
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({
+    title: payload.title,
+    phase: payload.phase,
+    package: payload.package,
+    due: payload.due,
+    status: payload.status
+  });
 }
 
 async function deleteTaskFromDb(clientId, projectId, taskId) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .collection("tasks")
-    .doc(taskId)
-    .delete();
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).remove();
 }
 
 async function updateProjectPackagesOnDb(clientId, projectId, packages) {
-  await db
-    .collection("clients")
-    .doc(clientId)
-    .collection("projects")
-    .doc(projectId)
-    .update({ packages });
+  await db.ref(`clients/${clientId}/projects/${projectId}`).update({ packages });
 }
 
 function projectMetrics(tasks = []) {
