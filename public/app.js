@@ -238,6 +238,7 @@ const DASHBOARD_COLUMNS = [
   { key: "clientName", label: "Cliente", type: "text" },
   { key: "developer", label: "Responsavel", type: "text" },
   { key: "status", label: "Status", type: "text" },
+  { key: "schedule", label: "Prazo", type: "text" },
   { key: "progress", label: "Progresso", type: "number" },
   { key: "goLive", label: "Go Live previsto", type: "date" }
 ];
@@ -303,6 +304,1158 @@ function formatDateBR(value) {
   const mm = String(dt.getMonth() + 1).padStart(2, "0");
   const yyyy = dt.getFullYear();
   return `${dd}/${mm}/${yyyy}`;
+}
+
+function projectTaskCounts(tasks = []) {
+  const counts = {
+    total: tasks.length,
+    em_andamento: 0,
+    planejado: 0,
+    atrasado: 0,
+    concluido: 0
+  };
+  tasks.forEach((task) => {
+    const status = (task.status || "").toLowerCase();
+    if (status === "em_andamento") counts.em_andamento += 1;
+    else if (status === "planejado") counts.planejado += 1;
+    else if (status === "atrasado") counts.atrasado += 1;
+    else if (status === "concluido") counts.concluido += 1;
+  });
+  return counts;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function normStatus(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function taskTitle(task) {
+  return task?.title || task?.name || task?.item || task?.summary || "(Sem titulo)";
+}
+
+function taskOwner(task) {
+  return task?.owner || task?.responsible || task?.assignee || "";
+}
+
+function taskProgress(task) {
+  const p = task?.progressPct ?? task?.progress ?? task?.percent ?? null;
+  const n = Number(p);
+  return Number.isFinite(n) ? n : null;
+}
+
+function taskDateStr(task) {
+  return (
+    task?.startDate ||
+    task?.start ||
+    task?.plannedStart ||
+    task?.dueDate ||
+    task?.due ||
+    task?.endDate ||
+    task?.end ||
+    ""
+  );
+}
+
+function taskDateValueSafe(task) {
+  const dt = parseTaskDate(taskDateStr(task));
+  return dt ? dt.getTime() : Number.POSITIVE_INFINITY;
+}
+
+function isDoneTask(task) {
+  const st = normStatus(task?.status || task?.state);
+  const p = taskProgress(task);
+  return /CONCLU|DONE|FEITO|FINALIZ/.test(st) || p === 100;
+}
+
+function isInProgressTask(task) {
+  const st = normStatus(task?.status || task?.state);
+  const p = taskProgress(task);
+  if (p != null) return p > 0 && p < 100;
+  return /ANDAMENTO|IN\\s*PROGRESS|EXECU/.test(st);
+}
+
+function isPlannedTask(task) {
+  const st = normStatus(task?.status || task?.state);
+  const p = taskProgress(task);
+  if (p != null) return p === 0;
+  return /PLANEJ|TODO|A\\s*FAZER|BACKLOG|PENDEN/.test(st) || st === "";
+}
+
+function flattenProjectTasks(project) {
+  const epics = project?.epics || project?.epicsList || [];
+  const tasksFromEpics = Array.isArray(epics)
+    ? epics.flatMap((epic) => epic?.tasks || epic?.items || [])
+    : [];
+  const direct = project?.tasks || project?.items || project?.activities || [];
+  const all = [...tasksFromEpics, ...direct];
+  return all.filter(Boolean);
+}
+
+function pickExportLists(project) {
+  const tasks = flattenProjectTasks(project);
+
+  const done = tasks
+    .filter(isDoneTask)
+    .slice()
+    .sort((a, b) => taskDateValueSafe(b) - taskDateValueSafe(a))
+    .slice(0, 5);
+
+  const inProgress = tasks
+    .filter((task) => !isDoneTask(task) && isInProgressTask(task))
+    .slice()
+    .sort((a, b) => taskDateValueSafe(a) - taskDateValueSafe(b))
+    .slice(0, 5);
+
+  const nextSteps = tasks
+    .filter((task) => !isDoneTask(task) && !isInProgressTask(task) && isPlannedTask(task))
+    .slice()
+    .sort((a, b) => taskDateValueSafe(a) - taskDateValueSafe(b))
+    .slice(0, 5);
+
+  return { done, inProgress, nextSteps };
+}
+
+function taskDueStr(task) {
+  return (
+    task?.dueDate ||
+    task?.due ||
+    task?.plannedEnd ||
+    task?.endDate ||
+    task?.end ||
+    task?.deadline ||
+    ""
+  );
+}
+
+function taskDueValueSafe(task) {
+  const dt = parseTaskDate(taskDueStr(task));
+  return dt ? dt.getTime() : Number.POSITIVE_INFINITY;
+}
+
+function todayStartTs() {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return d.getTime();
+}
+
+function isOverdueTask(task) {
+  if (isDoneTask(task)) return false;
+  const due = taskDueValueSafe(task);
+  if (!Number.isFinite(due) || due === Number.POSITIVE_INFINITY) return false;
+  return due < todayStartTs();
+}
+
+function computeScheduleSummary(project) {
+  const tasks = flattenProjectTasks(project);
+  const total = tasks.length;
+  const inProgress = tasks.filter((task) => !isDoneTask(task) && isInProgressTask(task)).length;
+  const planned = tasks.filter((task) => !isDoneTask(task) && !isInProgressTask(task) && isPlannedTask(task)).length;
+  const overdue = tasks.filter(isOverdueTask).length;
+  const scheduleHealthStatus = overdue > 0 ? "em_atraso" : "em_dia";
+  return { total, inProgress, planned, overdue, scheduleHealthStatus };
+}
+
+function renderTaskLi(task) {
+  const dateRaw = taskDateStr(task);
+  const dateLabel = dateRaw ? formatDateBR(dateRaw) : "";
+  const owner = taskOwner(task);
+  const right = [owner, dateLabel].filter(Boolean).join(" • ");
+  return `
+    <li class="op-task">
+      <div class="op-task-title">${escapeHtml(taskTitle(task))}</div>
+      ${right ? `<div class="op-task-meta">${escapeHtml(right)}</div>` : ""}
+    </li>
+  `;
+}
+
+function latestCompletedTasks(tasks = [], limit = 5) {
+  return tasks
+    .filter((task) => (task.status || "").toLowerCase() === "concluido")
+    .slice()
+    .sort((a, b) => {
+      const aTs = dateMetricValue(a.due) ?? Number.NEGATIVE_INFINITY;
+      const bTs = dateMetricValue(b.due) ?? Number.NEGATIVE_INFINITY;
+      if (aTs !== bTs) return bTs - aTs;
+      return (a.title || "").localeCompare(b.title || "");
+    })
+    .slice(0, limit);
+}
+
+function buildProjectReportStyles() {
+  return `
+    :root {
+      --text: #1f252f;
+      --muted: #7b8794;
+      --border: #e4e8f0;
+      --panel: #ffffff;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      --success-bg: #e6f6ed;
+      --success-text: #1e824c;
+      --danger-bg: #ffe5e5;
+      --danger-text: #c01b24;
+      --info-bg: #e5f0ff;
+      --info-text: #1b63c3;
+      --muted-bg: #f1f2f6;
+      --muted-text: #6b7280;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Poppins", system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background: #f4f6fb;
+    }
+
+    .report-page {
+      max-width: 1100px;
+      margin: 24px auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .report-header {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .report-title {
+      font-size: 26px;
+      font-weight: 800;
+      margin: 0 0 6px;
+    }
+
+    .report-subtitle {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .report-meta {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .report-health {
+      display: grid;
+      gap: 10px;
+      justify-items: end;
+    }
+
+    .health-box {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .pill.planejado { background: var(--muted-bg); color: var(--muted-text); }
+    .pill.em-andamento { background: var(--info-bg); color: var(--info-text); }
+    .pill.atrasado { background: var(--danger-bg); color: var(--danger-text); }
+    .pill.concluido { background: var(--success-bg); color: var(--success-text); }
+    .pill.em-dia { background: var(--success-bg); color: var(--success-text); }
+    .pill.em-atraso { background: var(--danger-bg); color: var(--danger-text); }
+
+    .report-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .report-card {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .report-card h3 {
+      margin: 0 0 10px;
+      font-size: 16px;
+    }
+
+    .report-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text);
+      display: grid;
+      gap: 8px;
+    }
+
+    .report-list li {
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .report-list span {
+      color: var(--muted);
+      font-size: 12px;
+      margin-left: 6px;
+    }
+
+    .report-progress {
+      display: grid;
+      gap: 8px;
+    }
+
+    .progress-value {
+      font-size: 32px;
+      font-weight: 800;
+    }
+
+    .progress-meta {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .counts-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(140px, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .count-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .count-card strong {
+      display: block;
+      font-size: 20px;
+      margin-top: 6px;
+    }
+
+    .count-card.total { background: #f8fafc; }
+    .count-card.em-andamento { background: var(--info-bg); color: var(--info-text); }
+    .count-card.planejado { background: var(--muted-bg); color: var(--muted-text); }
+    .count-card.atrasado { background: var(--danger-bg); color: var(--danger-text); }
+
+    .op-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .op-list {
+      list-style: none;
+      padding: 0;
+      margin: 8px 0 0;
+      display: grid;
+      gap: 8px;
+    }
+
+    .op-task {
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    .op-task:last-child {
+      border-bottom: none;
+    }
+
+    .op-task-title {
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .op-task-meta {
+      margin-top: 2px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .op-kpis {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .op-kpi {
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      background: #fff;
+    }
+
+    .op-kpi-label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .op-kpi-value {
+      font-size: 22px;
+      font-weight: 700;
+      margin-top: 4px;
+    }
+
+    .kpi-total { background: #f8fafc; }
+    .kpi-progress { background: var(--info-bg); color: var(--info-text); }
+    .kpi-planned { background: var(--muted-bg); color: var(--muted-text); }
+    .kpi-overdue { background: var(--danger-bg); color: var(--danger-text); }
+
+    @media print {
+      body { background: #fff; }
+      .report-page {
+        margin: 0;
+        box-shadow: none;
+        border: none;
+      }
+    }
+  `;
+}
+
+function buildProjectReportStylesScoped() {
+  return buildProjectReportStyles()
+    .replace(/:root/g, "#export-onepage-root")
+    .replace(/\bbody\b/g, "#export-onepage-root");
+}
+
+function buildProjectReportSection({ project, client, metrics }) {
+  const { done, inProgress, nextSteps } = pickExportLists(project);
+  const schedule = computeScheduleSummary(project);
+  const statusBadge = statusInfo(projectStatus(project, metrics));
+  const scheduleBadge = scheduleStatusInfo(schedule.scheduleHealthStatus);
+  const progress = metrics.progress ?? 0;
+  const goLiveLabel = formatDateBR(project.end || project.goLive || project.goLiveDate || "");
+  const startLabel = formatDateBR(project.start || "");
+  const developer = project.developer || "A definir";
+  const clientName = client?.name || "Cliente";
+
+  const latestList = latest.length
+    ? latest
+        .map((task) => `<li>${task.title || "Atividade"} <span>${formatDateBR(task.due)}</span></li>`)
+        .join("")
+    : "<li>Nenhuma atividade concluida.</li>";
+
+  return `
+    <div class="report-page">
+      <div class="report-header">
+        <div>
+          <div class="report-title">${project.name || "Projeto"}</div>
+          <div class="report-subtitle">${clientName} • ${developer}</div>
+          <div class="report-meta">
+            <span>Inicio: ${startLabel || "-"}</span>
+            <span>Go Live: ${goLiveLabel || "-"}</span>
+          </div>
+        </div>
+        <div class="report-health">
+          <div class="report-progress">
+            <div class="progress-value">${progress}%</div>
+            <div class="progress-meta">${statusBadge.label} • Go Live: ${goLiveLabel || "-"}</div>
+          </div>
+          <div class="health-box">
+            <span>Status do projeto</span>
+            <span class="pill ${statusBadge.className}">${statusBadge.label}</span>
+          </div>
+          <div class="health-box">
+            <span>Prazo</span>
+            <span class="pill ${scheduleBadge.className}">${scheduleBadge.label}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="report-grid">
+        <div class="report-card">
+          <h3>Destaques (ultimas 5 concluidas)</h3>
+          <ul class="report-list">
+            ${latestList}
+          </ul>
+        </div>
+        <div class="report-card">
+          <h3>Saude do projeto</h3>
+          <div class="health-box">
+            <span>Status</span>
+            <span class="pill ${statusBadge.className}">${statusBadge.label}</span>
+          </div>
+          <div class="health-box" style="margin-top:10px;">
+            <span>Prazo</span>
+            <span class="pill ${scheduleBadge.className}">${scheduleBadge.label}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="report-card" style="margin-top:18px;">
+        <h3>Resumo do Cronograma</h3>
+        <div class="report-meta">Total de atividades: ${counts.total}</div>
+        <div class="counts-grid">
+          <div class="count-card em-andamento">
+            Em andamento
+            <strong>${counts.em_andamento}</strong>
+          </div>
+          <div class="count-card planejado">
+            Planejado
+            <strong>${counts.planejado}</strong>
+          </div>
+          <div class="count-card atrasado">
+            Em atraso
+            <strong>${counts.atrasado}</strong>
+          </div>
+          <div class="count-card total">
+            Total
+            <strong>${counts.total}</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function buildProjectReportHtml({ project, client, metrics }) {
+  return `<!DOCTYPE html>
+  <html lang="pt-BR">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Resumo ${project.name || "Projeto"}</title>
+      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
+      <style>${buildProjectReportStyles()}</style>
+    </head>
+    <body>
+      ${buildProjectReportSection({ project, client, metrics })}
+    </body>
+  </html>`;
+}
+
+function renderOnePageExportHtml({ project, client, metrics }) {
+  const { done, inProgress, nextSteps } = pickExportLists(project);
+  const schedule = computeScheduleSummary(project);
+  const statusBadge = statusInfo(projectStatus(project, metrics));
+  const scheduleBadge = scheduleStatusInfo(schedule.scheduleHealthStatus);
+  const progress = metrics?.progress ?? 0;
+  const goLiveLabel = formatDateBR(project.end || project.goLive || project.goLiveDate || "");
+  const startLabel = formatDateBR(project.start || "");
+  const developer = project.developer || "A definir";
+  const clientName = client?.name || "Cliente";
+
+  const doneList = (done.length ? done : [{ title: "Sem atividades" }]).map(renderTaskLi).join("");
+  const inProgressList = (inProgress.length ? inProgress : [{ title: "Sem atividades" }])
+    .map(renderTaskLi)
+    .join("");
+  const nextStepsList = (nextSteps.length ? nextSteps : [{ title: "Sem atividades" }])
+    .map(renderTaskLi)
+    .join("");
+
+  return `<style>${buildProjectReportStylesScoped()}</style>
+    <div class="report-page">
+      <div class="report-header">
+        <div>
+          <div class="report-title">${escapeHtml(project.name || "Projeto")}</div>
+          <div class="report-subtitle">${escapeHtml(clientName)} • ${escapeHtml(developer)}</div>
+          <div class="report-meta">
+            <span>Inicio: ${escapeHtml(startLabel || "-")}</span>
+            <span>Go Live: ${escapeHtml(goLiveLabel || "-")}</span>
+          </div>
+        </div>
+        <div class="report-health">
+          <div class="report-progress">
+            <div class="progress-value">${progress}%</div>
+            <div class="progress-meta">${statusBadge.label} • Go Live: ${escapeHtml(goLiveLabel || "-")}</div>
+          </div>
+          <div class="health-box">
+            <span>Status do projeto</span>
+            <span class="pill ${statusBadge.className}">${statusBadge.label}</span>
+          </div>
+          <div class="health-box">
+            <span>Prazo</span>
+            <span class="pill ${scheduleBadge.className}">${scheduleBadge.label}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="report-grid">
+        <div class="report-card">
+          <h3>Saude</h3>
+          <div class="health-box">
+            <span>Status do projeto</span>
+            <span class="pill ${statusBadge.className}">${statusBadge.label}</span>
+          </div>
+          <div class="health-box" style="margin-top:10px;">
+            <span>Prazo</span>
+            <span class="pill ${scheduleBadge.className}">${scheduleBadge.label}</span>
+          </div>
+        </div>
+        <div class="report-card">
+          <h3>Resumo do Cronograma</h3>
+          <div class="op-kpis">
+            <div class="op-kpi kpi-total">
+              <div class="op-kpi-label">Total</div>
+              <div class="op-kpi-value">${schedule.total}</div>
+            </div>
+            <div class="op-kpi kpi-progress">
+              <div class="op-kpi-label">Em andamento</div>
+              <div class="op-kpi-value">${schedule.inProgress}</div>
+            </div>
+            <div class="op-kpi kpi-planned">
+              <div class="op-kpi-label">Planejado</div>
+              <div class="op-kpi-value">${schedule.planned}</div>
+            </div>
+            <div class="op-kpi kpi-overdue">
+              <div class="op-kpi-label">Em atraso</div>
+              <div class="op-kpi-value">${schedule.overdue}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="op-grid-3">
+        <section class="report-card">
+          <h3>Ultimas Concluidas</h3>
+          <ul class="op-list">${doneList}</ul>
+        </section>
+
+        <section class="report-card">
+          <h3>Em Andamento</h3>
+          <ul class="op-list">${inProgressList}</ul>
+        </section>
+
+        <section class="report-card">
+          <h3>Proximos Passos</h3>
+          <ul class="op-list">${nextStepsList}</ul>
+        </section>
+      </div>
+    </div>`;
+}
+
+function safeFileName(value, fallback = "projeto") {
+  const raw = String(value || "").toLowerCase();
+  const cleaned = raw.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return cleaned || fallback;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForImages(rootEl) {
+  const imgs = Array.from(rootEl.querySelectorAll("img"));
+  await Promise.all(
+    imgs.map((img) => {
+      if (img.complete) return Promise.resolve();
+      return new Promise((resolve) => {
+        img.onload = () => resolve();
+        img.onerror = () => resolve();
+      });
+    })
+  );
+}
+
+function getJsPDF() {
+  if (window.jspdf?.jsPDF) return window.jspdf.jsPDF;
+  return window.jsPDF;
+}
+
+async function exportProjectReportPdf() {
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+  if (!project || !client) {
+    alert("Nenhum projeto selecionado.");
+    return;
+  }
+  const metrics = projectMetrics(project.tasks || []);
+  const filename = `${safeFileName(project.name, "projeto")}-onepage.pdf`;
+
+  if (!window.html2canvas) {
+    alert("html2canvas nao carregou.");
+    return;
+  }
+  const JsPDF = getJsPDF();
+  if (!JsPDF) {
+    alert("jsPDF nao carregou.");
+    return;
+  }
+
+  const priorRoot = document.getElementById("export-onepage-root");
+  if (priorRoot) priorRoot.remove();
+
+  const root = document.createElement("div");
+  root.id = "export-onepage-root";
+  root.innerHTML = renderOnePageExportHtml({ project, client, metrics });
+  document.body.appendChild(root);
+
+  try {
+    if (document.fonts?.ready) await document.fonts.ready;
+    await sleep(50);
+    await waitForImages(root);
+    await sleep(50);
+
+    const canvas = await window.html2canvas(root, {
+      scale: 2,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      allowTaint: true,
+      scrollX: 0,
+      scrollY: 0,
+      onclone: (clonedDoc) => {
+        const clonedRoot = clonedDoc.getElementById("export-onepage-root");
+        if (clonedRoot) {
+          clonedRoot.style.opacity = "1";
+          clonedRoot.style.visibility = "visible";
+          clonedRoot.style.display = "block";
+        }
+      }
+    });
+
+    const imgData = canvas.toDataURL("image/jpeg", 0.92);
+    const pdf = new JsPDF({ orientation: "p", unit: "pt", format: "a4" });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgW = pageW;
+    const imgH = (canvas.height * imgW) / canvas.width;
+
+    let y = 0;
+    pdf.addImage(imgData, "JPEG", 0, y, imgW, imgH, undefined, "FAST");
+    let remaining = imgH - pageH;
+
+    while (remaining > 0) {
+      pdf.addPage();
+      y -= pageH;
+      pdf.addImage(imgData, "JPEG", 0, y, imgW, imgH, undefined, "FAST");
+      remaining -= pageH;
+    }
+
+    pdf.save(filename);
+  } catch (err) {
+    console.error(err);
+    alert(`Falha ao exportar PDF: ${err.message || err}`);
+  } finally {
+    root.remove();
+  }
+}
+
+function exportProjectReportPptx() {
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+  if (!project || !client) {
+    alert("Nenhum projeto selecionado.");
+    return;
+  }
+  if (!window.PptxGenJS) {
+    alert("Biblioteca de exportacao PPTX nao carregada.");
+    return;
+  }
+
+  const metrics = projectMetrics(project.tasks || []);
+  const tasks = Array.isArray(project.tasks) ? project.tasks : [];
+  const latest = latestCompletedTasks(tasks, 5);
+  const counts = projectTaskCounts(tasks);
+  const statusBadge = statusInfo(projectStatus(project, metrics));
+  const scheduleBadge = scheduleStatusInfo(projectScheduleStatus(project));
+  const progress = metrics.progress ?? 0;
+  const goLiveLabel = formatDateBR(project.end || project.goLive || project.goLiveDate || "");
+  const startLabel = formatDateBR(project.start || "");
+  const developer = project.developer || "A definir";
+  const clientName = client?.name || "Cliente";
+
+  const pptx = new window.PptxGenJS();
+  pptx.layout = "LAYOUT_WIDE";
+  const slide = pptx.addSlide();
+
+  slide.addText(project.name || "Projeto", {
+    x: 0.5,
+    y: 0.4,
+    w: 12.5,
+    h: 0.6,
+    fontSize: 28,
+    bold: true,
+    color: "1F252F"
+  });
+  slide.addText(`${clientName} • ${developer}`, {
+    x: 0.5,
+    y: 1.0,
+    w: 7,
+    h: 0.3,
+    fontSize: 14,
+    color: "7B8794"
+  });
+  slide.addText(`Inicio: ${startLabel || "-"} | Go Live: ${goLiveLabel || "-"}`, {
+    x: 0.5,
+    y: 1.35,
+    w: 7,
+    h: 0.3,
+    fontSize: 12,
+    color: "7B8794"
+  });
+
+  slide.addText(`Progresso ${progress}%`, {
+    x: 9.2,
+    y: 0.4,
+    w: 3.5,
+    h: 0.4,
+    fontSize: 18,
+    bold: true,
+    color: "1F252F"
+  });
+  slide.addText(`${statusBadge.label} • Go Live ${goLiveLabel || "-"}`, {
+    x: 9.2,
+    y: 0.85,
+    w: 3.5,
+    h: 0.3,
+    fontSize: 11,
+    color: "7B8794"
+  });
+
+  const statusColorMap = {
+    planejado: { fill: "F1F2F6", text: "6B7280" },
+    "em-andamento": { fill: "E5F0FF", text: "1B63C3" },
+    atrasado: { fill: "FFE5E5", text: "C01B24" },
+    concluido: { fill: "E6F6ED", text: "1E824C" }
+  };
+  const scheduleColorMap = {
+    "em-dia": { fill: "E6F6ED", text: "1E824C" },
+    "em-atraso": { fill: "FFE5E5", text: "C01B24" }
+  };
+  const statusColors = statusColorMap[statusBadge.className] || statusColorMap.planejado;
+  const scheduleColors = scheduleColorMap[scheduleBadge.className] || scheduleColorMap["em-dia"];
+
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x: 9.2,
+    y: 1.3,
+    w: 3.4,
+    h: 0.45,
+    fill: { color: statusColors.fill },
+    line: { color: statusColors.fill },
+    radius: 0.1
+  });
+  slide.addText(`Status: ${statusBadge.label}`, {
+    x: 9.3,
+    y: 1.38,
+    w: 3.2,
+    h: 0.3,
+    fontSize: 11,
+    color: statusColors.text,
+    bold: true
+  });
+
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x: 9.2,
+    y: 1.85,
+    w: 3.4,
+    h: 0.45,
+    fill: { color: scheduleColors.fill },
+    line: { color: scheduleColors.fill },
+    radius: 0.1
+  });
+  slide.addText(`Prazo: ${scheduleBadge.label}`, {
+    x: 9.3,
+    y: 1.93,
+    w: 3.2,
+    h: 0.3,
+    fontSize: 11,
+    color: scheduleColors.text,
+    bold: true
+  });
+
+  slide.addText("Ultimas concluidas", {
+    x: 0.5,
+    y: 2.0,
+    w: 3.8,
+    h: 0.3,
+    fontSize: 12,
+    bold: true,
+    color: "1F252F"
+  });
+  const doneText = done.length
+    ? done.map((task) => `• ${task.title || "Atividade"} (${formatDateBR(taskDateStr(task))})`).join("\n")
+    : "Sem atividades.";
+  slide.addText(doneText, {
+    x: 0.5,
+    y: 2.35,
+    w: 3.8,
+    h: 2.8,
+    fontSize: 11,
+    color: "1F252F"
+  });
+
+  slide.addText("Em andamento", {
+    x: 4.75,
+    y: 2.0,
+    w: 3.8,
+    h: 0.3,
+    fontSize: 12,
+    bold: true,
+    color: "1F252F"
+  });
+  const progressText = inProgress.length
+    ? inProgress.map((task) => `• ${task.title || "Atividade"} (${formatDateBR(taskDateStr(task))})`).join("\n")
+    : "Sem atividades.";
+  slide.addText(progressText, {
+    x: 4.75,
+    y: 2.35,
+    w: 3.8,
+    h: 2.8,
+    fontSize: 11,
+    color: "1F252F"
+  });
+
+  slide.addText("Proximos passos", {
+    x: 9.0,
+    y: 2.0,
+    w: 3.8,
+    h: 0.3,
+    fontSize: 12,
+    bold: true,
+    color: "1F252F"
+  });
+  const nextText = nextSteps.length
+    ? nextSteps.map((task) => `• ${task.title || "Atividade"} (${formatDateBR(taskDateStr(task))})`).join("\n")
+    : "Sem atividades.";
+  slide.addText(nextText, {
+    x: 9.0,
+    y: 2.35,
+    w: 3.8,
+    h: 2.8,
+    fontSize: 11,
+    color: "1F252F"
+  });
+
+  slide.addText("Resumo do Cronograma", {
+    x: 0.5,
+    y: 5.5,
+    w: 6.0,
+    h: 0.3,
+    fontSize: 12,
+    bold: true,
+    color: "1F252F"
+  });
+  const summaryItems = [
+    { label: "Total", value: schedule.total, fill: "F8FAFC", text: "1F252F" },
+    { label: "Em andamento", value: schedule.inProgress, fill: "E5F0FF", text: "1B63C3" },
+    { label: "Planejado", value: schedule.planned, fill: "F1F2F6", text: "6B7280" },
+    { label: "Em atraso", value: schedule.overdue, fill: "FFE5E5", text: "C01B24" }
+  ];
+  summaryItems.forEach((item, idx) => {
+    const x = 0.5 + idx * 3.1;
+    const y = 5.85;
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x,
+      y,
+      w: 2.9,
+      h: 0.95,
+      fill: { color: item.fill },
+      line: { color: item.fill },
+      radius: 0.08
+    });
+    slide.addText(item.label, {
+      x: x + 0.15,
+      y: y + 0.12,
+      w: 2.6,
+      h: 0.2,
+      fontSize: 10,
+      color: item.text
+    });
+    slide.addText(String(item.value), {
+      x: x + 0.15,
+      y: y + 0.45,
+      w: 2.6,
+      h: 0.3,
+      fontSize: 18,
+      bold: true,
+      color: item.text
+    });
+  });
+
+  pptx.writeFile({ fileName: `projeto-${safeFileName(project.name)}.pptx` });
+}
+
+function exportProjectReport(format = "pdf") {
+  if (format === "pptx") {
+    exportProjectReportPptx();
+    return;
+  }
+  exportProjectReportPdf();
+}
+
+function clampPct(n) {
+  if (Number.isNaN(n) || n == null) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function getAllProjects(clients) {
+  const all = [];
+  (clients || []).forEach((c) => (c.projects || []).forEach((p) => all.push({ client: c, project: p })));
+  return all;
+}
+
+function getProjectStatus(project) {
+  const progress = clampPct(project.progress || 0);
+  if (progress >= 100) return "Concluido";
+
+  const end = project.end || project.goLive || project.goLiveDate || null;
+  const endDt = parseTaskDate(end);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+  if (endDt && endDt.getTime() < today) {
+    return "Atrasado";
+  }
+  if (progress > 0) return "Em andamento";
+  return "Planejado";
+}
+
+function getAllTasksFromProject(project) {
+  return Array.isArray(project.tasks) ? project.tasks : [];
+}
+
+function countTasksNextDays(clients, days = 7) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const end = start + days * 24 * 60 * 60 * 1000;
+
+  let count = 0;
+  const all = getAllProjects(clients);
+
+  for (const { project } of all) {
+    const tasks = getAllTasksFromProject(project);
+
+    for (const t of tasks) {
+      if ((t.status || "").toLowerCase() === "concluido") continue;
+
+      const dt = parseTaskDate(t.due);
+      if (!dt) continue;
+      const ts = dt.getTime();
+
+      if (ts >= start && ts <= end) count++;
+    }
+  }
+
+  return count;
+}
+
+function computeHomeMacroStats(clients) {
+  const allProjects = getAllProjects(clients);
+  const activeClients = (clients || []).filter((c) => (c.projects || []).length > 0).length;
+  const projectsActive = allProjects.filter(({ project }) => clampPct(project.progress || 0) < 100).length;
+  const tasksNext7 = countTasksNextDays(clients, 7);
+
+  const avgProgress =
+    allProjects.length === 0
+      ? 0
+      : Math.round(
+          allProjects.reduce((acc, { project }) => acc + clampPct(project.progress || 0), 0) / allProjects.length
+        );
+
+  const clientsCards = (clients || [])
+    .filter((c) => (c.projects || []).length > 0)
+    .map((c) => {
+      const projs = c.projects || [];
+      const avg = projs.length
+        ? Math.round(projs.reduce((a, p) => a + clampPct(p.progress || 0), 0) / projs.length)
+        : 0;
+
+      const counters = { Planejado: 0, "Em andamento": 0, Atrasado: 0, Concluido: 0 };
+      projs.forEach((p) => {
+        const st = getProjectStatus(p);
+        counters[st] = (counters[st] || 0) + 1;
+      });
+
+      return {
+        name: c.name || c.id || "Cliente",
+        projectsCount: projs.length,
+        avgProgress: avg,
+        counters
+      };
+    });
+
+  return { activeClients, projectsActive, tasksNext7, avgProgress, clientsCards };
+}
+
+function renderHomeMacroSummary() {
+  const { activeClients, projectsActive, tasksNext7, avgProgress, clientsCards } = computeHomeMacroStats(state.clients);
+
+  const cardsHtml = clientsCards
+    .map((card) => {
+      return `
+        <div class="home-client-card">
+          <div class="home-client-title">${card.name}</div>
+
+          <div class="home-client-top">
+            <div class="mini-box">
+              <div class="mini-label">Projetos:</div>
+              <div class="mini-value">${card.projectsCount}</div>
+            </div>
+            <div class="mini-box">
+              <div class="mini-label">Progresso medio:</div>
+              <div class="mini-value">${card.avgProgress}%</div>
+            </div>
+          </div>
+
+          <div class="chips">
+            <div class="chip planned">Planejado: ${card.counters.Planejado || 0}</div>
+            <div class="chip progress">Em andamento: ${card.counters["Em andamento"] || 0}</div>
+            <div class="chip late">Atrasado: ${card.counters.Atrasado || 0}</div>
+            <div class="chip done">Concluido: ${card.counters.Concluido || 0}</div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="home-macro">
+      <div class="home-macro-grid">
+        <div class="home-stat-card">
+          <div class="home-stat-label">Clientes ativos</div>
+          <div class="home-stat-value">${activeClients}</div>
+        </div>
+
+        <div class="home-stat-card">
+          <div class="home-stat-label">Projetos ativos</div>
+          <div class="home-stat-value">${projectsActive}</div>
+        </div>
+
+        <div class="home-stat-card">
+          <div class="home-stat-label">Atividades prox. 7 dias</div>
+          <div class="home-stat-value">${tasksNext7}</div>
+        </div>
+
+        <div class="home-stat-card">
+          <div class="home-stat-label">Progresso medio</div>
+          <div class="home-stat-value">${avgProgress}%</div>
+        </div>
+      </div>
+
+      <div class="home-client-grid">
+        ${cardsHtml}
+      </div>
+    </div>
+  `;
 }
 
 function normalizePackageLabel(label) {
@@ -513,7 +1666,26 @@ function renderClientList() {
 
     const header = document.createElement("div");
     header.className = "sub-header";
-    header.innerHTML = `<span>${client.name}</span><span class="caret">›</span>`;
+    const title = document.createElement("span");
+    title.className = "client-title";
+    title.textContent = client.name;
+    const actions = document.createElement("div");
+    actions.className = "client-actions";
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "client-edit-btn";
+    editBtn.textContent = "Editar";
+    editBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      handleRenameClient(client);
+    });
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.textContent = "›";
+    actions.appendChild(editBtn);
+    actions.appendChild(caret);
+    header.appendChild(title);
+    header.appendChild(actions);
     header.addEventListener("click", () => {
       const nextOpen = !wrapper.classList.contains("open");
       wrapper.classList.toggle("open", nextOpen);
@@ -572,41 +1744,18 @@ function openProject(client, project) {
 
 function updateTopActions() {
   const openProjectBtn = byId("open-project-modal");
-  const deleteProjectBtn = byId("delete-project-btn");
   const editProjectBtn = byId("edit-project-btn");
   const openEmployeeBtn = byId("open-employee-modal");
   const isHome = state.currentSection === "inicio";
   const isProject = state.currentSection === "meus-projetos";
   if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome);
   if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome);
-  if (deleteProjectBtn) deleteProjectBtn.classList.toggle("hidden", !isProject);
   if (editProjectBtn) editProjectBtn.classList.toggle("hidden", !isProject);
 }
 
 function renderHome(container) {
   byId("crumb-path").textContent = "Inicio";
-
-  const welcome = document.createElement("div");
-  welcome.className = "welcome-card span-all";
-  welcome.innerHTML = `
-    <div class="welcome-header">
-      <div class="welcome-icon">👋</div>
-      <div>
-        <p class="welcome-title">Bem-vindo ao Controle de Projetos</p>
-        <div class="welcome-meta">📅 Ultimo acesso: ${state.home.lastAccess}</div>
-      </div>
-    </div>
-  `;
-
-  const quote = document.createElement("div");
-  quote.className = "quote-card span-all";
-  quote.innerHTML = `
-    <div class="muted">💡 Frase do dia</div>
-    <div class="quote-text">"${state.home.quote}"</div>
-  `;
-
-  container.appendChild(welcome);
-  container.appendChild(quote);
+  container.innerHTML = renderHomeMacroSummary();
 }
 
 function renderMain() {
@@ -633,6 +1782,7 @@ function renderMain() {
   const metrics = projectMetrics(selectedProject.tasks || []);
   const status = projectStatus(selectedProject, metrics);
   const statusBadge = statusInfo(status);
+  const scheduleBadge = scheduleStatusInfo(projectScheduleStatus(selectedProject));
 
   const headerCard = document.createElement("div");
   headerCard.className = "card project-header span-all";
@@ -642,7 +1792,11 @@ function renderMain() {
         <h2>${selectedProject.name}</h2>
         <div class="project-subtitle">${selectedClient.name}</div>
       </div>
-      <span class="pill project-status ${statusBadge.className}">${statusBadge.label}</span>
+      <div class="project-header-badges">
+        <span class="pill project-status ${statusBadge.className}">${statusBadge.label}</span>
+        <span class="pill schedule-status ${scheduleBadge.className}">${scheduleBadge.label}</span>
+        <button class="btn sm ghost" type="button" data-export-project>Exportar</button>
+      </div>
     </div>
     <div class="project-meta-grid">
       <div class="meta-item">
@@ -839,6 +1993,21 @@ function wireModals() {
   document.body.addEventListener("click", (e) => {
     if (e.target.closest("[data-open-activity]")) {
       openActivityModal("new");
+      return;
+    }
+    const exportBtn = e.target.closest("[data-export-project]");
+    if (exportBtn) {
+      openExportPopover(exportBtn);
+      return;
+    }
+    const exportOpt = e.target.closest("[data-export-format]");
+    if (exportOpt) {
+      hideExportPopover();
+      exportProjectReport(exportOpt.dataset.exportFormat);
+      return;
+    }
+    if (!e.target.closest("#export-popover")) {
+      hideExportPopover();
     }
   });
 
@@ -1054,6 +2223,7 @@ function openProjectModal(mode = "new") {
   const submitBtn = modal.querySelector('button[type="submit"]');
   const form = byId("project-form");
   const clientSelect = byId("project-client-select");
+  const deleteProjectBtn = byId("delete-project-btn");
 
   if (mode === "edit" && state.selectedProject && state.selectedClient) {
     state.editingProjectId = state.selectedProject.id || "local";
@@ -1066,11 +2236,13 @@ function openProjectModal(mode = "new") {
     clientSelect.disabled = true;
     title.textContent = "Editar Projeto";
     submitBtn.textContent = "Salvar Alteracoes";
+    if (deleteProjectBtn) deleteProjectBtn.classList.remove("hidden");
   } else {
     resetProjectModal();
     hydrateClientSelect();
     title.textContent = "Novo Projeto";
     submitBtn.textContent = "Salvar Projeto";
+    if (deleteProjectBtn) deleteProjectBtn.classList.add("hidden");
   }
 
   showModal(modal);
@@ -1082,11 +2254,50 @@ function resetProjectModal() {
   const title = modal.querySelector("h2");
   const submitBtn = modal.querySelector('button[type="submit"]');
   const clientSelect = byId("project-client-select");
+  const deleteProjectBtn = byId("delete-project-btn");
   state.editingProjectId = null;
   if (form) form.reset();
   if (clientSelect) clientSelect.disabled = false;
   if (title) title.textContent = "Novo Projeto";
   if (submitBtn) submitBtn.textContent = "Salvar Projeto";
+  if (deleteProjectBtn) deleteProjectBtn.classList.add("hidden");
+}
+
+async function handleDeleteProject() {
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+  if (!project || !client) {
+    alert("Nenhum projeto selecionado.");
+    return;
+  }
+  const confirmed = window.confirm(`Excluir o projeto "${project.name}"? Esta acao nao pode ser desfeita.`);
+  if (!confirmed) return;
+
+  const modal = byId("project-modal");
+  if (db && project.id && project.clientId) {
+    try {
+      await deleteProjectFromDb(project.clientId, project.id);
+      await loadStateFromDb({ clientId: client.id, clientName: client.name });
+      resetProjectModal();
+      if (modal) hideModal(modal);
+      return;
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao excluir projeto no Firebase.");
+      return;
+    }
+  }
+
+  const idx = client.projects.findIndex((p) => p === project || (p.id && p.id === project.id) || p.name === project.name);
+  if (idx >= 0) {
+    client.projects.splice(idx, 1);
+  }
+  state.selectedProject = client.projects[0] || null;
+  saveLocalState();
+  renderClientList();
+  renderMain();
+  resetProjectModal();
+  if (modal) hideModal(modal);
 }
 
 function openActivityModal(mode = "new", taskIndex = null) {
@@ -1250,6 +2461,51 @@ function promptNewClientName() {
   return name.trim();
 }
 
+function promptRenameClientName(currentName) {
+  const name = window.prompt("Novo nome do cliente:", currentName || "");
+  if (!name) return "";
+  return name.trim();
+}
+
+async function handleRenameClient(client) {
+  if (!client) return;
+  const nextName = promptRenameClientName(client.name);
+  if (!nextName || nextName === client.name) return;
+  const existing = findClientByName(nextName);
+  if (existing && existing !== client) {
+    alert("Ja existe um cliente com esse nome.");
+    return;
+  }
+
+  const previousName = client.name;
+  if (db && client.id) {
+    try {
+      await db.ref(`clients/${client.id}`).update({ name: nextName });
+      await loadStateFromDb({
+        clientId: client.id,
+        projectId: state.selectedProject?.id,
+        clientName: nextName,
+        projectName: state.selectedProject?.name
+      });
+      return;
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao atualizar cliente no Firebase.");
+      return;
+    }
+  }
+
+  client.name = nextName;
+  if (Object.prototype.hasOwnProperty.call(state.clientVisibility, previousName)) {
+    state.clientVisibility[nextName] = state.clientVisibility[previousName];
+    delete state.clientVisibility[previousName];
+  }
+  saveLocalState();
+  renderClientList();
+  renderMain();
+  hydrateClientSelect(client.name);
+}
+
 function resetClientSelect(select) {
   const fallback = state.clients[0]?.name || "";
   select.value = fallback;
@@ -1365,6 +2621,25 @@ function statusInfo(status) {
       className: "planejado"
     }
   );
+}
+
+function scheduleStatusInfo(status) {
+  if (status === "em_atraso") {
+    return { label: "Em Atraso", className: "em-atraso" };
+  }
+  return { label: "Em Dia", className: "em-dia" };
+}
+
+function projectScheduleStatus(project) {
+  const tasks = Array.isArray(project?.tasks) ? project.tasks : [];
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const hasOverdue = tasks.some((task) => {
+    if ((task.status || "").toLowerCase() === "concluido") return false;
+    const dt = parseTaskDate(task.due);
+    return dt && dt.getTime() < today;
+  });
+  return hasOverdue ? "em_atraso" : "em_dia";
 }
 
 function setupStatusPopover() {
@@ -1672,6 +2947,42 @@ function applyDashboardFilterFromPopover(popover) {
 
 function hideDashboardFilterPopover() {
   const popover = byId("dashboard-filter-popover");
+  if (!popover) return;
+  popover.classList.remove("show");
+}
+
+function ensureExportPopover() {
+  let popover = byId("export-popover");
+  if (popover) return popover;
+  popover = document.createElement("div");
+  popover.id = "export-popover";
+  popover.className = "export-popover";
+  popover.innerHTML = `
+    <button type="button" class="btn sm ghost export-option" data-export-format="pdf">Exportar PDF</button>
+    <button type="button" class="btn sm ghost export-option" data-export-format="pptx">Exportar PPTX</button>
+  `;
+  document.body.appendChild(popover);
+  return popover;
+}
+
+function positionExportPopover(button, popover) {
+  const rect = button.getBoundingClientRect();
+  const top = rect.bottom + window.scrollY + 8;
+  popover.style.top = `${top}px`;
+  const popoverRect = popover.getBoundingClientRect();
+  const maxLeft = window.scrollX + window.innerWidth - popoverRect.width - 12;
+  const left = Math.min(Math.max(rect.left + window.scrollX - popoverRect.width + rect.width, 12), maxLeft);
+  popover.style.left = `${left}px`;
+}
+
+function openExportPopover(button) {
+  const popover = ensureExportPopover();
+  popover.classList.add("show");
+  positionExportPopover(button, popover);
+}
+
+function hideExportPopover() {
+  const popover = byId("export-popover");
   if (!popover) return;
   popover.classList.remove("show");
 }
@@ -1995,6 +3306,7 @@ function dashboardDisplayValue(project, key) {
   if (key === "clientName") return project.clientName || "";
   if (key === "developer") return project.developer || "-";
   if (key === "status") return statusInfo(project.status).label;
+  if (key === "schedule") return scheduleStatusInfo(project.schedule).label;
   if (key === "progress") return `${project.progress}%`;
   if (key === "goLive") return project.goLive || "-";
   return "";
@@ -2068,6 +3380,7 @@ function allProjects() {
         metrics,
         progress: metrics.progress,
         status: projectStatus(p, metrics),
+        schedule: projectScheduleStatus(p),
         goLive: p.end || ""
       };
     })
@@ -2141,12 +3454,14 @@ function renderDashboard(container) {
   const rows = projects
     .map((p) => {
       const info = statusInfo(p.status);
+      const scheduleInfo = scheduleStatusInfo(p.schedule);
       return `
         <tr data-client="${p.clientName}" data-project="${p.name}">
           <td>${p.name}</td>
           <td>${p.clientName}</td>
           <td>${p.developer || "-"}</td>
           <td><span class="pill project-status ${info.className}">${info.label}</span></td>
+          <td><span class="pill schedule-status ${scheduleInfo.className}">${scheduleInfo.label}</span></td>
           <td>${p.progress}%</td>
           <td>${formatDateBR(p.goLive) || "-"}</td>
         </tr>
@@ -2161,7 +3476,7 @@ function renderDashboard(container) {
         </tr>
       </thead>
       <tbody>
-        ${rows || "<tr><td colspan='6'>Nenhum projeto cadastrado.</td></tr>"}
+        ${rows || "<tr><td colspan='7'>Nenhum projeto cadastrado.</td></tr>"}
       </tbody>
     </table>
   `;
