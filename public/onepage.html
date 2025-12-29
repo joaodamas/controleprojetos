@@ -1,0 +1,1364 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>OnePage — Monitoramento NFSe</title>
+  <style>
+    :root{
+      --bg:#f6f8fb;
+      --card:#ffffff;
+      --text:#0f172a;
+      --muted:#64748b;
+      --border:rgba(15,23,42,.08);
+      --shadow:0 6px 18px rgba(15,23,42,.06);
+      --radius:14px;
+
+      --ok:#16a34a;
+      --warn:#f59e0b;
+      --bad:#ef4444;
+
+      --primary:#0ea5e9;
+      --primary2:#2563eb;
+
+      --baseline:#0f172a;
+      --real:#a16207;
+
+      --canvas-w: 1040px;
+      --canvas-pad: 14px;
+      --shell-bg: #f3f6f9;
+    }
+
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      background:var(--bg);
+      color:var(--text);
+    }
+
+    .op-shell{
+      min-height: 100vh;
+      background: var(--shell-bg);
+      padding: 18px 0 28px;
+    }
+
+    .op-canvas{
+      width: var(--canvas-w);
+      margin: 0 auto;
+      padding: 0 var(--canvas-pad);
+    }
+
+    .page,
+    #app{
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      display:grid;
+      gap:12px;
+    }
+
+    /* Header */
+    .header{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      align-items:flex-start;
+    }
+    .title{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .title h1{
+      margin:0;
+      font-size: 26px;
+      letter-spacing:.2px;
+    }
+    .chips{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .chip{
+      background: rgba(15,23,42,.03);
+      border:1px solid var(--border);
+      border-radius: 999px;
+      padding: 8px 10px;
+      display:flex;
+      gap:8px;
+      align-items:baseline;
+      line-height:1;
+    }
+    .chip small{
+      color:var(--muted);
+      font-size: 10px;
+      text-transform:uppercase;
+      letter-spacing:.6px;
+    }
+    .chip b{
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .headerRight{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:flex-start;
+      flex-wrap:wrap;
+    }
+    .headerRight .chips{
+      justify-content:flex-start;
+    }
+
+    /* Badges */
+    .badge{
+      border:1px solid var(--border);
+      background:var(--card);
+      border-radius:999px;
+      padding: 8px 12px;
+      display:flex;
+      gap:8px;
+      align-items:center;
+      box-shadow: var(--shadow);
+      white-space:nowrap;
+    }
+    .badge .dot{
+      width:10px;height:10px;border-radius:999px;
+      background: var(--muted);
+    }
+    .badge strong{ font-size:12px; }
+    .badge span{ font-size:12px; color:var(--muted); }
+
+    .dot.ok{ background:var(--ok); }
+    .dot.warn{ background:var(--warn); }
+    .dot.bad{ background:var(--bad); }
+
+    .action-btn{
+      border:1px solid var(--border);
+      background:var(--card);
+      border-radius:999px;
+      padding: 8px 12px;
+      font-size:12px;
+      font-weight:600;
+      color:var(--text);
+      cursor:pointer;
+      box-shadow: var(--shadow);
+      white-space:nowrap;
+    }
+    .action-btn:hover{ filter: brightness(0.98); }
+
+    /* Cards */
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+      min-width:0;
+    }
+    .cardHeader{
+      padding: 12px 14px 10px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      border-bottom:1px solid rgba(15,23,42,.06);
+    }
+    .cardHeader h2{
+      margin:0;
+      font-size: 12px;
+      letter-spacing:.6px;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .cardBody{ padding: 12px 14px; }
+
+    /* KPI row */
+    .kpis{
+      display:grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap:12px;
+    }
+    .kpiTop{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .kpiValue{
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing:-.4px;
+    }
+    .kpiSub{
+      margin-top:6px;
+      color:var(--muted);
+      font-size: 12px;
+    }
+    .bar{
+      margin-top:10px;
+      height:10px;
+      background: rgba(15,23,42,.06);
+      border-radius:999px;
+      overflow:hidden;
+    }
+    .bar > i{
+      display:block;
+      height:100%;
+      width:0%;
+      background: linear-gradient(90deg, var(--primary), var(--primary2));
+      border-radius:999px;
+    }
+
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background: rgba(15,23,42,.02);
+      font-size:12px;
+      color: var(--muted);
+      white-space:nowrap;
+    }
+    .pill b{ color:var(--text); }
+
+    .kpi-card .cardBody{
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      min-height:82px;
+    }
+
+    .healthTag{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      border-radius:999px;
+      padding:6px 10px;
+      border:1px solid var(--border);
+      font-size:12px;
+      white-space:nowrap;
+    }
+    .healthTag.ok{ background: rgba(22,163,74,.10); color: #166534; }
+    .healthTag.warn{ background: rgba(245,158,11,.12); color: #92400e; }
+    .healthTag.bad{ background: rgba(239,68,68,.12); color: #991b1b; }
+
+    /* Mid row: curve + urgent */
+    .mid{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:12px;
+      align-items:stretch;
+    }
+
+    .curveWrap{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .curveMeta{
+      display:flex;
+      gap:10px;
+      flex-wrap:nowrap;
+      justify-content:flex-start;
+      align-items:center;
+    }
+    .miniStat{
+      display:inline-flex;
+      gap:8px;
+      align-items:center;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background: rgba(15,23,42,.02);
+      font-size:12px;
+      color: var(--muted);
+      white-space:nowrap;
+    }
+    .miniStat b{ color:var(--text); }
+    .legendDot{
+      width:10px;height:10px;border-radius:999px;
+      background:var(--muted);
+    }
+    .legendDot.baseline{ background: var(--baseline); }
+    .legendDot.real{ background: var(--real); }
+
+    /* Urgent list */
+    .list{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .items{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .item{
+      padding:10px 10px;
+      border:1px solid rgba(15,23,42,.08);
+      border-radius:12px;
+      background: rgba(15,23,42,.015);
+      display:grid;
+      gap:4px;
+      min-width:0;
+    }
+    .itemTop{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:10px;
+      min-width:0;
+    }
+    .itemName{
+      font-size: 12.5px;
+      font-weight: 700;
+      line-height:1.2;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .itemMeta{
+      font-size: 11px;
+      color: var(--muted);
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+
+    .urgent-card .items{
+      max-height: 320px;
+      overflow:hidden;
+    }
+
+    .urgent-card .itemMeta{
+      flex-wrap:nowrap;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .tag{
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background: var(--card);
+      color: var(--muted);
+      white-space:nowrap;
+    }
+    .tag.bad{ color:#991b1b; background: rgba(239,68,68,.10); }
+    .tag.warn{ color:#92400e; background: rgba(245,158,11,.12); }
+    .tag.ok{ color:#166534; background: rgba(22,163,74,.10); }
+
+    /* Bottom lists */
+    .bottom{
+      display:grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap:12px;
+      align-items:stretch;
+    }
+
+    /* SVG */
+    .svgBox{
+      width:100%;
+      height:240px;
+      border-radius:12px;
+      border:1px solid rgba(15,23,42,.08);
+      background: linear-gradient(180deg, rgba(15,23,42,.02), transparent);
+      overflow:hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Responsivo */
+    @media screen and (max-width: 1100px){
+      .kpis{ grid-template-columns: 1fr; }
+      .mid{ grid-template-columns: 1fr; }
+      .bottom{ grid-template-columns: 1fr; }
+      .header{ grid-template-columns: 1fr; }
+      .headerRight{ justify-content:flex-start; }
+    }
+
+    /* Print/PDF */
+    @page{
+      size: A4 landscape;
+      margin: 10mm;
+    }
+    @media print{
+      body{ background:#fff; }
+      .op-shell{ background:#fff !important; padding:0 !important; }
+      .op-canvas{ width: var(--canvas-w) !important; margin:0 auto !important; padding:0 !important; }
+      .page{ margin:0; padding:0; }
+      .card{ box-shadow:none; }
+      .badge{ box-shadow:none; }
+    }
+
+    html.exporting .op-shell{
+      background:#fff !important;
+      padding:0 !important;
+    }
+    html.exporting .op-canvas{
+      width: var(--canvas-w) !important;
+      margin:0 auto !important;
+      padding:0 !important;
+    }
+
+    /* ===========================
+       OnePage COMPACT (screen + PDF)
+       =========================== */
+    .op-canvas.onepage-compact{
+      --fs-h1: 18px;
+      --fs-chip: 9px;
+      --fs-card-title: 9px;
+      --fs-kpi: 19px;
+      --fs-body: 9px;
+      --fs-meta: 8px;
+
+      --pad-card-h: 8px;
+      --pad-card-v: 8px;
+      --gap: 8px;
+    }
+
+    .op-canvas.onepage-compact,
+    .op-canvas.onepage-compact *{
+      font-size: var(--fs-body);
+    }
+
+    .op-canvas.onepage-compact h1{
+      font-size: var(--fs-h1);
+      text-align:left;
+      margin: 4px 0 6px;
+    }
+
+    .op-canvas.onepage-compact .chips{
+      justify-content:center;
+      gap:8px;
+    }
+    .op-canvas.onepage-compact .chip small{ font-size: 8px; }
+    .op-canvas.onepage-compact .chip b{ font-size: var(--fs-chip); }
+
+    .op-canvas.onepage-compact .kpis,
+    .op-canvas.onepage-compact .mid,
+    .op-canvas.onepage-compact .bottom{
+      gap: var(--gap);
+    }
+
+    .op-canvas.onepage-compact .cardHeader{
+      padding: 8px var(--pad-card-h);
+    }
+    .op-canvas.onepage-compact .cardBody{
+      padding: var(--pad-card-v) var(--pad-card-h);
+    }
+
+    .op-canvas.onepage-compact .cardHeader h2{
+      font-size: var(--fs-card-title);
+      text-align:center;
+      width:100%;
+      letter-spacing:.6px;
+    }
+
+    .op-canvas.onepage-compact .kpiTop{
+      justify-content:center;
+      align-items:center;
+      text-align:center;
+      gap:8px;
+    }
+    .op-canvas.onepage-compact .kpiValue{
+      font-size: var(--fs-kpi);
+      line-height: 1.05;
+    }
+    .op-canvas.onepage-compact .kpiSub{
+      font-size: var(--fs-meta);
+      text-align:center;
+    }
+
+    .op-canvas.onepage-compact .headerRight{
+      justify-content:center;
+    }
+
+    .op-canvas.onepage-compact .pill,
+    .op-canvas.onepage-compact .tag,
+    .op-canvas.onepage-compact .healthTag,
+    .op-canvas.onepage-compact .badge{
+      font-size: 9px;
+      padding: 3px 7px;
+    }
+
+    .op-canvas.onepage-compact .bar{ height:6px; margin-top:6px; }
+
+    .op-canvas.onepage-compact .svgBox{
+      height: 180px;
+    }
+
+    .op-canvas.onepage-compact .curveMeta{
+      gap:6px;
+      flex-wrap:nowrap;
+    }
+
+    .op-canvas.onepage-compact .item{
+      padding: 6px 7px;
+      gap: 3px;
+      min-width:0;
+    }
+    .op-canvas.onepage-compact .itemName{
+      font-size: 9px;
+      line-height: 1.1;
+      white-space: normal;
+    }
+    .op-canvas.onepage-compact .itemMeta{
+      font-size: var(--fs-meta);
+      gap:6px;
+    }
+
+    .op-canvas.onepage-compact .card,
+    .op-canvas.onepage-compact .cardBody{
+      overflow:hidden;
+    }
+
+    @media print{
+      .op-canvas.onepage-compact{
+        --fs-h1: 17px;
+        --fs-kpi: 21px;
+        --gap: 9px;
+        --fs-body: 10px; /* Reduced for print */
+        --fs-meta: 9px;  /* Reduced for print */
+      }
+
+      html, body{
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="op-shell">
+    <div id="onepageRoot" class="op-canvas onepage-compact">
+      <div id="app"></div>
+    </div>
+  </div>
+
+  <script>
+    // ------------------------------------------------------------
+    // 1) Fallback (usado apenas se nao houver dados reais)
+    // ------------------------------------------------------------
+    // - Voce pode substituir esse objeto por dados do seu sistema
+    //   (Firestore/JSON/global window...). O render abaixo aceita:
+    //   project, overall, tasks (ou listas prontas).
+    const ONEPAGE_FALLBACK = {
+      project: {
+        name: "MONITORAMENTO NFSe",
+        client: "ASCENTY",
+        responsible: "Lucas Svizzero",
+        reportDate: "29/12/2025",
+        statusLabel: "Em andamento",
+        startDate: "18/12/2025",
+        goLiveDate: "02/01/2026",
+      },
+      overall: {
+        progressPct: 38,       // se existir, usaremos como fonte principal
+        phaseLabel: "Em Execucao",
+      },
+      // Se voce ja tem as listas prontas, pode preencher (opcional):
+      // lastDone: [...], inProgress: [...], nextSteps: [...], urgent: [...]
+      // Se nao preencher, calculamos a partir de tasks.
+      tasks: [
+        // exemplo (mantenha seus campos; o codigo tenta interpretar)
+        { title:"Desenv. Integracao - NFCom", status:"Concluido", due:"24/12/2025", completedAt:"24/12/2025" },
+        { title:"Configuracao SSO", status:"Concluido", due:"22/12/2025", completedAt:"22/12/2025" },
+        { title:"Desenv. Integracao - Osasco", status:"Concluido", due:"19/12/2025", completedAt:"19/12/2025" },
+        { title:"Envio Endpoint e APIKEY", status:"Concluido", due:"18/12/2025", completedAt:"18/12/2025" },
+
+        { title:"Desenv. Integracao - Hortolandia", status:"Em andamento", due:"24/12/2025" },
+        { title:"Desenv. Integracao - Paulinia", status:"Em andamento", due:"24/12/2025" },
+        { title:"Desenv. Integracao - Sumare", status:"Em andamento", due:"24/12/2025" },
+        { title:"Desenv. Integracao - Jundiai", status:"Em andamento", due:"24/12/2025" },
+
+        { title:"Desenv. Integracao - Rio de Janeiro", status:"Nao iniciado", due:"23/12/2025" },
+        { title:"Desenv. Integracao - Maracanau", status:"Nao iniciado", due:"23/12/2025" },
+        { title:"Desenv. Integracao - Vinhedo", status:"Parado", due:"24/12/2025" },
+        { title:"Desenv. Integracao - Campinas", status:"Nao iniciado", due:"24/12/2025" },
+
+        // complemente para total 24...
+      ]
+    };
+
+    // ------------------------------------------------------------
+    // 2) Helpers (datas, status, contagens)
+    // ------------------------------------------------------------
+    function parseTaskDate(v){
+      if(!v) return null;
+      // aceita "DD/MM/YYYY" ou ISO
+      if(typeof v === "string"){
+        const raw = v.trim();
+        if(raw.includes("/")){
+          const [dd,mm,yy] = raw.split("/").map(Number);
+          if(!dd||!mm||!yy) return null;
+          return new Date(yy, mm-1, dd);
+        }
+        const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (match) {
+          const yy = Number(match[1]);
+          const mm = Number(match[2]);
+          const dd = Number(match[3]);
+          return new Date(yy, mm - 1, dd);
+        }
+      }
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    function fmtBR(d){
+      if(!d) return "";
+      const dd = String(d.getDate()).padStart(2,"0");
+      const mm = String(d.getMonth()+1).padStart(2,"0");
+      const yy = d.getFullYear();
+      return `${dd}/${mm}/${yy}`;
+    }
+
+    function daysDiff(a,b){
+      // b - a em dias (inteiro)
+      const ms = (b.getTime() - a.getTime());
+      return Math.floor(ms / (24*3600*1000));
+    }
+
+    function clamp(n,min,max){ return Math.max(min, Math.min(max,n)); }
+
+    function parsePercentValue(value){
+      if (value == null) return null;
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return value <= 1 && value > 0 ? value * 100 : value;
+      }
+      if (typeof value === "string") {
+        const cleaned = value.replace(",", ".").replace(/[^0-9.-]/g, "");
+        if (!cleaned) return null;
+        const num = Number(cleaned);
+        if (!Number.isFinite(num)) return null;
+        return num <= 1 && num > 0 ? num * 100 : num;
+      }
+      return null;
+    }
+
+    function normStatus(s){
+      const v = String(s || "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[_-]+/g, " ")
+        .replace(/\s+/g, " ");
+      if (v.includes("concl") || v.includes("done") || v.includes("finaliz") || v.includes("feito")) return "done";
+      if (
+        v.includes("em andamento") ||
+        v.includes("em desenvolvimento") ||
+        v.includes("em execucao") ||
+        v.includes("em progresso") ||
+        v.includes("in progress") ||
+        v.includes("doing") ||
+        v.includes("atrasad")
+      ) {
+        return "doing";
+      }
+      if (v.includes("parad") || v.includes("bloque")) return "blocked";
+      if (
+        v.includes("nao iniciado") ||
+        v.includes("nao iniciada") ||
+        v.includes("planej") ||
+        v.includes("todo") ||
+        v.includes("a fazer") ||
+        v.includes("backlog") ||
+        v.includes("pend")
+      ) {
+        return "todo";
+      }
+      return "todo";
+    }
+
+    function healthFromCounts(lateCount){
+      if(lateCount <= 0) return "ok";
+      if(lateCount <= 3) return "warn";
+      return "bad";
+    }
+
+    function tagFromDelta(deltaDays){
+      if(deltaDays == null) return { cls:"ok", text:"Sem prazo" };
+      if(deltaDays > 0) return { cls:"bad", text:`Atrasada +${deltaDays}d` };
+      if(deltaDays === 0) return { cls:"warn", text:"Vence hoje" };
+      const abs = Math.abs(deltaDays);
+      return { cls:"ok", text:`Em dia • ${abs}d` };
+    }
+
+    // ------------------------------------------------------------
+    // 3) Curva S (baseline diario linear + realizado por conclusao)
+    // ------------------------------------------------------------
+    function downsample(points, maxPoints=60){
+      if(points.length <= maxPoints) return points;
+      const step = (points.length-1)/(maxPoints-1);
+      const out = [];
+      for(let i=0;i<maxPoints;i++){
+        out.push(points[Math.round(i*step)]);
+      }
+      return out;
+    }
+
+    function computeSCurveDaily({ startDate, goLiveDate, tasks, progressPct }){
+      const start = parseTaskDate(startDate) || new Date();
+      const end = parseTaskDate(goLiveDate) || new Date(start.getTime()+7*86400000);
+      const totalDays = Math.max(1, daysDiff(start, end));
+
+      // Baseline linear 0->100 por dia
+      const baseline = [];
+      for(let d=0; d<=totalDays; d++){
+        const day = new Date(start.getTime() + d*86400000);
+        const pct = (d/totalDays)*100;
+        baseline.push({ t: day, y: pct });
+      }
+
+      // Real: por conclusao (peso igual por task) com backfill leve
+      const validTasks = Array.isArray(tasks) ? tasks : [];
+      const total = validTasks.length || 1;
+      const report = new Date();
+      report.setHours(0,0,0,0);
+      const completions = validTasks
+        .map(t => {
+          const done = parseTaskDate(t.completedAt);
+          if(done) return done;
+          if(normStatus(t.status) !== "done") return null;
+          const fallback = parseTaskDate(t.updatedAt || t.updated_at || t.updatedOn || t.due);
+          return fallback || report;
+        })
+        .filter(Boolean)
+        .sort((a,b)=>a-b);
+
+      // Cumulativo por dia
+      const real = [];
+      let idx = 0;
+      for(let d=0; d<=totalDays; d++){
+        const day = new Date(start.getTime() + d*86400000);
+        while(idx < completions.length && completions[idx] <= day){
+          idx++;
+        }
+        const pct = (idx/total)*100;
+        real.push({ t: day, y: pct });
+      }
+
+      // Forca "Real" no dia atual para bater com o KPI
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      const clamped = today < start ? start : (today > end ? end : today);
+      const idxNow = Math.max(0, Math.min(totalDays, daysDiff(start, clamped)));
+      if (Number.isFinite(progressPct)) {
+        real[idxNow].y = Math.max(real[idxNow].y, clamp(progressPct, 0, 100));
+        for (let i = idxNow + 1; i < real.length; i++) {
+          real[i].y = Math.max(real[i].y, real[i - 1].y);
+        }
+      }
+
+      return {
+        baseline: downsample(baseline, 60),
+        real: downsample(real, 60),
+        start, end,
+        baselineNow: (idxNow != null ? baseline[idxNow].y : 0),
+        realizedNow: (idxNow != null ? real[idxNow].y : 0)
+      };
+    }
+
+    function buildPath(points, w, h, pad){
+      const x0 = pad, y0 = pad;
+      const x1 = w - pad, y1 = h - pad;
+      const tMin = points[0].t.getTime();
+      const tMax = points[points.length-1].t.getTime();
+
+      const toX = (t) => {
+        const k = (t.getTime()-tMin)/Math.max(1,(tMax-tMin));
+        return x0 + k*(x1-x0);
+      };
+      const toY = (y) => {
+        const k = clamp(y,0,100)/100;
+        return y1 - k*(y1-y0);
+      };
+
+      let d = "";
+      points.forEach((p,i)=>{
+        const x = toX(p.t);
+        const y = toY(p.y);
+        d += (i===0 ? `M ${x} ${y}` : ` L ${x} ${y}`);
+      });
+
+      return { d, toX, toY, tMin, tMax };
+    }
+
+    function renderSCurveSvg({ baseline, real, start, end, today=new Date(), baselineNow, realizedNow }){
+      const w = 920, h = 240, pad = 16;
+
+      const base = buildPath(baseline, w, h, pad);
+      const rea = buildPath(real, w, h, pad);
+
+      // marcador de hoje
+      const t = clamp(today.getTime(), start.getTime(), end.getTime());
+      const todayX = base.toX(new Date(t));
+
+      // valores no "hoje"
+      const baseToday = Number.isFinite(baselineNow) ? baselineNow : interpolateAt(baseline, t);
+      const realToday = Number.isFinite(realizedNow) ? realizedNow : interpolateAt(real, t);
+      const gap = Math.round((baseToday - realToday) * 10) / 10;
+      const labelX = Math.min(todayX + 8, w - pad - 28);
+
+      const xAxisY = h - pad;
+      const yTop = pad;
+
+      return {
+        svg: `
+<svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="gridfade" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="rgba(15,23,42,.10)"/>
+      <stop offset="1" stop-color="rgba(15,23,42,0)"/>
+    </linearGradient>
+  </defs>
+
+  <!-- grid -->
+  ${[0,25,50,75,100].map(v=>{
+    const yy = pad + (1 - v/100) * (h-2*pad);
+    return `<line x1="${pad}" y1="${yy}" x2="${w-pad}" y2="${yy}" stroke="rgba(15,23,42,.08)" stroke-width="1"/>`;
+  }).join("")}
+
+  <!-- eixo inferior -->
+  <line x1="${pad}" y1="${xAxisY}" x2="${w-pad}" y2="${xAxisY}" stroke="rgba(15,23,42,.12)" stroke-width="1"/>
+
+  <!-- baseline -->
+  <path d="${base.d}" fill="none" stroke="rgba(15,23,42,.85)" stroke-width="2.4" stroke-dasharray="6 5"/>
+
+  <!-- real -->
+  <path d="${rea.d}" fill="none" stroke="rgba(161,98,7,.95)" stroke-width="3"/>
+
+  <!-- hoje -->
+  <line x1="${todayX}" y1="${yTop}" x2="${todayX}" y2="${xAxisY}" stroke="rgba(239,68,68,.95)" stroke-width="2"/>
+  <circle cx="${todayX}" cy="${base.toY(baseToday)}" r="4" fill="rgba(15,23,42,.85)"/>
+  <circle cx="${todayX}" cy="${rea.toY(realToday)}" r="4" fill="rgba(161,98,7,.95)"/>
+
+  <!-- labels -->
+  <text x="${labelX}" y="${base.toY(baseToday)-8}" text-anchor="start" font-size="12" fill="rgba(15,23,42,.9)" font-weight="700">${Math.round(baseToday)}%</text>
+  <text x="${labelX}" y="${rea.toY(realToday)+18}" text-anchor="start" font-size="12" fill="rgba(161,98,7,.95)" font-weight="700">${Math.round(realToday)}%</text>
+
+  <!-- datas -->
+  <text x="${pad}" y="${h-4}" font-size="11" fill="rgba(100,116,139,.9)">${fmtBR(start)}</text>
+  <text x="${w-pad-70}" y="${h-4}" font-size="11" fill="rgba(100,116,139,.9)">${fmtBR(end)}</text>
+</svg>`,
+        baseToday, realToday, gap
+      };
+    }
+
+    function interpolateAt(points, tMs){
+      if(!points.length) return 0;
+      if(tMs <= points[0].t.getTime()) return points[0].y;
+      if(tMs >= points[points.length-1].t.getTime()) return points[points.length-1].y;
+
+      for(let i=1;i<points.length;i++){
+        const a = points[i-1], b = points[i];
+        const ta = a.t.getTime(), tb = b.t.getTime();
+        if(tMs >= ta && tMs <= tb){
+          const k = (tMs-ta)/Math.max(1,(tb-ta));
+          return a.y + k*(b.y-a.y);
+        }
+      }
+      return points[points.length-1].y;
+    }
+
+    // ------------------------------------------------------------
+    // 4) ViewModel: calcula listas e contagens mantendo a logica
+    // ------------------------------------------------------------
+    function buildVM(data){
+      const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+
+      const today = new Date();
+      today.setHours(0,0,0,0);
+
+      const total = tasks.length;
+      const done = tasks.filter(t => normStatus(t.status)==="done");
+      const doing = tasks.filter(t => normStatus(t.status)==="doing");
+      const blocked = tasks.filter(t => normStatus(t.status)==="blocked");
+      const todo = tasks.filter(t => normStatus(t.status)==="todo");
+
+      const late = tasks.filter(t=>{
+        const st = normStatus(t.status);
+        if(st==="done") return false;
+        const due = parseTaskDate(t.due);
+        if(!due) return false;
+        due.setHours(0,0,0,0);
+        return due < today;
+      });
+
+      // Progresso: prioridade para overall.progressPct (mantem regra atual)
+      // Se nao existir, calcula por concluidas / total.
+      const overallProgress = data?.overall ? parsePercentValue(data.overall.progressPct) : null;
+      const progressPct = (overallProgress != null)
+        ? clamp(overallProgress, 0, 100)
+        : (total ? (done.length/total)*100 : 0);
+
+      // Ultimas concluidas: top 5 por data de conclusao (com fallback)
+      const lastDone = (data.lastDone && data.lastDone.length) ? data.lastDone : done
+        .map(t => ({
+          ...t,
+          _c: parseTaskDate(
+            t.completedAt ||
+            t.doneAt ||
+            t.updatedAt ||
+            t.updated_at ||
+            t.updatedOn ||
+            t.end ||
+            t.due ||
+            t.start
+          ) || new Date(0)
+        }))
+        .sort((a,b)=>b._c - a._c)
+        .slice(0,5);
+
+      // Em andamento: top 5 por due asc
+      const inProgress = (data.inProgress && data.inProgress.length) ? data.inProgress : doing
+        .map(t => ({...t, _d: parseTaskDate(t.due)}))
+        .sort((a,b)=>(a._d||1e15)-(b._d||1e15))
+        .slice(0,5);
+
+      // Proximos passos: top 5 (todo + blocked) por due asc
+      const nextSteps = (data.nextSteps && data.nextSteps.length) ? data.nextSteps : [...blocked, ...todo]
+        .map(t => ({...t, _d: parseTaskDate(t.due)}))
+        .sort((a,b)=>(a._d||1e15)-(b._d||1e15))
+        .slice(0,5);
+
+      // Mais urgente: top 6 por atraso (overdue primeiro) e por due asc
+      const urgent = (data.urgent && data.urgent.length) ? data.urgent : tasks
+        .filter(t => normStatus(t.status)!=="done")
+        .map(t=>{
+          const due = parseTaskDate(t.due);
+          let delta = null;
+          if(due){
+            const d0 = new Date(due); d0.setHours(0,0,0,0);
+            delta = Math.max(0, daysDiff(d0, today)); // dias atrasados
+          }
+          return { ...t, _due: due, _lateDays: delta ?? 0 };
+        })
+        .sort((a,b)=>{
+          // atrasadas primeiro, depois menor due
+          const aLate = a._lateDays>0 ? 0 : 1;
+          const bLate = b._lateDays>0 ? 0 : 1;
+          if(aLate!==bLate) return aLate-bLate;
+          return (a._due||1e15)-(b._due||1e15);
+        })
+        .slice(0,5);
+
+      // Saude do cronograma
+      const health = healthFromCounts(late.length);
+
+      return {
+        project: data.project || {},
+        overall: data.overall || {},
+        tasks,
+        counts: {
+          total,
+          done: done.length,
+          doing: doing.length,
+          late: late.length,
+          due7: countDueInDays(tasks, 7),
+        },
+        progressPct: Math.round(progressPct),
+        health,
+        lastDone,
+        inProgress,
+        nextSteps,
+        urgent,
+      };
+
+      function countDueInDays(ts, days){
+        const limit = new Date(today.getTime() + days*86400000);
+        return ts.filter(t=>{
+          const st = normStatus(t.status);
+          if(st==="done") return false;
+          const due = parseTaskDate(t.due);
+          if(!due) return false;
+          due.setHours(0,0,0,0);
+          return due >= today && due <= limit;
+        }).length;
+      }
+    }
+
+    // ------------------------------------------------------------
+    // 5) Render
+    // ------------------------------------------------------------
+    function el(html){
+      const t = document.createElement("template");
+      t.innerHTML = html.trim();
+      return t.content.firstElementChild;
+    }
+
+    function healthDot(health){
+      if(health==="ok") return "ok";
+      if(health==="warn") return "warn";
+      return "bad";
+    }
+
+    function healthTag(health){
+      if(health==="ok") return { cls:"ok", label:"Em dia" };
+      if(health==="warn") return { cls:"warn", label:"Risco" };
+      return { cls:"bad", label:"Em atraso" };
+    }
+
+    function render(app, vm){
+      const proj = vm.project;
+      const goLive = parseTaskDate(proj.goLiveDate);
+      const start = parseTaskDate(proj.startDate);
+      const statusHealth = healthTag(vm.health);
+
+      // Curva S
+      const curveData = computeSCurveDaily({
+        startDate: proj.startDate,
+        goLiveDate: proj.goLiveDate,
+        tasks: vm.tasks,
+        progressPct: vm.progressPct
+      });
+      const curve = renderSCurveSvg({ ...curveData, today: new Date() });
+
+      app.innerHTML = "";
+      app.appendChild(el(`
+        <div class="header">
+          <div class="title">
+            <h1>${escapeHTML(proj.name || "OnePage")}</h1>
+          </div>
+
+          <div class="headerRight">
+            <div class="chips header-chips">
+              <div class="chip"><small>Cliente</small><b>${escapeHTML(proj.client||"-")}</b></div>
+              <div class="chip"><small>Responsavel</small><b>${escapeHTML(proj.responsible||"-")}</b></div>
+              <div class="chip"><small>Data report</small><b>${escapeHTML(proj.reportDate||"-")}</b></div>
+            </div>
+            <div class="badge">
+              <i class="dot ${healthDot(vm.health)}"></i>
+              <strong>Status:</strong>
+              <span>${escapeHTML(proj.statusLabel||"-")}</span>
+            </div>
+            <div class="badge">
+              <i class="dot ${healthDot(vm.health)}"></i>
+              <strong>Saude:</strong>
+              <span>${escapeHTML(statusHealth.label)}</span>
+            </div>
+            <div class="badge">
+              <i class="dot ${healthDot(vm.health)}"></i>
+              <strong>GoLive:</strong>
+              <span>${escapeHTML(fmtBR(goLive) || proj.goLiveDate || "-")}</span>
+            </div>
+            <button class="action-btn" type="button" id="exportBtn">Exportar</button>
+          </div>
+        </div>
+      `));
+
+      // KPIs
+      const kpis = el(`
+        <div class="kpis">
+          <div class="card kpi-card">
+            <div class="cardHeader">
+              <h2>Progresso</h2>
+              <span class="pill"><b>${vm.counts.done}</b> / ${vm.counts.total} concluidas</span>
+            </div>
+            <div class="cardBody">
+              <div class="kpiTop">
+                <div class="kpiValue">${vm.progressPct}%</div>
+                <span class="healthTag ${statusHealth.cls}">${statusHealth.label}</span>
+              </div>
+              <div class="bar"><i style="width:${vm.progressPct}%"></i></div>
+              <div class="kpiSub">${escapeHTML(vm.overall.phaseLabel || "Em execucao")}</div>
+            </div>
+          </div>
+
+          <div class="card kpi-card">
+            <div class="cardHeader">
+              <h2>Cronograma</h2>
+              <span class="healthTag ${statusHealth.cls}">${statusHealth.label}</span>
+            </div>
+            <div class="cardBody">
+              <div class="kpiTop">
+                <div class="kpiValue" style="font-size:22px">${vm.counts.late} atrasada(s)</div>
+                <span class="pill">+ <b>${vm.counts.due7}</b> vencem em 7 dias</span>
+              </div>
+              <div class="kpiSub">
+                Total: <b>${vm.counts.total}</b> • Em andamento: <b>${vm.counts.doing}</b> • Concluidas: <b>${vm.counts.done}</b>
+              </div>
+            </div>
+          </div>
+        </div>
+      `);
+      app.appendChild(kpis);
+
+      // Mid: Curva + Mais urgente
+      const mid = el(`
+        <div class="mid">
+          <div class="card">
+            <div class="cardHeader">
+              <h2>Curva S — Avanco fisico acumulado</h2>
+              <div class="curveMeta">
+                <span class="miniStat"><i class="legendDot baseline"></i> Baseline <b>${Math.round(curve.baseToday)}%</b></span>
+                <span class="miniStat"><i class="legendDot real"></i> Realizado <b>${Math.round(curve.realToday)}%</b></span>
+                <span class="miniStat"><b>GAP</b> ${formatGap(curve.gap)}</span>
+              </div>
+            </div>
+            <div class="cardBody">
+              <div class="svgBox">${curve.svg}</div>
+            </div>
+          </div>
+
+
+        </div>
+      `);
+      app.appendChild(mid);
+
+      // Bottom lists
+      const bottom = el(`
+        <div class="bottom">
+          <div class="card">
+            <div class="cardHeader">
+              <h2>Ultimas concluidas</h2>
+              <span class="pill">Top <b>${vm.lastDone.length}</b></span>
+            </div>
+            <div class="cardBody">
+              <div class="items">
+                ${vm.lastDone.map(t => renderItem(t, false, "ok")).join("")}
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="cardHeader">
+              <h2>Em andamento</h2>
+              <span class="pill">Top <b>${vm.inProgress.length}</b></span>
+            </div>
+            <div class="cardBody">
+              <div class="items">
+                ${vm.inProgress.map(t => renderItem(t, true)).join("")}
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="cardHeader">
+              <h2>Proximos passos</h2>
+              <span class="pill">Top <b>${vm.nextSteps.length}</b></span>
+            </div>
+            <div class="cardBody">
+              <div class="items">
+                ${vm.nextSteps.map(t => renderItem(t, true)).join("")}
+              </div>
+            </div>
+          </div>
+        </div>
+      `);
+      app.appendChild(bottom);
+    }
+
+    function renderItem(t, showUrgency, forceTag){
+      const name = escapeHTML(t.title || t.name || t.item || "-");
+      const due = parseTaskDate(t.due);
+      const dueTxt = escapeHTML(fmtBR(due) || t.due || "-");
+      const st = escapeHTML(t.status || "-");
+
+      let tag = {cls:"ok", text:"Em dia"};
+      if(forceTag==="ok") tag = {cls:"ok", text:"Concluido"};
+      else if(forceTag==="warn") tag = {cls:"warn", text:"Em andamento"};
+      else if(showUrgency){
+        const lateDays = calcLateDays(t);
+        const meta = tagFromDelta(lateDays);
+        tag = meta;
+      }else{
+        // proximo passo / geral
+        const lateDays = calcLateDays(t, true);
+        if(lateDays > 0) tag = {cls:"bad", text:`Atrasada +${lateDays}d`};
+        else tag = {cls:"ok", text:"Planejada"};
+      }
+
+      return `
+        <div class="item" title="${name}">
+          <div class="itemTop">
+            <div class="itemName">${name}</div>
+            <span class="tag ${tag.cls}">${tag.text}</span>
+          </div>
+          <div class="itemMeta">
+            <span>Venc.: <b>${dueTxt}</b></span>
+            <span>•</span>
+            <span>${st}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function calcLateDays(t, onlyIfOverdue=false){
+      const today = new Date(); today.setHours(0,0,0,0);
+      const due = parseTaskDate(t.due);
+      if(!due) return null;
+      due.setHours(0,0,0,0);
+      const diff = daysDiff(due, today); // >0 => atrasado
+      if(onlyIfOverdue) return diff > 0 ? diff : 0;
+      return diff;
+    }
+
+    function formatGap(g){
+      const v = Math.round(g*10)/10;
+      const sign = v > 0 ? "-" : (v < 0 ? "+" : "");
+      const abs = Math.abs(v);
+      return `<span style="color:${v>0 ? "var(--bad)" : "var(--ok)"}; font-weight:800">${sign}${abs}pp</span>`;
+    }
+
+    function escapeHTML(s){
+      return String(s ?? "")
+        .replaceAll("&","&amp;")
+        .replaceAll("<","&lt;")
+        .replaceAll(">","&gt;")
+        .replaceAll('"',"&quot;");
+    }
+
+    // ------------------------------------------------------------
+    // 6) Boot
+    // ------------------------------------------------------------
+    (function boot(){
+      const app = document.getElementById("app");
+      const vm = buildVM(getData());
+      render(app, vm);
+      setupExportButton();
+    })();
+
+    function setupExportButton(){
+      const btn = document.getElementById("exportBtn");
+      if (!btn) return;
+      btn.addEventListener("click", () => {
+        document.documentElement.classList.add("exporting");
+        requestAnimationFrame(() => {
+          try {
+            window.print();
+          } finally {
+            document.documentElement.classList.remove("exporting");
+          }
+        });
+      });
+    }
+
+    function getData(){
+      // Dados reais (localStorage do sistema) com fallback para o mock.
+      const fromWindow = window.ONEPAGE_DATA;
+      if (fromWindow && typeof fromWindow === "object") return fromWindow;
+      const systemData = getSystemData();
+      return systemData || ONEPAGE_FALLBACK;
+    }
+
+    function getSystemData(){
+      const raw = safeJsonParse(localStorage.getItem("controle_projetos_state_v1"));
+      const clients = Array.isArray(raw?.clients) ? raw.clients : [];
+      if (!clients.length) return null;
+
+      const params = new URLSearchParams(window.location.search);
+      const clientId = params.get("clientId");
+      const projectId = params.get("projectId");
+      const clientName = params.get("client");
+      const projectName = params.get("project");
+
+      const normalize = (value) => String(value || "").trim().toLowerCase();
+      let client = null;
+      if (clientId) client = clients.find((c) => c.id === clientId);
+      if (!client && clientName) client = clients.find((c) => normalize(c.name) === normalize(clientName));
+      if (!client) client = clients[0] || null;
+
+      const projects = Array.isArray(client?.projects) ? client.projects : [];
+      let project = null;
+      if (projectId) project = projects.find((p) => p.id === projectId);
+      if (!project && projectName) project = projects.find((p) => normalize(p.name) === normalize(projectName));
+      if (!project) project = projects[0] || null;
+      if (!project) return null;
+
+      return mapProjectToOnePage(project, client);
+    }
+
+    function mapProjectToOnePage(project, client){
+      const tasks = extractProjectTasks(project);
+      const progressPct = resolveProgressPct(project, tasks);
+      const statusLabel = resolveStatusLabel(project, tasks, progressPct);
+      return {
+        project: {
+          name: project?.name || "Projeto",
+          client: client?.name || "-",
+          responsible: project?.developer || project?.responsible || "-",
+          reportDate: project?.reportDate || fmtBR(new Date()),
+          statusLabel,
+          startDate: project?.startDate || project?.start || "",
+          goLiveDate: project?.goLiveDate || project?.goLive || project?.end || ""
+        },
+        overall: {
+          progressPct,
+          phaseLabel: project?.phaseLabel || project?.phase || "Em execucao"
+        },
+        tasks
+      };
+    }
+
+    function extractProjectTasks(project){
+      const epicTasks = Array.isArray(project?.epics)
+        ? project.epics.flatMap((epic) => epic?.tasks || epic?.items || [])
+        : [];
+      const directTasks = Array.isArray(project?.tasks)
+        ? project.tasks
+        : project?.tasks && typeof project.tasks === "object"
+          ? Object.values(project.tasks)
+          : Array.isArray(project?.items)
+            ? project.items
+            : Array.isArray(project?.activities)
+              ? project.activities
+              : [];
+      return [...epicTasks, ...directTasks].filter(Boolean);
+    }
+
+    function resolveProgressPct(project, tasks){
+      const directProgress = parsePercentValue(
+        project?.progress ??
+        project?.progressPct ??
+        project?.percentual ??
+        project?.percent ??
+        project?.percentage
+      );
+      if (directProgress != null) return clamp(directProgress, 0, 100);
+      const list = Array.isArray(tasks) ? tasks : [];
+      if (!list.length) return 0;
+      let acc = 0;
+      list.forEach((t) => {
+        if (normStatus(t.status) === "done") {
+          acc += 1;
+          return;
+        }
+        const p = parsePercentValue(t.progressPct ?? t.progress ?? t.percent ?? t.percentual);
+        if (p != null) acc += clamp(p, 0, 100) / 100;
+      });
+      return Math.round((acc / list.length) * 100);
+    }
+
+    function resolveStatusLabel(project, tasks, progressPct){
+      const progress = Number.isFinite(progressPct) ? progressPct : resolveProgressPct(project, tasks);
+      if (progress >= 100 && (tasks || []).length) return "Concluido";
+      const goLive = parseTaskDate(project?.goLiveDate || project?.goLive || project?.end);
+      const today = new Date(); today.setHours(0,0,0,0);
+      if (goLive && goLive < today && progress < 100) return "Atrasado";
+      if (progress > 0) return "Em andamento";
+      return "Nao iniciado";
+    }
+
+    function safeJsonParse(value){
+      try {
+        return value ? JSON.parse(value) : null;
+      } catch (err) {
+        return null;
+      }
+    }
+  </script>
+</body>
+</html>

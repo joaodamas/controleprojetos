@@ -64,6 +64,7 @@
           <span id="crumb-path">Inicio</span>
         </div>
         <div class="top-actions">
+          <button class="btn" data-section="relatorio">Gerar Relatório</button>
           <button class="btn ghost" id="open-employee-modal">Cadastrar Funcionarios</button>
           <button class="btn ghost" id="edit-project-btn">Editar Projeto</button>
           <button class="btn primary" id="open-project-modal">+ Adicionar Projeto</button>
@@ -178,15 +179,23 @@
           <select name="package" id="activity-package-select"></select>
         </label>
         <label>
-          Vencimento
+          Data inicio
+          <input type="date" name="start">
+        </label>
+        <label>
+          Data fim
           <input type="date" name="due" required>
+        </label>
+        <label>
+          Percentual (%)
+          <input type="number" name="progress" min="0" max="100" step="1" placeholder="0">
         </label>
         <label>
           Status
           <select name="status" required>
-            <option value="planejado" selected>Planejado</option>
+            <option value="planejado" selected>Nao iniciado</option>
             <option value="em_andamento">Em andamento</option>
-            <option value="atrasado">Atrasado</option>
+            <option value="parado">Parado</option>
             <option value="concluido">Concluido</option>
           </select>
         </label>
@@ -200,6 +209,11 @@
 
   <div class="status-popover" id="status-popover">
     <select id="status-select"></select>
+  </div>
+
+  <div class="progress-popover" id="progress-popover">
+    <input type="number" id="progress-input" min="0" max="100" step="1">
+    <button type="button" class="btn sm primary" id="progress-save-btn">Salvar</button>
   </div>
 
   <div class="task-actions-popover" id="task-actions-popover">

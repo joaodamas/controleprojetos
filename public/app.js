@@ -227,9 +227,17 @@ const state = {
 const LOCAL_STORAGE_KEY = "controle_projetos_state_v1";
 
 const STATUS_OPTIONS = [
-  { value: "planejado", label: "Planejado", className: "planejado" },
+  { value: "planejado", label: "Nao iniciado", className: "planejado" },
   { value: "em_andamento", label: "Em andamento", className: "em-andamento" },
+  { value: "parado", label: "Parado", className: "parado" },
   { value: "atrasado", label: "Atrasado", className: "atrasado" },
+  { value: "concluido", label: "Concluido", className: "concluido" }
+];
+
+const TASK_STATUS_OPTIONS = [
+  { value: "planejado", label: "Nao iniciado", className: "planejado" },
+  { value: "em_andamento", label: "Em andamento", className: "em-andamento" },
+  { value: "parado", label: "Parado", className: "parado" },
   { value: "concluido", label: "Concluido", className: "concluido" }
 ];
 
@@ -311,14 +319,14 @@ function projectTaskCounts(tasks = []) {
     total: tasks.length,
     em_andamento: 0,
     planejado: 0,
-    atrasado: 0,
+    parado: 0,
     concluido: 0
   };
   tasks.forEach((task) => {
-    const status = (task.status || "").toLowerCase();
+    const status = normalizeTaskStatus(getTaskStatus(task));
     if (status === "em_andamento") counts.em_andamento += 1;
     else if (status === "planejado") counts.planejado += 1;
-    else if (status === "atrasado") counts.atrasado += 1;
+    else if (status === "parado") counts.parado += 1;
     else if (status === "concluido") counts.concluido += 1;
   });
   return counts;
@@ -334,7 +342,39 @@ function escapeHtml(value) {
 }
 
 function normStatus(value) {
-  return String(value || "").trim().toUpperCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+const STATUS_IN_PROGRESS = new Set(
+  ["em andamento", "em desenvolvimento", "em execucao", "em progresso", "in progress", "doing", "atrasado"].map(
+    normStatus
+  )
+);
+const STATUS_DONE = new Set(["concluido", "concluida", "done", "finalizado", "finalizada", "feito", "feita"].map(normStatus));
+const STATUS_PLANNED = new Set(
+  [
+    "planejado",
+    "planejada",
+    "nao iniciado",
+    "nao iniciada",
+    "todo",
+    "to do",
+    "a fazer",
+    "backlog",
+    "pendente",
+    "pendencia",
+    "pendencias"
+  ].map(normStatus)
+);
+
+function getTaskStatus(task) {
+  return task?.status ?? task?.state ?? task?.activityStatus ?? task?.situacao ?? "";
 }
 
 function taskTitle(task) {
@@ -349,6 +389,23 @@ function taskProgress(task) {
   const p = task?.progressPct ?? task?.progress ?? task?.percent ?? null;
   const n = Number(p);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeTaskProgress(value) {
+  if (value === "" || value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function taskProgressValue(task) {
+  const p = taskProgress(task);
+  if (p != null) return Math.max(0, Math.min(100, Math.round(p)));
+  return isDoneTask(task) ? 100 : 0;
+}
+
+function taskStartStr(task) {
+  return task?.startDate || task?.start || task?.plannedStart || "";
 }
 
 function taskDateStr(task) {
@@ -370,23 +427,24 @@ function taskDateValueSafe(task) {
 }
 
 function isDoneTask(task) {
-  const st = normStatus(task?.status || task?.state);
+  const st = normStatus(getTaskStatus(task));
   const p = taskProgress(task);
-  return /CONCLU|DONE|FEITO|FINALIZ/.test(st) || p === 100;
+  return STATUS_DONE.has(st) || p === 100;
 }
 
 function isInProgressTask(task) {
-  const st = normStatus(task?.status || task?.state);
+  const st = normStatus(getTaskStatus(task));
+  if (STATUS_IN_PROGRESS.has(st)) return true;
   const p = taskProgress(task);
-  if (p != null) return p > 0 && p < 100;
-  return /ANDAMENTO|IN\\s*PROGRESS|EXECU/.test(st);
+  return p != null && p > 0 && p < 100 && !isDoneTask(task);
 }
 
 function isPlannedTask(task) {
-  const st = normStatus(task?.status || task?.state);
+  const st = normStatus(getTaskStatus(task));
+  if (!st || STATUS_PLANNED.has(st)) return true;
+  if (STATUS_IN_PROGRESS.has(st) || STATUS_DONE.has(st)) return false;
   const p = taskProgress(task);
-  if (p != null) return p === 0;
-  return /PLANEJ|TODO|A\\s*FAZER|BACKLOG|PENDEN/.test(st) || st === "";
+  return p === 0;
 }
 
 function flattenProjectTasks(project) {
@@ -399,28 +457,108 @@ function flattenProjectTasks(project) {
   return all.filter(Boolean);
 }
 
-function pickExportLists(project) {
+function pickExportLists(project, limit = 5) {
   const tasks = flattenProjectTasks(project);
 
   const done = tasks
     .filter(isDoneTask)
     .slice()
     .sort((a, b) => taskDateValueSafe(b) - taskDateValueSafe(a))
-    .slice(0, 5);
+    .slice(0, limit);
 
-  const inProgress = tasks
-    .filter((task) => !isDoneTask(task) && isInProgressTask(task))
-    .slice()
-    .sort((a, b) => taskDateValueSafe(a) - taskDateValueSafe(b))
-    .slice(0, 5);
+  const pending = tasks.filter((task) => !isDoneTask(task));
 
-  const nextSteps = tasks
-    .filter((task) => !isDoneTask(task) && !isInProgressTask(task) && isPlannedTask(task))
+  const inProgress = pending
+    .filter(isInProgressTask)
     .slice()
-    .sort((a, b) => taskDateValueSafe(a) - taskDateValueSafe(b))
-    .slice(0, 5);
+    .sort((a, b) => {
+      const aRank = taskHealthRank(a);
+      const bRank = taskHealthRank(b);
+      if (aRank !== bRank) return aRank - bRank;
+      const aDue = taskDueValueSafe(a);
+      const bDue = taskDueValueSafe(b);
+      if (aDue !== bDue) return aDue - bDue;
+      return taskTitle(a).localeCompare(taskTitle(b));
+    })
+    .slice(0, limit);
+
+  const nextSteps = pending
+    .filter((task) => !isInProgressTask(task) && isPlannedTask(task))
+    .slice()
+    .sort((a, b) => {
+      const aDue = taskDueValueSafe(a);
+      const bDue = taskDueValueSafe(b);
+      if (aDue !== bDue) return aDue - bDue;
+      return taskTitle(a).localeCompare(taskTitle(b));
+    })
+    .slice(0, limit);
 
   return { done, inProgress, nextSteps };
+}
+
+function normalizeReportItem(item) {
+  if (!item) return null;
+  if (typeof item === "string" || typeof item === "number") {
+    return { title: String(item), meta: "" };
+  }
+  if (typeof item !== "object") return null;
+  const title = item.title || item.name || item.summary || item.description || item.label;
+  if (!title) return null;
+  const owner = item.owner || item.responsible || item.assignee;
+  const dateRaw = item.date || item.due || item.deadline || item.end;
+  const dateLabel = dateRaw ? formatDateBR(dateRaw) : "";
+  const meta = [owner, dateLabel].filter(Boolean).join(" • ");
+  return { title, meta };
+}
+
+function projectReportItems(project, keys) {
+  const items = [];
+  keys.forEach((key) => {
+    const value = project?.[key];
+    if (!value) return;
+    if (Array.isArray(value)) items.push(...value);
+    else items.push(value);
+  });
+  return items;
+}
+
+function pickProjectReportItems(project, keys, limit) {
+  return projectReportItems(project, keys)
+    .map(normalizeReportItem)
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function renderReportItems(items, emptyLabel) {
+  if (!items.length) {
+    return `<li>${escapeHtml(emptyLabel)}</li>`;
+  }
+  return items
+    .map((item) => `<li>${escapeHtml(item.title)}${item.meta ? ` <span>${escapeHtml(item.meta)}</span>` : ""}</li>`)
+    .join("");
+}
+
+function renderUrgentItems(tasks, todayTs) {
+  if (!tasks.length) {
+    return `<li>${escapeHtml("Sem atrasos no momento.")}</li>`;
+  }
+  const dayMs = 24 * 60 * 60 * 1000;
+  return tasks
+    .map((task) => {
+      const title = taskTitle(task);
+      const dueRaw = taskDueStr(task) || taskDateStr(task);
+      const dueLabel = dueRaw ? formatDateBR(dueRaw) : "-";
+      const dueValue = taskDueValueSafe(task);
+      const daysLate = Number.isFinite(dueValue) ? Math.max(0, Math.ceil((todayTs - dueValue) / dayMs)) : null;
+      const owner = taskOwner(task);
+      const parts = ["Atrasada"];
+      if (daysLate != null) parts.push(`+${daysLate}d`);
+      if (dueLabel && dueLabel !== "-") parts.push(dueLabel);
+      if (owner) parts.push(owner);
+      const meta = parts.join(" \u00b7 ");
+      return `<li>${escapeHtml(title)}${meta ? ` <span>${escapeHtml(meta)}</span>` : ""}</li>`;
+    })
+    .join("");
 }
 
 function taskDueStr(task) {
@@ -453,27 +591,567 @@ function isOverdueTask(task) {
   return due < todayStartTs();
 }
 
+function nextDeliveryTask(project) {
+  const tasks = flattenProjectTasks(project).filter((task) => !isDoneTask(task));
+  if (!tasks.length) return null;
+  return tasks
+    .slice()
+    .sort((a, b) => {
+      const aDue = taskDueValueSafe(a);
+      const bDue = taskDueValueSafe(b);
+      if (aDue !== bDue) return aDue - bDue;
+      const aDate = taskDateValueSafe(a);
+      const bDate = taskDateValueSafe(b);
+      if (aDate !== bDate) return aDate - bDate;
+      return taskTitle(a).localeCompare(taskTitle(b));
+    })[0];
+}
+
 function computeScheduleSummary(project) {
   const tasks = flattenProjectTasks(project);
   const total = tasks.length;
   const inProgress = tasks.filter((task) => !isDoneTask(task) && isInProgressTask(task)).length;
   const planned = tasks.filter((task) => !isDoneTask(task) && !isInProgressTask(task) && isPlannedTask(task)).length;
-  const overdue = tasks.filter(isOverdueTask).length;
+  const todayTs = todayStartTs();
+  const weekAhead = todayTs + 7 * 24 * 60 * 60 * 1000;
+  let overdue = 0;
+  let dueSoon = 0;
+  tasks.forEach((task) => {
+    if (isDoneTask(task)) return;
+    const due = taskDueValueSafe(task);
+    if (!Number.isFinite(due) || due === Number.POSITIVE_INFINITY) return;
+    if (due < todayTs) overdue += 1;
+    else if (due <= weekAhead) dueSoon += 1;
+  });
   const scheduleHealthStatus = overdue > 0 ? "em_atraso" : "em_dia";
-  return { total, inProgress, planned, overdue, scheduleHealthStatus };
+  return { total, inProgress, planned, overdue, dueSoon, scheduleHealthStatus };
+}
+
+function pickMostOverdueTasks(project, limit = 5) {
+  const tasks = flattenProjectTasks(project).filter((task) => !isDoneTask(task));
+  const todayTs = todayStartTs();
+  return tasks
+    .filter((task) => {
+      const due = taskDueValueSafe(task);
+      return Number.isFinite(due) && due !== Number.POSITIVE_INFINITY && due < todayTs;
+    })
+    .slice()
+    .sort((a, b) => taskDueValueSafe(a) - taskDueValueSafe(b))
+    .slice(0, limit);
 }
 
 function renderTaskLi(task) {
-  const dateRaw = taskDateStr(task);
-  const dateLabel = dateRaw ? formatDateBR(dateRaw) : "";
+  const startRaw = taskStartStr(task);
+  const endRaw = taskDueStr(task) || taskDateStr(task);
+  const startLabel = startRaw ? formatDateBR(startRaw) : "-";
+  const endLabel = endRaw ? formatDateBR(endRaw) : "-";
   const owner = taskOwner(task);
-  const right = [owner, dateLabel].filter(Boolean).join(" • ");
+  const progressLabel = `${taskProgressValue(task)}%`;
+  const statusLabel = taskStatusInfo(getTaskStatus(task)).label;
+  const healthLabel = taskHealthInfo(task).label;
+  const parts = [];
+  if (owner) parts.push(owner);
+  if (startLabel !== "-" || endLabel !== "-") parts.push(`${startLabel} → ${endLabel}`);
+  parts.push(progressLabel);
+  parts.push(statusLabel);
+  parts.push(healthLabel);
+  const right = parts.join(" • ");
   return `
     <li class="op-task">
       <div class="op-task-title">${escapeHtml(taskTitle(task))}</div>
       ${right ? `<div class="op-task-meta">${escapeHtml(right)}</div>` : ""}
     </li>
   `;
+}
+
+function taskDueLabel(task) {
+  const dueRaw = taskDueStr(task) || taskDateStr(task);
+  return dueRaw ? formatDateBR(dueRaw) : "-";
+}
+
+function taskUrgencyTag(task, todayTs = todayStartTs()) {
+  const dueValue = taskDueValueSafe(task);
+  if (!Number.isFinite(dueValue) || dueValue === Number.POSITIVE_INFINITY) {
+    return { cls: "ok", text: "Sem prazo" };
+  }
+  const diffDays = daysDiff(new Date(todayTs), new Date(dueValue));
+  if (diffDays > 0) return { cls: "bad", text: `Atrasada +${diffDays}d` };
+  if (diffDays === 0) return { cls: "warn", text: "Vence hoje" };
+  const ahead = Math.abs(diffDays);
+  return { cls: "ok", text: `Em dia • ${ahead}d` };
+}
+
+function renderOnePageItem(task, options = {}) {
+  if (!task) return "";
+  const name = escapeHtml(taskTitle(task));
+  const dueLabel = taskDueLabel(task);
+  const dueText = escapeHtml(dueLabel);
+  const statusLabel = escapeHtml(taskStatusInfo(getTaskStatus(task)).label);
+  const todayTs = options.todayTs ?? todayStartTs();
+  const tag = options.tag || taskUrgencyTag(task, todayTs);
+  const metaParts = [];
+  if (dueLabel && dueLabel !== "-") metaParts.push(`Venc.: <b>${dueText}</b>`);
+  if (statusLabel) metaParts.push(statusLabel);
+  const meta =
+    metaParts.length > 0
+      ? metaParts.map((part) => `<span>${part}</span>`).join("<span>•</span>")
+      : "<span>-</span>";
+  return `
+    <div class="item" title="${name}">
+      <div class="itemTop">
+        <div class="itemName">${name}</div>
+        <span class="tag ${tag.cls}">${escapeHtml(tag.text)}</span>
+      </div>
+      <div class="itemMeta">${meta}</div>
+    </div>
+  `;
+}
+
+function renderOnePageEmptyItem(label) {
+  return `
+    <div class="item empty">
+      <div class="itemName">${escapeHtml(label)}</div>
+    </div>
+  `;
+}
+
+function cssVar(name, fallback, rootEl = document.documentElement) {
+  if (!rootEl || !window.getComputedStyle) return fallback;
+  const value = getComputedStyle(rootEl).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function getSystemColors(rootEl) {
+  return {
+    planned: cssVar("--color-primary", cssVar("--accent-dark", "#2563eb", rootEl), rootEl),
+    actual: cssVar(
+      "--color-accent",
+      cssVar("--color-warning", cssVar("--warning-text", "#f97316", rootEl), rootEl),
+      rootEl
+    ),
+    danger: cssVar("--color-danger", cssVar("--danger-text", "#ef4444", rootEl), rootEl),
+    grid: cssVar("--color-border", cssVar("--border", "#e5e7eb", rootEl), rootEl),
+    text: cssVar("--color-text", cssVar("--text", "#111827", rootEl), rootEl),
+    muted: cssVar("--color-muted", cssVar("--muted", "#6b7280", rootEl), rootEl),
+    bg: cssVar("--color-bg", cssVar("--panel", "#ffffff", rootEl), rootEl)
+  };
+}
+
+function parseDateSafe(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
+  }
+  if (typeof value === "number") {
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  if (typeof value === "string") {
+    const byFormat = parseTaskDate(value);
+    if (byFormat) return byFormat;
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  return null;
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
+}
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function daysDiff(a, b) {
+  return Math.floor((startOfDay(a).getTime() - startOfDay(b).getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function startOfDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function activityDueDate(activity) {
+  return (
+    activity?.dueDate ||
+    activity?.due ||
+    activity?.plannedEnd ||
+    activity?.endDate ||
+    activity?.end ||
+    ""
+  );
+}
+
+function activityDoneDate(activity) {
+  return activity?.completedAt || activity?.doneAt || activity?.finishedAt || activity?.completed || "";
+}
+
+function getActivityWeight(activity) {
+  const n = Number(activity?.points ?? activity?.weight ?? 1);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function computeProjectProgress01(project, tasks, progressPct = null) {
+  if (typeof progressPct === "number" && Number.isFinite(progressPct)) {
+    return clamp01(progressPct / 100);
+  }
+  const list = project ? flattenProjectTasks(project) : Array.isArray(tasks) ? tasks : [];
+  const metrics = projectMetrics(list);
+  return clamp01((metrics?.progress ?? 0) / 100);
+}
+
+function computeSCurveFromActivities(project, activities, points = 10) {
+  const list = Array.isArray(activities) ? activities : Array.isArray(project?.activities) ? project.activities : [];
+  const tasks = list.length ? list : flattenProjectTasks(project);
+  if (!tasks.length) return null;
+
+  const start = parseDateSafe(project?.startDate || project?.start);
+  const end = parseDateSafe(project?.goLiveDate || project?.goLive || project?.end);
+  if (!start || !end) return null;
+
+  const S = startOfDay(start);
+  const E = startOfDay(end);
+  if (E.getTime() < S.getTime()) return null;
+
+  const report = startOfDay(parseDateSafe(project?.reportDate) ?? new Date());
+  const N = Math.max(2, points);
+  const totalMs = Math.max(1, E.getTime() - S.getTime());
+  const buckets = Array.from({ length: N }, (_, i) => {
+    const t = S.getTime() + totalMs * (i / (N - 1));
+    return startOfDay(new Date(t));
+  });
+
+  const totalW = tasks.reduce((sum, a) => sum + getActivityWeight(a), 0) || 1;
+
+  const planned = buckets.map((b) => {
+    const w = tasks.reduce((sum, a) => {
+      const due = parseDateSafe(activityDueDate(a));
+      const dueEff = due ? startOfDay(due) : E;
+      return dueEff <= b ? sum + getActivityWeight(a) : sum;
+    }, 0);
+    return clamp01(w / totalW);
+  });
+
+  const actual = buckets.map((b) => {
+    const w = tasks.reduce((sum, a) => {
+      let done = parseDateSafe(activityDoneDate(a));
+      if (!done && normalizeTaskStatus(getTaskStatus(a)) === "concluido") {
+        done = report;
+      }
+      const doneEff = done ? startOfDay(done) : null;
+      return doneEff && doneEff <= b ? sum + getActivityWeight(a) : sum;
+    }, 0);
+    return clamp01(w / totalW);
+  });
+
+  planned[0] = 0;
+  planned[planned.length - 1] = 1;
+
+  for (let i = 1; i < planned.length; i += 1) {
+    planned[i] = Math.max(planned[i], planned[i - 1]);
+  }
+  for (let i = 1; i < actual.length; i += 1) {
+    actual[i] = Math.max(actual[i], actual[i - 1]);
+  }
+
+  const plannedNow = clamp01(
+    tasks.reduce((sum, a) => {
+      const due = parseDateSafe(activityDueDate(a));
+      const dueEff = due ? startOfDay(due) : E;
+      return dueEff <= report ? sum + getActivityWeight(a) : sum;
+    }, 0) / totalW
+  );
+
+  const actualNow = clamp01(
+    tasks.reduce((sum, a) => {
+      let done = parseDateSafe(activityDoneDate(a));
+      if (!done && normalizeTaskStatus(getTaskStatus(a)) === "concluido") {
+        done = report;
+      }
+      const doneEff = done ? startOfDay(done) : null;
+      return doneEff && doneEff <= report ? sum + getActivityWeight(a) : sum;
+    }, 0) / totalW
+  );
+
+  return { buckets, planned, actual, report, plannedNow, actualNow, start: S, end: E };
+}
+
+function buildDailyDates(start, end) {
+  const S = startOfDay(start);
+  const E = startOfDay(end);
+  const out = [];
+  for (let d = S; d <= E; d = addDays(d, 1)) out.push(new Date(d));
+  return out;
+}
+
+function downsampleSeries(dates, a, b, maxPoints = 60) {
+  const n = dates.length;
+  if (n <= maxPoints) return { dates, a, b };
+  const step = Math.ceil(n / maxPoints);
+  const dsD = [];
+  const dsA = [];
+  const dsB = [];
+  for (let i = 0; i < n; i += step) {
+    dsD.push(dates[i]);
+    dsA.push(a[i]);
+    dsB.push(b[i]);
+  }
+  if (dsD[dsD.length - 1].getTime() !== dates[n - 1].getTime()) {
+    dsD.push(dates[n - 1]);
+    dsA.push(a[n - 1]);
+    dsB.push(b[n - 1]);
+  }
+  return { dates: dsD, a: dsA, b: dsB };
+}
+
+function computeSCurveDailyBaseline(project, activities, progressPct = null) {
+  const list = Array.isArray(activities) ? activities : Array.isArray(project?.activities) ? project.activities : [];
+  const tasks = list.length ? list : flattenProjectTasks(project);
+  if (!tasks.length) return null;
+
+  const start = parseDateSafe(project?.startDate || project?.start);
+  const end = parseDateSafe(project?.goLiveDate || project?.goLive || project?.end);
+  if (!start || !end) return null;
+
+  const dates = buildDailyDates(start, end);
+  const totalDays = Math.max(1, dates.length - 1);
+  const totalW = tasks.reduce((sum, t) => sum + getActivityWeight(t), 0) || 1;
+  const report = startOfDay(parseDateSafe(project?.reportDate) ?? new Date());
+
+  const doneDates = tasks.map((t) => {
+    const doneAt = parseDateSafe(activityDoneDate(t));
+    if (doneAt) return startOfDay(doneAt);
+    if (!isDoneTask(t)) return null;
+    const updatedAt = parseDateSafe(t?.updatedAt || t?.updated_at || t?.updatedOn);
+    if (updatedAt) return startOfDay(updatedAt);
+    const dueAt = parseDateSafe(activityDueDate(t));
+    if (dueAt) return startOfDay(dueAt);
+    return report;
+  });
+  const weights = tasks.map((t) => getActivityWeight(t));
+
+  const baseline = dates.map((_, i) => clamp01(i / totalDays));
+  const realized = dates.map((d) => {
+    const w = doneDates.reduce((sum, doneAt, idx) => {
+      return doneAt && doneAt <= d ? sum + weights[idx] : sum;
+    }, 0);
+    return clamp01(w / totalW);
+  });
+
+  const startDate = dates[0];
+  const endDate = dates[dates.length - 1];
+  const clampedReport =
+    report < startDate ? startDate : report > endDate ? endDate : report;
+  const idxNow = Math.max(0, Math.min(dates.length - 1, daysDiff(clampedReport, startDate)));
+
+  const baselineNow = baseline[idxNow];
+  const realizedNow = computeProjectProgress01(project, tasks, progressPct);
+  realized[idxNow] = Math.max(realized[idxNow], realizedNow);
+  for (let i = idxNow + 1; i < realized.length; i += 1) {
+    realized[i] = Math.max(realized[i], realized[i - 1]);
+  }
+  const ds = downsampleSeries(dates, baseline, realized, 60);
+
+  return {
+    start: startDate,
+    end: endDate,
+    report: clampedReport,
+    dates: ds.dates,
+    baseline: ds.a,
+    realized: ds.b,
+    baselineNow,
+    realizedNow
+  };
+}
+
+function renderSCurveSvgDaily(sc, opts = {}) {
+  if (!sc || !Array.isArray(sc.dates) || sc.dates.length < 2) return "";
+  const W = opts.width ?? 1760;
+  const H = opts.height ?? 240;
+  const c = opts.colors ?? getSystemColors();
+
+  const pad = { l: 100, r: 18, t: 18, b: 46 };
+  const innerW = W - pad.l - pad.r;
+  const innerH = H - pad.t - pad.b;
+
+  const fmtBR = (d) => {
+    if (!d) return "";
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const t0 = sc.start.getTime();
+  const t1 = sc.end.getTime();
+  const xAtDate = (d) => pad.l + innerW * clamp01((d.getTime() - t0) / Math.max(1, t1 - t0));
+  const yAt = (p) => pad.t + innerH * (1 - clamp01(p));
+
+  const pathFrom = (arr) =>
+    (arr || [])
+      .map((p, i) => {
+        const xx = xAtDate(sc.dates[i]);
+        const yy = yAt(p);
+        return `${i === 0 ? "M" : "L"} ${xx.toFixed(2)} ${yy.toFixed(2)}`;
+      })
+      .join(" ");
+
+  const basePath = pathFrom(sc.baseline);
+  const realPath = pathFrom(sc.realized);
+
+  const xToday = xAtDate(sc.report);
+  const yBaseNow = yAt(sc.baselineNow);
+  const yRealNow = yAt(sc.realizedNow);
+
+  const basePct = Math.round(sc.baselineNow * 100);
+  const realPct = Math.round(sc.realizedNow * 100);
+  const labelX = xToday;
+
+  return `
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      <rect x="0" y="0" width="${W}" height="${H}" rx="14" fill="${c.bg}" stroke="${c.grid}"/>
+      ${[0, 0.5, 1]
+        .map((p) => {
+          const yy = yAt(p);
+          return `<line x1="${pad.l}" y1="${yy}" x2="${W - pad.r}" y2="${yy}" stroke="${c.grid}" stroke-width="1"/>`;
+        })
+        .join("")}
+      <text x="${pad.l}" y="${pad.t - 6}" font-size="10" fill="${c.muted}" font-family="Arial">Progresso (%)</text>
+
+      <path d="${basePath}" fill="none" stroke="${c.planned}" stroke-width="3" stroke-dasharray="6 4"/>
+      <path d="${realPath}" fill="none" stroke="${c.actual}" stroke-width="4"/>
+
+      <line x1="${xToday}" y1="${pad.t}" x2="${xToday}" y2="${H - pad.b}" stroke="${c.danger}" stroke-width="2" opacity="0.85"/>
+
+      <text x="${labelX}" y="${yBaseNow - 10}" text-anchor="middle" font-size="11" fill="${c.planned}" font-family="Arial" font-weight="700">${basePct}%</text>
+      <text x="${labelX}" y="${yRealNow + 18}" text-anchor="middle" font-size="11" fill="${c.actual}" font-family="Arial" font-weight="700">${realPct}%</text>
+
+      <text x="${pad.l}" y="${H - 26}" font-size="10" fill="${c.muted}" font-family="Arial">${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${H - 26}" text-anchor="end" font-size="10" fill="${c.muted}" font-family="Arial">${fmtBR(sc.end)}</text>
+
+    </svg>
+  `;
+}
+
+function renderSCurveSvg(sc, opts = {}) {
+  if (!sc || !sc.start || !sc.end || !Array.isArray(sc.buckets) || sc.buckets.length < 2) return "";
+  const W = opts.width ?? 1760;
+  const H = opts.height ?? 240;
+  const c = opts.colors ?? getSystemColors();
+
+  const pad = { l: 110, r: 24, t: 22, b: 44 };
+  const innerW = W - pad.l - pad.r;
+  const innerH = H - pad.t - pad.b;
+
+  const fmtBR = (d) => {
+    if (!d) return "";
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const xAtDate = (d) => {
+    const t = d.getTime();
+    const S = sc.start.getTime();
+    const E = sc.end.getTime();
+    const k = (t - S) / Math.max(1, E - S);
+    return pad.l + innerW * clamp01(k);
+  };
+
+  const yAt = (p) => pad.t + innerH * (1 - clamp01(p));
+  const x = (i) => xAtDate(sc.buckets[i]);
+
+  const pathFrom = (arr) =>
+    (arr || []).map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(2)} ${yAt(p).toFixed(2)}`).join(" ");
+
+  const plannedPath = pathFrom(sc.planned);
+  const actualPath = pathFrom(sc.actual);
+
+  const reportDate = sc.report || sc.end;
+  const xToday = xAtDate(reportDate);
+  const plannedNow = clamp01(sc.plannedNow ?? 0);
+  const actualNow = clamp01(sc.actualNow ?? 0);
+  const yPlanNow = yAt(plannedNow);
+  const yRealNow = yAt(actualNow);
+  const gapPP = Math.round((actualNow - plannedNow) * 100);
+  const endLabel = Math.round(1 * 100) + "%";
+  const planPct = Math.round(plannedNow * 100);
+  const realPct = Math.round(actualNow * 100);
+  const labelX = xToday;
+  const plannedLabelY = Math.max(pad.t + 10, yPlanNow - 8);
+  const actualLabelY = Math.min(H - pad.b - 6, yRealNow + 14);
+  const gapLabel = `Gap ${gapPP > 0 ? `+${gapPP}` : `${gapPP}`}pp`;
+
+  const gridH = [0, 0.5, 1]
+    .map((p) => {
+      const yy = yAt(p);
+      const lab = Math.round(p * 100) + "%";
+      return `
+        <line x1="${pad.l}" y1="${yy}" x2="${W - pad.r}" y2="${yy}" stroke="${c.grid}" stroke-width="1" />
+        <text x="${pad.l - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="${c.muted}" font-family="Arial">
+          ${lab}
+        </text>
+      `;
+    })
+    .join("");
+
+  return `
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      <rect x="0" y="0" width="${W}" height="${H}" fill="${c.bg}" stroke="${c.grid}" />
+      ${gridH}
+
+      <line x1="${xToday}" y1="${pad.t}" x2="${xToday}" y2="${H - pad.b}" stroke="${c.danger}" stroke-width="2" />
+
+      <path d="${plannedPath}" fill="none" stroke="${c.planned}" stroke-width="3" stroke-dasharray="6 4" />
+      <path d="${actualPath}" fill="none" stroke="${c.actual}" stroke-width="4" />
+
+      <circle cx="${xToday}" cy="${yPlanNow}" r="6" fill="${c.planned}" />
+      <circle cx="${xToday}" cy="${yRealNow}" r="6" fill="${c.actual}" />
+
+      <text x="${labelX}" y="${plannedLabelY}" text-anchor="middle" font-size="11" fill="${c.planned}" font-family="Arial" font-weight="700">
+        ${planPct}%
+      </text>
+      <text x="${labelX}" y="${actualLabelY}" text-anchor="middle" font-size="11" fill="${c.actual}" font-family="Arial" font-weight="700">
+        ${realPct}%
+      </text>
+
+      <text x="${xAtDate(sc.end)}" y="${yAt(1) - 8}" text-anchor="end" font-size="11" fill="${c.muted}" font-family="Arial">
+        ${endLabel}
+      </text>
+      <text x="${pad.l}" y="${H - 18}" font-size="11" fill="${c.muted}" font-family="Arial">${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${H - 18}" text-anchor="end" font-size="11" fill="${c.muted}" font-family="Arial">${fmtBR(sc.end)}</text>
+
+      <text x="${W / 2}" y="${H - 6}" text-anchor="middle" font-size="11" fill="${c.muted}" font-family="Arial">
+        ${gapLabel}
+      </text>
+      <text x="40" y="${H / 2}" transform="rotate(-90 40 ${H / 2})" font-size="11" fill="${c.muted}" font-family="Arial">
+        Progresso acumulado (%)
+      </text>
+    </svg>
+  `;
+}
+
+function renderOnePageSCurve({ root, project, metrics }) {
+  const mount = root ? root.querySelector("#sCurveMount") : document.getElementById("sCurveMount");
+  if (!mount) return;
+  mount.innerHTML = "";
+  const progressPct = clampPct(project?.progress ?? metrics?.progress ?? 0);
+  const series = computeSCurveDailyBaseline(project, project?.activities || null, progressPct);
+  const height = 240;
+  mount.style.height = `${height}px`;
+  mount.style.overflow = "hidden";
+  const colors = getSystemColors(root || document.documentElement);
+  const width = mount.clientWidth || 1760;
+  if (!series) {
+    mount.innerHTML = `<div class="empty">Curva S: defina Data Inicio e Go Live.</div>`;
+    return;
+  }
+  mount.innerHTML = renderSCurveSvgDaily(series, { width, height, colors });
 }
 
 function latestCompletedTasks(tasks = [], limit = 5) {
@@ -492,19 +1170,31 @@ function latestCompletedTasks(tasks = [], limit = 5) {
 function buildProjectReportStyles() {
   return `
     :root {
+      --bg: #f4f6fb;
+      --card: #ffffff;
+      --panel: #ffffff;
       --text: #1f252f;
       --muted: #7b8794;
       --border: #e4e8f0;
-      --panel: #ffffff;
       --shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
-      --success-bg: #e6f6ed;
-      --success-text: #1e824c;
-      --danger-bg: #ffe5e5;
-      --danger-text: #c01b24;
-      --info-bg: #e5f0ff;
-      --info-text: #1b63c3;
-      --muted-bg: #f1f2f6;
-      --muted-text: #6b7280;
+      --radius: 14px;
+
+      --ok: #16a34a;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+
+      --primary: #1ca7a6;
+      --primary2: #0b3c5d;
+
+      --baseline: #0f172a;
+      --real: #a16207;
+
+      --accent: #1ca7a6;
+      --accent-dark: #0b3c5d;
+      --accent-soft: rgba(28, 167, 166, 0.12);
+      --accent-tint: #e6f6f6;
+      --onepage-width: 1100px;
+      --onepage-height: 0px;
     }
 
     * { box-sizing: border-box; }
@@ -512,230 +1202,357 @@ function buildProjectReportStyles() {
       margin: 0;
       font-family: "Poppins", system-ui, -apple-system, sans-serif;
       color: var(--text);
-      background: #f4f6fb;
+      background: var(--bg);
     }
 
     .report-page {
-      max-width: 1100px;
-      margin: 24px auto;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 24px;
-      box-shadow: var(--shadow);
-    }
-
-    .report-header {
+      width: min(100%, var(--onepage-width));
+      max-width: var(--onepage-width);
+      min-height: var(--onepage-height);
+      margin: 18px auto;
+      padding: 0 14px 18px;
       display: grid;
-      grid-template-columns: 1.2fr 0.8fr;
-      gap: 24px;
-      align-items: start;
-    }
-
-    .report-title {
-      font-size: 26px;
-      font-weight: 800;
-      margin: 0 0 6px;
-    }
-
-    .report-subtitle {
-      color: var(--muted);
-      font-weight: 600;
-    }
-
-    .report-meta {
-      margin-top: 10px;
-      color: var(--muted);
-      font-size: 13px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .report-health {
-      display: grid;
-      gap: 10px;
-      justify-items: end;
-    }
-
-    .health-box {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 12px 14px;
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
       gap: 12px;
     }
 
-    .pill {
+    .report-page .header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .report-page .title {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .report-page .title h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0.2px;
+    }
+
+    .report-page .chips {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .report-page .chip {
+      background: rgba(15, 23, 42, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 8px 10px;
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      line-height: 1;
+    }
+
+    .report-page .chip small {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    .report-page .chip b {
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .report-page .headerRight {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .report-page .badge {
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: 999px;
+      padding: 8px 12px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      box-shadow: var(--shadow);
+      white-space: nowrap;
+    }
+
+    .report-page .badge .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--muted);
+    }
+
+    .report-page .badge strong {
+      font-size: 12px;
+    }
+
+    .report-page .badge span {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .report-page .dot.ok { background: var(--ok); }
+    .report-page .dot.warn { background: var(--warn); }
+    .report-page .dot.bad { background: var(--bad); }
+
+    .report-page .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .report-page .cardHeader {
+      padding: 10px 12px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+    }
+
+    .report-page .cardHeader h2 {
+      margin: 0;
+      font-size: 12px;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .report-page .cardBody {
+      padding: 10px 12px;
+    }
+
+    .report-page .kpis {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 1fr;
+      gap: 12px;
+    }
+
+    .report-page .progress-card {
+      background: var(--accent-tint);
+      border-color: rgba(28, 167, 166, 0.2);
+    }
+
+    .report-page .progress-card .kpiValue {
+      color: var(--accent-dark);
+    }
+
+    .report-page .kpiTop {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .report-page .kpiValue {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+
+    .report-page .kpiSub {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .report-page .bar {
+      margin-top: 8px;
+      height: 8px;
+      background: rgba(15, 23, 42, 0.06);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .report-page .bar > i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent-dark), var(--accent));
+      border-radius: 999px;
+    }
+
+    .report-page .pill {
       display: inline-flex;
       align-items: center;
-      padding: 6px 12px;
+      gap: 6px;
+      padding: 6px 10px;
       border-radius: 999px;
-      font-weight: 700;
+      border: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.02);
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .report-page .pill b { color: var(--text); }
+
+    .report-page .healthTag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
       font-size: 12px;
       white-space: nowrap;
     }
 
-    .pill.planejado { background: var(--muted-bg); color: var(--muted-text); }
-    .pill.em-andamento { background: var(--info-bg); color: var(--info-text); }
-    .pill.atrasado { background: var(--danger-bg); color: var(--danger-text); }
-    .pill.concluido { background: var(--success-bg); color: var(--success-text); }
-    .pill.em-dia { background: var(--success-bg); color: var(--success-text); }
-    .pill.em-atraso { background: var(--danger-bg); color: var(--danger-text); }
+    .report-page .healthTag.ok { background: rgba(22, 163, 74, 0.10); color: #166534; }
+    .report-page .healthTag.warn { background: rgba(245, 158, 11, 0.12); color: #92400e; }
+    .report-page .healthTag.bad { background: rgba(239, 68, 68, 0.12); color: #991b1b; }
 
-    .report-grid {
+    .report-page .mid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 18px;
-      margin-top: 18px;
+      grid-template-columns: 2fr 1fr;
+      gap: 12px;
+      align-items: stretch;
     }
 
-    .report-card {
+    .report-page .curveMeta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+    }
+
+    .report-page .miniStat {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
       border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 16px;
-      background: #fff;
-      box-shadow: var(--shadow);
-    }
-
-    .report-card h3 {
-      margin: 0 0 10px;
-      font-size: 16px;
-    }
-
-    .report-list {
-      margin: 0;
-      padding-left: 18px;
-      color: var(--text);
-      display: grid;
-      gap: 8px;
-    }
-
-    .report-list li {
-      color: var(--text);
-      font-size: 14px;
-    }
-
-    .report-list span {
-      color: var(--muted);
+      background: rgba(15, 23, 42, 0.02);
       font-size: 12px;
-      margin-left: 6px;
-    }
-
-    .report-progress {
-      display: grid;
-      gap: 8px;
-    }
-
-    .progress-value {
-      font-size: 32px;
-      font-weight: 800;
-    }
-
-    .progress-meta {
       color: var(--muted);
-      font-size: 13px;
+      white-space: nowrap;
     }
 
-    .counts-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(140px, 1fr));
-      gap: 12px;
-      margin-top: 10px;
+    .report-page .miniStat b { color: var(--text); }
+    .report-page .miniStat.gap.ok b { color: var(--ok); }
+    .report-page .miniStat.gap.bad b { color: var(--bad); }
+
+    .report-page .legendDot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--muted);
     }
 
-    .count-card {
-      border: 1px solid var(--border);
+    .report-page .legendDot.baseline { background: var(--baseline); }
+    .report-page .legendDot.real { background: var(--real); }
+
+    .report-page .items {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .report-page .item {
+      padding: 10px 10px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
       border-radius: 12px;
-      padding: 12px;
-      background: #fff;
-    }
-
-    .count-card strong {
-      display: block;
-      font-size: 20px;
-      margin-top: 6px;
-    }
-
-    .count-card.total { background: #f8fafc; }
-    .count-card.em-andamento { background: var(--info-bg); color: var(--info-text); }
-    .count-card.planejado { background: var(--muted-bg); color: var(--muted-text); }
-    .count-card.atrasado { background: var(--danger-bg); color: var(--danger-text); }
-
-    .op-grid-3 {
+      background: rgba(15, 23, 42, 0.015);
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-      margin-top: 18px;
+      gap: 4px;
+      min-width: 0;
     }
 
-    .op-list {
-      list-style: none;
-      padding: 0;
-      margin: 8px 0 0;
-      display: grid;
-      gap: 8px;
-    }
-
-    .op-task {
-      padding: 8px 0;
-      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-    }
-
-    .op-task:last-child {
-      border-bottom: none;
-    }
-
-    .op-task-title {
-      font-weight: 600;
-      font-size: 13px;
-    }
-
-    .op-task-meta {
-      margin-top: 2px;
-      font-size: 12px;
+    .report-page .item.empty {
+      border-style: dashed;
       color: var(--muted);
+      background: transparent;
     }
 
-    .op-kpis {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      margin-top: 10px;
+    .report-page .itemTop {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
     }
 
-    .op-kpi {
-      padding: 12px;
-      border-radius: 12px;
-      border: 1px solid rgba(0, 0, 0, 0.08);
-      background: #fff;
-    }
-
-    .op-kpi-label {
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    .op-kpi-value {
-      font-size: 22px;
+    .report-page .itemName {
+      font-size: 12.5px;
       font-weight: 700;
-      margin-top: 4px;
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
-    .kpi-total { background: #f8fafc; }
-    .kpi-progress { background: var(--info-bg); color: var(--info-text); }
-    .kpi-planned { background: var(--muted-bg); color: var(--muted-text); }
-    .kpi-overdue { background: var(--danger-bg); color: var(--danger-text); }
+    .report-page .itemMeta {
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .report-page .tag {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .report-page .tag.bad { color: #991b1b; background: rgba(239, 68, 68, 0.10); }
+    .report-page .tag.warn { color: #92400e; background: rgba(245, 158, 11, 0.12); }
+    .report-page .tag.ok { color: #166534; background: rgba(22, 163, 74, 0.10); }
+
+    .report-page .bottom {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .report-page .svgBox {
+      width: 100%;
+      height: 240px;
+      border-radius: 12px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.02), transparent);
+      overflow: hidden;
+    }
+
+    .report-page .empty {
+      font-size: 12px;
+      color: var(--muted);
+      padding: 12px;
+    }
+
+    @media (max-width: 1100px) {
+      .report-page .kpis { grid-template-columns: 1fr; }
+      .report-page .mid { grid-template-columns: 1fr; }
+      .report-page .bottom { grid-template-columns: 1fr; }
+      .report-page .header { grid-template-columns: 1fr; }
+      .report-page .headerRight { justify-content: flex-start; }
+    }
 
     @media print {
       body { background: #fff; }
-      .report-page {
-        margin: 0;
+      .report-page { margin: 0; padding: 0; }
+      .report-page .card,
+      .report-page .badge {
         box-shadow: none;
-        border: none;
       }
     }
   `;
@@ -747,94 +1564,209 @@ function buildProjectReportStylesScoped() {
     .replace(/\bbody\b/g, "#export-onepage-root");
 }
 
-function buildProjectReportSection({ project, client, metrics }) {
-  const { done, inProgress, nextSteps } = pickExportLists(project);
+function buildOnePageContent({ project, client, metrics, exportMode = false }) {
+  const reportMetrics = metrics || projectMetrics(flattenProjectTasks(project));
+  const listLimit = exportMode ? 4 : 5;
+  const { done, inProgress, nextSteps } = pickExportLists(project, listLimit);
   const schedule = computeScheduleSummary(project);
-  const statusBadge = statusInfo(projectStatus(project, metrics));
-  const scheduleBadge = scheduleStatusInfo(schedule.scheduleHealthStatus);
-  const progress = metrics.progress ?? 0;
+  const statusBadge = statusInfo(projectStatus(project, reportMetrics));
+  const progressPct = clampPct(project?.progress ?? reportMetrics?.progress ?? 0);
   const goLiveLabel = formatDateBR(project.end || project.goLive || project.goLiveDate || "");
-  const startLabel = formatDateBR(project.start || "");
+  const reportDate = formatDateBR(project?.reportDate || Date.now());
   const developer = project.developer || "A definir";
   const clientName = client?.name || "Cliente";
+  const sCurveSeries = computeSCurveDailyBaseline(
+    project,
+    project?.activities || null,
+    progressPct
+  );
+  const totalCount = reportMetrics?.total ?? schedule.total ?? 0;
+  const doneCount = reportMetrics?.done ?? 0;
+  const scheduleTone = schedule.overdue > 0 ? "bad" : schedule.dueSoon > 0 ? "warn" : "ok";
+  const scheduleLabel = schedule.overdue > 0 ? "Em atraso" : schedule.dueSoon > 0 ? "Em risco" : "Em dia";
+  const phaseLabel = project?.phaseLabel || project?.phase || statusBadge.label || "Em execucao";
+  const sCurveSvg = sCurveSeries
+    ? renderSCurveSvgDaily(sCurveSeries, { width: 1760, height: 240, colors: getSystemColors() })
+    : `<div class="empty">Curva S: defina Data Inicio e Go Live.</div>`;
+  const baselinePct = sCurveSeries ? Math.round(sCurveSeries.baselineNow * 100) : 0;
+  const realizedPct = sCurveSeries ? Math.round(sCurveSeries.realizedNow * 100) : 0;
+  const baselineLabel = sCurveSeries ? `${baselinePct}%` : "--";
+  const realizedLabel = sCurveSeries ? `${realizedPct}%` : "--";
+  const gapPP = sCurveSeries ? realizedPct - baselinePct : 0;
+  const gapLabel = sCurveSeries ? `${gapPP > 0 ? "+" : ""}${gapPP}pp` : "--";
+  const gapTone = sCurveSeries ? (gapPP < 0 ? "bad" : "ok") : "ok";
 
-  const latestList = latest.length
-    ? latest
-        .map((task) => `<li>${task.title || "Atividade"} <span>${formatDateBR(task.due)}</span></li>`)
-        .join("")
-    : "<li>Nenhuma atividade concluida.</li>";
+  const todayTs = todayStartTs();
+  const urgentTasks = pickMostOverdueTasks(project, 5);
+  const urgentList = urgentTasks.length
+    ? urgentTasks.map((task) => renderOnePageItem(task, { todayTs })).join("")
+    : renderOnePageEmptyItem("Sem atrasos no momento.");
+  const topUrgent = urgentTasks[0] || null;
+  const topUrgentTag = topUrgent ? taskUrgencyTag(topUrgent, todayTs) : null;
+  const topUrgentDue = topUrgent ? taskDueLabel(topUrgent) : "-";
+  const topUrgentStatus = topUrgent ? taskStatusInfo(getTaskStatus(topUrgent)).label : "-";
+
+  const doneList = done.length
+    ? done.map((task) => renderOnePageItem(task, { todayTs, tag: { cls: "ok", text: "Concluido" } })).join("")
+    : renderOnePageEmptyItem("Sem atividades");
+  const inProgressList = inProgress.length
+    ? inProgress.map((task) => renderOnePageItem(task, { todayTs, tag: { cls: "warn", text: "Em andamento" } })).join("")
+    : renderOnePageEmptyItem("Sem atividades");
+  const nextStepsList = nextSteps.length
+    ? nextSteps.map((task) => renderOnePageItem(task, { todayTs })).join("")
+    : renderOnePageEmptyItem("Sem atividades");
 
   return `
     <div class="report-page">
-      <div class="report-header">
-        <div>
-          <div class="report-title">${project.name || "Projeto"}</div>
-          <div class="report-subtitle">${clientName} • ${developer}</div>
-          <div class="report-meta">
-            <span>Inicio: ${startLabel || "-"}</span>
-            <span>Go Live: ${goLiveLabel || "-"}</span>
+      <div class="header">
+        <div class="title">
+          <h1>${escapeHtml(project.name || "Projeto")}</h1>
+          <div class="chips">
+            <div class="chip"><small>Cliente</small><b>${escapeHtml(clientName)}</b></div>
+            <div class="chip"><small>Responsavel</small><b>${escapeHtml(developer)}</b></div>
+            <div class="chip"><small>Data report</small><b>${escapeHtml(reportDate)}</b></div>
           </div>
         </div>
-        <div class="report-health">
-          <div class="report-progress">
-            <div class="progress-value">${progress}%</div>
-            <div class="progress-meta">${statusBadge.label} • Go Live: ${goLiveLabel || "-"}</div>
+
+        <div class="headerRight">
+          <div class="badge">
+            <i class="dot ${scheduleTone}"></i>
+            <strong>Status:</strong>
+            <span>${escapeHtml(statusBadge.label)}</span>
           </div>
-          <div class="health-box">
-            <span>Status do projeto</span>
-            <span class="pill ${statusBadge.className}">${statusBadge.label}</span>
-          </div>
-          <div class="health-box">
-            <span>Prazo</span>
-            <span class="pill ${scheduleBadge.className}">${scheduleBadge.label}</span>
+          <div class="badge">
+            <i class="dot ${scheduleTone}"></i>
+            <strong>Go Live:</strong>
+            <span>${escapeHtml(goLiveLabel || "-")}</span>
           </div>
         </div>
       </div>
 
-      <div class="report-grid">
-        <div class="report-card">
-          <h3>Destaques (ultimas 5 concluidas)</h3>
-          <ul class="report-list">
-            ${latestList}
-          </ul>
-        </div>
-        <div class="report-card">
-          <h3>Saude do projeto</h3>
-          <div class="health-box">
-            <span>Status</span>
-            <span class="pill ${statusBadge.className}">${statusBadge.label}</span>
+      <div class="kpis">
+        <div class="card progress-card">
+          <div class="cardHeader">
+            <h2>Progresso</h2>
+            <span class="pill"><b>${doneCount}</b> / ${totalCount} concluidas</span>
           </div>
-          <div class="health-box" style="margin-top:10px;">
-            <span>Prazo</span>
-            <span class="pill ${scheduleBadge.className}">${scheduleBadge.label}</span>
+          <div class="cardBody">
+            <div class="kpiTop">
+              <div class="kpiValue">${progressPct}%</div>
+              <span class="healthTag ${scheduleTone}">${scheduleLabel}</span>
+            </div>
+            <div class="bar"><i style="width:${progressPct}%"></i></div>
+            <div class="kpiSub">${escapeHtml(phaseLabel)}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Cronograma</h2>
+            <span class="healthTag ${scheduleTone}">${scheduleLabel}</span>
+          </div>
+          <div class="cardBody">
+            <div class="kpiTop">
+              <div class="kpiValue" style="font-size:20px">${schedule.overdue} atrasada(s)</div>
+              <span class="pill">${
+                schedule.dueSoon ? `+ <b>${schedule.dueSoon}</b> vencem em 7 dias` : "Sem vencimentos em 7 dias"
+              }</span>
+            </div>
+            <div class="kpiSub">
+              Total: <b>${schedule.total}</b> • Em andamento: <b>${schedule.inProgress}</b> • Concluidas: <b>${doneCount}</b>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Risco principal</h2>
+            <span class="tag ${topUrgentTag ? topUrgentTag.cls : "ok"}">${
+              topUrgentTag ? escapeHtml(topUrgentTag.text) : "Sem riscos"
+            }</span>
+          </div>
+          <div class="cardBody">
+            ${
+              topUrgent
+                ? `
+                <div class="itemName" title="${escapeHtml(taskTitle(topUrgent))}">
+                  ${escapeHtml(taskTitle(topUrgent))}
+                </div>
+                <div class="itemMeta">
+                  <span>Venc.: <b>${escapeHtml(topUrgentDue)}</b></span>
+                  <span>•</span>
+                  <span>Status: <b>${escapeHtml(topUrgentStatus)}</b></span>
+                </div>
+              `
+                : `
+                <div class="kpiSub">Nenhuma atividade critica detectada.</div>
+              `
+            }
           </div>
         </div>
       </div>
 
-      <div class="report-card" style="margin-top:18px;">
-        <h3>Resumo do Cronograma</h3>
-        <div class="report-meta">Total de atividades: ${counts.total}</div>
-        <div class="counts-grid">
-          <div class="count-card em-andamento">
-            Em andamento
-            <strong>${counts.em_andamento}</strong>
+      <div class="mid">
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Curva S - Avanco fisico acumulado</h2>
+            <div class="curveMeta">
+              <span class="miniStat"><i class="legendDot baseline"></i> Baseline <b>${baselineLabel}</b></span>
+              <span class="miniStat"><i class="legendDot real"></i> Realizado <b>${realizedLabel}</b></span>
+              <span class="miniStat gap ${gapTone}"><b>GAP ${gapLabel}</b></span>
+            </div>
           </div>
-          <div class="count-card planejado">
-            Planejado
-            <strong>${counts.planejado}</strong>
+          <div class="cardBody">
+            <div id="sCurveMount" class="svgBox">${sCurveSvg}</div>
           </div>
-          <div class="count-card atrasado">
-            Em atraso
-            <strong>${counts.atrasado}</strong>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Mais urgente</h2>
+            <span class="pill">Top <b>${urgentTasks.length}</b></span>
           </div>
-          <div class="count-card total">
-            Total
-            <strong>${counts.total}</strong>
+          <div class="cardBody">
+            <div class="items">${urgentList}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bottom">
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Ultimas concluidas</h2>
+            <span class="pill">Top <b>${done.length}</b></span>
+          </div>
+          <div class="cardBody">
+            <div class="items">${doneList}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Em andamento</h2>
+            <span class="pill">Top <b>${inProgress.length}</b></span>
+          </div>
+          <div class="cardBody">
+            <div class="items">${inProgressList}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Proximos passos</h2>
+            <span class="pill">Top <b>${nextSteps.length}</b></span>
+          </div>
+          <div class="cardBody">
+            <div class="items">${nextStepsList}</div>
           </div>
         </div>
       </div>
     </div>
   `;
+}
+
+function buildProjectReportSection({ project, client, metrics }) {
+  return buildOnePageContent({ project, client, metrics });
 }
 
 function buildProjectReportHtml({ project, client, metrics }) {
@@ -848,109 +1780,42 @@ function buildProjectReportHtml({ project, client, metrics }) {
       <style>${buildProjectReportStyles()}</style>
     </head>
     <body>
-      ${buildProjectReportSection({ project, client, metrics })}
+      ${buildOnePageContent({ project, client, metrics })}
     </body>
   </html>`;
 }
 
 function renderOnePageExportHtml({ project, client, metrics }) {
-  const { done, inProgress, nextSteps } = pickExportLists(project);
-  const schedule = computeScheduleSummary(project);
-  const statusBadge = statusInfo(projectStatus(project, metrics));
-  const scheduleBadge = scheduleStatusInfo(schedule.scheduleHealthStatus);
-  const progress = metrics?.progress ?? 0;
-  const goLiveLabel = formatDateBR(project.end || project.goLive || project.goLiveDate || "");
-  const startLabel = formatDateBR(project.start || "");
-  const developer = project.developer || "A definir";
-  const clientName = client?.name || "Cliente";
-
-  const doneList = (done.length ? done : [{ title: "Sem atividades" }]).map(renderTaskLi).join("");
-  const inProgressList = (inProgress.length ? inProgress : [{ title: "Sem atividades" }])
-    .map(renderTaskLi)
-    .join("");
-  const nextStepsList = (nextSteps.length ? nextSteps : [{ title: "Sem atividades" }])
-    .map(renderTaskLi)
-    .join("");
-
-  return `<style>${buildProjectReportStylesScoped()}</style>
-    <div class="report-page">
-      <div class="report-header">
-        <div>
-          <div class="report-title">${escapeHtml(project.name || "Projeto")}</div>
-          <div class="report-subtitle">${escapeHtml(clientName)} • ${escapeHtml(developer)}</div>
-          <div class="report-meta">
-            <span>Inicio: ${escapeHtml(startLabel || "-")}</span>
-            <span>Go Live: ${escapeHtml(goLiveLabel || "-")}</span>
-          </div>
-        </div>
-        <div class="report-health">
-          <div class="report-progress">
-            <div class="progress-value">${progress}%</div>
-            <div class="progress-meta">${statusBadge.label} • Go Live: ${escapeHtml(goLiveLabel || "-")}</div>
-          </div>
-          <div class="health-box">
-            <span>Status do projeto</span>
-            <span class="pill ${statusBadge.className}">${statusBadge.label}</span>
-          </div>
-          <div class="health-box">
-            <span>Prazo</span>
-            <span class="pill ${scheduleBadge.className}">${scheduleBadge.label}</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="report-grid">
-        <div class="report-card">
-          <h3>Saude</h3>
-          <div class="health-box">
-            <span>Status do projeto</span>
-            <span class="pill ${statusBadge.className}">${statusBadge.label}</span>
-          </div>
-          <div class="health-box" style="margin-top:10px;">
-            <span>Prazo</span>
-            <span class="pill ${scheduleBadge.className}">${scheduleBadge.label}</span>
-          </div>
-        </div>
-        <div class="report-card">
-          <h3>Resumo do Cronograma</h3>
-          <div class="op-kpis">
-            <div class="op-kpi kpi-total">
-              <div class="op-kpi-label">Total</div>
-              <div class="op-kpi-value">${schedule.total}</div>
-            </div>
-            <div class="op-kpi kpi-progress">
-              <div class="op-kpi-label">Em andamento</div>
-              <div class="op-kpi-value">${schedule.inProgress}</div>
-            </div>
-            <div class="op-kpi kpi-planned">
-              <div class="op-kpi-label">Planejado</div>
-              <div class="op-kpi-value">${schedule.planned}</div>
-            </div>
-            <div class="op-kpi kpi-overdue">
-              <div class="op-kpi-label">Em atraso</div>
-              <div class="op-kpi-value">${schedule.overdue}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="op-grid-3">
-        <section class="report-card">
-          <h3>Ultimas Concluidas</h3>
-          <ul class="op-list">${doneList}</ul>
-        </section>
-
-        <section class="report-card">
-          <h3>Em Andamento</h3>
-          <ul class="op-list">${inProgressList}</ul>
-        </section>
-
-        <section class="report-card">
-          <h3>Proximos Passos</h3>
-          <ul class="op-list">${nextStepsList}</ul>
-        </section>
-      </div>
-    </div>`;
+  return `<style>${buildProjectReportStylesScoped()}
+    #export-onepage-root {
+      --onepage-width: 1920px;
+      --onepage-height: 1080px;
+      --bg: #ffffff;
+      width: 1920px;
+      height: 1080px;
+    }
+    #export-onepage-root .report-page {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      padding: 24px;
+      box-sizing: border-box;
+      gap: 14px;
+      grid-template-rows: 110px 140px 340px 1fr;
+      overflow: hidden;
+    }
+    #export-onepage-root .report-page > * {
+      min-height: 0;
+    }
+    #export-onepage-root .mid,
+    #export-onepage-root .bottom {
+      min-height: 0;
+    }
+    #export-onepage-root .card {
+      min-height: 0;
+    }
+  </style>
+    ${buildOnePageContent({ project, client, metrics, exportMode: true })}`;
 }
 
 function safeFileName(value, fallback = "projeto") {
@@ -988,7 +1853,7 @@ async function exportProjectReportPdf() {
     alert("Nenhum projeto selecionado.");
     return;
   }
-  const metrics = projectMetrics(project.tasks || []);
+  saveLocalState();
   const filename = `${safeFileName(project.name, "projeto")}-onepage.pdf`;
 
   if (!window.html2canvas) {
@@ -1003,25 +1868,63 @@ async function exportProjectReportPdf() {
 
   const priorRoot = document.getElementById("export-onepage-root");
   if (priorRoot) priorRoot.remove();
+  const priorFrame = document.getElementById("export-onepage-frame");
+  if (priorFrame) priorFrame.remove();
 
-  const root = document.createElement("div");
-  root.id = "export-onepage-root";
-  root.innerHTML = renderOnePageExportHtml({ project, client, metrics });
-  document.body.appendChild(root);
+  const reportFrame = document.createElement("iframe");
+  reportFrame.id = "export-onepage-frame";
+  reportFrame.setAttribute("aria-hidden", "true");
+  reportFrame.src = `onepage.html${buildOnePageQuery(project, client)}`;
+  reportFrame.style.position = "fixed";
+  reportFrame.style.left = "-10000px";
+  reportFrame.style.top = "0";
+  reportFrame.style.width = "1280px";
+  reportFrame.style.height = "900px";
+  reportFrame.style.border = "0";
+  reportFrame.style.opacity = "0";
+  reportFrame.style.pointerEvents = "none";
+  document.body.appendChild(reportFrame);
 
   try {
-    if (document.fonts?.ready) await document.fonts.ready;
-    await sleep(50);
-    await waitForImages(root);
-    await sleep(50);
+    await new Promise((resolve, reject) => {
+      reportFrame.onload = () => resolve();
+      reportFrame.onerror = () => reject(new Error("Falha ao carregar o relatorio."));
+    });
 
-    const canvas = await window.html2canvas(root, {
+    const frameDoc = reportFrame.contentDocument;
+    const captureEl = frameDoc?.getElementById("onepageRoot") || frameDoc?.body;
+    if (!captureEl) {
+      throw new Error("Conteudo do relatorio nao encontrado.");
+    }
+
+    if (frameDoc?.fonts?.ready) await frameDoc.fonts.ready;
+    await sleep(80);
+    await waitForImages(captureEl);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
+    const rect = captureEl.getBoundingClientRect();
+    let pageW = Math.ceil(rect.width || captureEl.scrollWidth || 1280);
+    let pageH = Math.ceil(rect.height || captureEl.scrollHeight || 900);
+    if (pageW && pageH) {
+      reportFrame.style.width = `${pageW}px`;
+      reportFrame.style.height = `${pageH}px`;
+      await sleep(80);
+    } else {
+      pageW = 1280;
+      pageH = 900;
+    }
+
+    const canvas = await window.html2canvas(captureEl, {
       scale: 2,
       backgroundColor: "#ffffff",
       useCORS: true,
       allowTaint: true,
       scrollX: 0,
       scrollY: 0,
+      width: pageW,
+      height: pageH,
+      windowWidth: pageW,
+      windowHeight: pageH,
       onclone: (clonedDoc) => {
         const clonedRoot = clonedDoc.getElementById("export-onepage-root");
         if (clonedRoot) {
@@ -1033,29 +1936,19 @@ async function exportProjectReportPdf() {
     });
 
     const imgData = canvas.toDataURL("image/jpeg", 0.92);
-    const pdf = new JsPDF({ orientation: "p", unit: "pt", format: "a4" });
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const imgW = pageW;
-    const imgH = (canvas.height * imgW) / canvas.width;
-
-    let y = 0;
-    pdf.addImage(imgData, "JPEG", 0, y, imgW, imgH, undefined, "FAST");
-    let remaining = imgH - pageH;
-
-    while (remaining > 0) {
-      pdf.addPage();
-      y -= pageH;
-      pdf.addImage(imgData, "JPEG", 0, y, imgW, imgH, undefined, "FAST");
-      remaining -= pageH;
-    }
+    const pdf = new JsPDF({
+      orientation: pageW >= pageH ? "landscape" : "portrait",
+      unit: "px",
+      format: [pageW, pageH]
+    });
+    pdf.addImage(imgData, "JPEG", 0, 0, pageW, pageH, undefined, "FAST");
 
     pdf.save(filename);
   } catch (err) {
     console.error(err);
     alert(`Falha ao exportar PDF: ${err.message || err}`);
   } finally {
-    root.remove();
+    reportFrame.remove();
   }
 }
 
@@ -1257,7 +2150,7 @@ function exportProjectReportPptx() {
   const summaryItems = [
     { label: "Total", value: schedule.total, fill: "F8FAFC", text: "1F252F" },
     { label: "Em andamento", value: schedule.inProgress, fill: "E5F0FF", text: "1B63C3" },
-    { label: "Planejado", value: schedule.planned, fill: "F1F2F6", text: "6B7280" },
+    { label: "Nao iniciado", value: schedule.planned, fill: "F1F2F6", text: "6B7280" },
     { label: "Em atraso", value: schedule.overdue, fill: "FFE5E5", text: "C01B24" }
   ];
   summaryItems.forEach((item, idx) => {
@@ -1326,7 +2219,7 @@ function getProjectStatus(project) {
     return "Atrasado";
   }
   if (progress > 0) return "Em andamento";
-  return "Planejado";
+  return "Nao iniciado";
 }
 
 function getAllTasksFromProject(project) {
@@ -1379,7 +2272,7 @@ function computeHomeMacroStats(clients) {
         ? Math.round(projs.reduce((a, p) => a + clampPct(p.progress || 0), 0) / projs.length)
         : 0;
 
-      const counters = { Planejado: 0, "Em andamento": 0, Atrasado: 0, Concluido: 0 };
+      const counters = { "Nao iniciado": 0, "Em andamento": 0, Atrasado: 0, Concluido: 0 };
       projs.forEach((p) => {
         const st = getProjectStatus(p);
         counters[st] = (counters[st] || 0) + 1;
@@ -1417,7 +2310,7 @@ function renderHomeMacroSummary() {
           </div>
 
           <div class="chips">
-            <div class="chip planned">Planejado: ${card.counters.Planejado || 0}</div>
+            <div class="chip planned">Nao iniciado: ${card.counters["Nao iniciado"] || 0}</div>
             <div class="chip progress">Em andamento: ${card.counters["Em andamento"] || 0}</div>
             <div class="chip late">Atrasado: ${card.counters.Atrasado || 0}</div>
             <div class="chip done">Concluido: ${card.counters.Concluido || 0}</div>
@@ -1647,6 +2540,7 @@ async function initApp() {
   wireNav();
   wireModals();
   setupStatusPopover();
+  setupProgressPopover();
   setupTaskActions();
   setupDashboardFilters();
 }
@@ -1758,7 +2652,63 @@ function renderHome(container) {
   container.innerHTML = renderHomeMacroSummary();
 }
 
+function removeRelatorioStyles() {
+  const priorStyles = document.getElementById("onepage-styles");
+  if (priorStyles) {
+    priorStyles.remove();
+  }
+}
+
+function buildOnePageQuery(project, client) {
+  const params = new URLSearchParams();
+  if (client?.id) {
+    params.set("clientId", client.id);
+  } else if (client?.name) {
+    params.set("client", client.name);
+  }
+  if (project?.id) {
+    params.set("projectId", project.id);
+  } else if (project?.name) {
+    params.set("project", project.name);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function renderRelatorioSection() {
+  const contentArea = byId("dashboard-panels");
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+
+  byId("crumb-path").textContent = "Relatório do Projeto";
+
+  if (!project || !client) {
+    contentArea.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;">
+      <h2>Nenhum projeto selecionado</h2>
+      <p>Por favor, selecione um projeto na barra lateral ou no dashboard para gerar um relatório.</p>
+    </div>`;
+    return;
+  }
+
+  const reportWrapper = document.createElement("div");
+  reportWrapper.className = "span-all report-embed";
+
+  saveLocalState();
+
+  const reportFrame = document.createElement("iframe");
+  reportFrame.className = "onepage-frame";
+  reportFrame.title = "Relatorio do Projeto";
+  reportFrame.loading = "lazy";
+  reportFrame.src = `onepage.html${buildOnePageQuery(project, client)}`;
+  reportWrapper.appendChild(reportFrame);
+
+  contentArea.innerHTML = "";
+  contentArea.appendChild(reportWrapper);
+}
+
 function renderMain() {
+  removeRelatorioStyles(); 
+
   const { selectedClient, selectedProject } = state;
   const panels = byId("dashboard-panels");
   panels.innerHTML = "";
@@ -1775,7 +2725,15 @@ function renderMain() {
     return;
   }
 
-  if (!selectedClient || !selectedProject) return;
+  if (state.currentSection === "relatorio") {
+    renderRelatorioSection();
+    return;
+  }
+
+  if (!selectedClient || !selectedProject) {
+    panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Bem-vindo!</h2><p>Selecione um cliente e um projeto na barra lateral para começar.</p></div>`;
+    return;
+  }
 
   byId("crumb-path").textContent = `${selectedClient.name} / ${selectedProject.name}`;
 
@@ -1857,6 +2815,18 @@ function renderMain() {
     </div>`;
   const tasksBox = document.createElement("div");
   tasksBox.className = "tasks";
+  const tasksHeader = document.createElement("div");
+  tasksHeader.className = "task-row header";
+  tasksHeader.innerHTML = `
+    <div>Atividade</div>
+    <div>Data inicio</div>
+    <div>Data fim</div>
+    <div>%</div>
+    <div>Status</div>
+    <div>Saude</div>
+    <div></div>
+  `;
+  tasksBox.appendChild(tasksHeader);
 
   const grouped = groupTasksByPhase(tasks, requiredPhases);
   if (!grouped.length) {
@@ -1909,14 +2879,23 @@ function renderMain() {
           sub.tasks.forEach((task) => {
             const row = document.createElement("div");
             row.className = "task-row";
-            const info = statusInfo(task.status);
+            const info = taskStatusInfo(getTaskStatus(task));
+            const health = taskHealthInfo(task);
             const title = formatTaskTitle(task.title, sub.title);
+            const startLabel = formatDateBR(taskStartStr(task));
+            const endLabel = formatDateBR(taskDueStr(task));
+            const progressLabel = `${taskProgressValue(task)}%`;
             row.innerHTML = `
               <div>${title}</div>
-              <div style="color: var(--muted); font-weight:500;">${formatDateBR(task.due)}</div>
+              <div style="color: var(--muted); font-weight:500;">${startLabel}</div>
+              <div style="color: var(--muted); font-weight:500;">${endLabel}</div>
+              <button type="button" class="task-progress-btn" data-task-edit data-task-index="${task._idx}">
+                ${progressLabel}
+              </button>
               <button class="pill ${info.className} status-btn" data-task-index="${task._idx}">
                 ${info.label}
               </button>
+              <span class="pill ${health.className}">${health.label}</span>
               <button class="btn sm ghost task-action-btn" data-task-action data-task-index="${task._idx}">
                 ...
               </button>
@@ -1930,13 +2909,22 @@ function renderMain() {
       tasks.forEach((task) => {
         const row = document.createElement("div");
         row.className = "task-row";
-        const info = statusInfo(task.status);
+        const info = taskStatusInfo(getTaskStatus(task));
+        const health = taskHealthInfo(task);
+        const startLabel = formatDateBR(taskStartStr(task));
+        const endLabel = formatDateBR(taskDueStr(task));
+        const progressLabel = `${taskProgressValue(task)}%`;
         row.innerHTML = `
           <div>${task.title}</div>
-          <div style="color: var(--muted); font-weight:500;">${formatDateBR(task.due)}</div>
+          <div style="color: var(--muted); font-weight:500;">${startLabel}</div>
+          <div style="color: var(--muted); font-weight:500;">${endLabel}</div>
+          <button type="button" class="task-progress-btn" data-task-edit data-task-index="${task._idx}">
+            ${progressLabel}
+          </button>
           <button class="pill ${info.className} status-btn" data-task-index="${task._idx}">
             ${info.label}
           </button>
+          <span class="pill ${health.className}">${health.label}</span>
           <button class="btn sm ghost task-action-btn" data-task-action data-task-index="${task._idx}">
             ...
           </button>
@@ -1954,23 +2942,25 @@ function renderMain() {
 }
 
 function wireNav() {
-  document.querySelectorAll(".nav-link").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (btn.dataset.section === "sair") {
-        logout();
-        return;
-      }
-      if (btn.dataset.section === "meus-projetos") {
-        btn.classList.toggle("open");
-        return;
-      }
-      state.currentSection = btn.dataset.section || "inicio";
-      setActiveNav(state.currentSection);
-      renderMain();
-    });
+  document.body.addEventListener("click", (e) => {
+    const navBtn = e.target.closest(".nav-link, .btn[data-section]");
+    if (!navBtn) return;
+
+    const section = navBtn.dataset.section;
+    if (section === "sair") {
+      logout();
+      return;
+    }
+    if (section === "meus-projetos") {
+      navBtn.classList.toggle("open");
+      return;
+    }
+    
+    state.currentSection = section || "inicio";
+    setActiveNav(state.currentSection);
+    renderMain();
   });
 }
-
 function wireModals() {
   const projectModal = byId("project-modal");
   const employeeModal = byId("employee-modal");
@@ -2137,18 +3127,23 @@ function wireModals() {
         return;
       }
       const data = new FormData(activityForm);
+      const progress = normalizeTaskProgress(data.get("progress"));
       const task = {
         title: data.get("title"),
         phase: data.get("phase"),
         package: data.get("package") || "",
+        start: data.get("start"),
         due: data.get("due"),
-        status: data.get("status")
+        status: data.get("status"),
+        progress
       };
+      applyTaskStatus(task, task.status);
       if (state.editingTaskIndex !== null && state.editingTaskIndex !== undefined) {
         const idx = Number(state.editingTaskIndex);
         const currentTask = selectedProject.tasks?.[idx];
         if (!currentTask) return;
         const payload = { ...currentTask, ...task };
+        applyTaskStatus(payload, payload.status);
         if (db && selectedProject.id && selectedProject.clientId && currentTask.id) {
           updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload)
             .then(async () => {
@@ -2318,8 +3313,11 @@ function openActivityModal(mode = "new", taskIndex = null) {
       addPackageToProject(state.selectedProject, derivedPackage);
     }
     form.elements.package.value = derivedPackage || "";
+    form.elements.start.value = taskStartStr(task);
     form.elements.due.value = task.due || "";
-    form.elements.status.value = task.status || "planejado";
+    const progressValue = taskProgress(task);
+    form.elements.progress.value = progressValue != null ? progressValue : "";
+    form.elements.status.value = normalizeTaskStatus(getTaskStatus(task));
     title.textContent = "Editar Atividade";
     submitBtn.textContent = "Salvar Alteracoes";
   } else {
@@ -2617,7 +3615,35 @@ function updateActivityPackageField() {
 function statusInfo(status) {
   return (
     STATUS_OPTIONS.find((opt) => opt.value === status) || {
-      label: "Planejado",
+      label: "Nao iniciado",
+      className: "planejado"
+    }
+  );
+}
+
+function normalizeTaskStatus(status) {
+  const value = normStatus(status);
+  if (!value) return "planejado";
+  if (STATUS_DONE.has(value)) return "concluido";
+  if (STATUS_IN_PROGRESS.has(value)) return "em_andamento";
+  if (value === "parado") return "parado";
+  if (STATUS_PLANNED.has(value)) return "planejado";
+  return value.replace(/\s+/g, "_");
+}
+
+function applyTaskStatus(task, status) {
+  if (!task) return;
+  task.status = status;
+  if (normalizeTaskStatus(status) === "concluido" && !task.completedAt) {
+    task.completedAt = new Date().toISOString();
+  }
+}
+
+function taskStatusInfo(status) {
+  const normalized = normalizeTaskStatus(status);
+  return (
+    TASK_STATUS_OPTIONS.find((opt) => opt.value === normalized) || {
+      label: "Nao iniciado",
       className: "planejado"
     }
   );
@@ -2628,6 +3654,29 @@ function scheduleStatusInfo(status) {
     return { label: "Em Atraso", className: "em-atraso" };
   }
   return { label: "Em Dia", className: "em-dia" };
+}
+
+function taskHealthRank(task) {
+  const due = taskDueValueSafe(task);
+  if (!Number.isFinite(due) || due === Number.POSITIVE_INFINITY) return 3;
+  const today = todayStartTs();
+  if (due < today) return 0;
+  const riskLimit = today + 7 * 24 * 60 * 60 * 1000;
+  if (due <= riskLimit) return 1;
+  return 2;
+}
+
+function taskHealthInfo(task) {
+  if (isDoneTask(task)) return { label: "Em dia", className: "em-dia" };
+  const due = taskDueValueSafe(task);
+  if (!Number.isFinite(due) || due === Number.POSITIVE_INFINITY) {
+    return { label: "Sem prazo", className: "sem-prazo" };
+  }
+  const today = todayStartTs();
+  if (due < today) return { label: "Em Atraso", className: "em-atraso" };
+  const riskLimit = today + 7 * 24 * 60 * 60 * 1000;
+  if (due <= riskLimit) return { label: "Em risco", className: "em-risco" };
+  return { label: "Em dia", className: "em-dia" };
 }
 
 function projectScheduleStatus(project) {
@@ -2646,7 +3695,7 @@ function setupStatusPopover() {
   const popover = byId("status-popover");
   const select = byId("status-select");
   select.innerHTML = "";
-  STATUS_OPTIONS.forEach((opt) => {
+  TASK_STATUS_OPTIONS.forEach((opt) => {
     const o = document.createElement("option");
     o.value = opt.value;
     o.textContent = opt.label;
@@ -2671,6 +3720,7 @@ function setupStatusPopover() {
     const btn = e.target.closest(".status-btn");
     if (btn) {
       hideTaskActionsPopover();
+      hideProgressPopover();
       openStatusPopover(btn);
       return;
     }
@@ -2682,10 +3732,12 @@ function setupStatusPopover() {
   select.addEventListener("change", () => {
     const idx = Number(popover.dataset.taskIndex);
     if (Number.isNaN(idx) || !state.selectedProject) return;
-    state.selectedProject.tasks[idx].status = select.value;
     const task = state.selectedProject.tasks[idx];
+    applyTaskStatus(task, select.value);
+    const statusPayload = { status: task.status };
+    if (task.completedAt) statusPayload.completedAt = task.completedAt;
     if (db && state.selectedProject.id && task.id) {
-      updateTaskStatusOnDb(state.selectedProject.clientId, state.selectedProject.id, task.id, select.value)
+      updateTaskStatusOnDb(state.selectedProject.clientId, state.selectedProject.id, task.id, statusPayload)
         .then(() => {
           hideStatusPopover();
           renderMain();
@@ -2699,6 +3751,58 @@ function setupStatusPopover() {
     saveLocalState();
     hideStatusPopover();
     renderMain();
+  });
+}
+
+function setupProgressPopover() {
+  const popover = byId("progress-popover");
+  const input = byId("progress-input");
+  const saveBtn = byId("progress-save-btn");
+
+  document.body.addEventListener("click", (e) => {
+    const btn = e.target.closest(".task-progress-btn");
+    if (btn) {
+      hideStatusPopover();
+      hideTaskActionsPopover();
+      openProgressPopover(btn);
+      return;
+    }
+    if (!e.target.closest("#progress-popover")) {
+      hideProgressPopover();
+    }
+  });
+
+  const applyChange = () => {
+    const idx = Number(popover.dataset.taskIndex);
+    if (Number.isNaN(idx) || !state.selectedProject) return;
+    const task = state.selectedProject.tasks?.[idx];
+    if (!task) return;
+    const next = normalizeTaskProgress(input.value);
+    const progress = next == null ? 0 : next;
+    task.progress = progress;
+    if (db && state.selectedProject.id && task.id) {
+      updateTaskProgressOnDb(state.selectedProject.clientId, state.selectedProject.id, task.id, progress)
+        .then(() => {
+          hideProgressPopover();
+          renderMain();
+        })
+        .catch((err) => {
+          console.error(err);
+          alert("Erro ao atualizar percentual no Firebase.");
+        });
+      return;
+    }
+    saveLocalState();
+    hideProgressPopover();
+    renderMain();
+  };
+
+  saveBtn.addEventListener("click", applyChange);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyChange();
+    }
   });
 }
 
@@ -2737,6 +3841,7 @@ function setupTaskActions() {
 
 function openTaskActionsPopover(target) {
   hideStatusPopover();
+  hideProgressPopover();
   const popover = byId("task-actions-popover");
   const idx = target.dataset.taskIndex;
   popover.dataset.taskIndex = idx;
@@ -2770,6 +3875,26 @@ function openStatusPopover(target) {
 
 function hideStatusPopover() {
   byId("status-popover").classList.remove("show");
+}
+
+function openProgressPopover(target) {
+  const popover = byId("progress-popover");
+  const input = byId("progress-input");
+  const idx = Number(target.dataset.taskIndex);
+  popover.dataset.taskIndex = idx;
+  const task = state.selectedProject?.tasks?.[idx];
+  const value = taskProgress(task);
+  input.value = value != null ? value : taskProgressValue(task);
+  const rect = target.getBoundingClientRect();
+  popover.style.top = `${rect.bottom + window.scrollY + 6}px`;
+  popover.style.left = `${rect.left + window.scrollX}px`;
+  popover.classList.add("show");
+  input.focus();
+  input.select();
+}
+
+function hideProgressPopover() {
+  byId("progress-popover").classList.remove("show");
 }
 
 function setupDashboardFilters() {
@@ -3121,24 +4246,37 @@ async function saveTaskToDb(clientId, projectId, task) {
     title: task.title,
     phase: task.phase,
     package: task.package,
+    start: task.start,
     due: task.due,
     status: task.status,
+    progress: task.progress,
+    ...(task.completedAt ? { completedAt: task.completedAt } : {}),
     createdAt: firebase.database.ServerValue.TIMESTAMP
   });
 }
 
-async function updateTaskStatusOnDb(clientId, projectId, taskId, status) {
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({ status });
+async function updateTaskStatusOnDb(clientId, projectId, taskId, payload) {
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(payload);
+}
+
+async function updateTaskProgressOnDb(clientId, projectId, taskId, progress) {
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({ progress });
 }
 
 async function updateTaskOnDb(clientId, projectId, taskId, payload) {
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({
+  const updatePayload = {
     title: payload.title,
     phase: payload.phase,
     package: payload.package,
+    start: payload.start,
     due: payload.due,
-    status: payload.status
-  });
+    status: payload.status,
+    progress: payload.progress
+  };
+  if ("completedAt" in payload) {
+    updatePayload.completedAt = payload.completedAt;
+  }
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(updatePayload);
 }
 
 async function deleteTaskFromDb(clientId, projectId, taskId) {
