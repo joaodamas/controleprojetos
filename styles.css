@@ -728,6 +728,18 @@ body {
   transition: width 0.3s ease;
 }
 
+.progress-bar.previsto-bar.ok {
+  background: #16a34a;
+}
+
+.progress-bar.previsto-bar.warn {
+  background: #f59e0b;
+}
+
+.progress-bar.previsto-bar.bad {
+  background: #ef4444;
+}
+
 .tasks {
   display: grid;
   gap: 8px;
@@ -828,6 +840,11 @@ body {
 .pill.em-andamento {
   background: #e5f0ff;
   color: #1b63c3;
+}
+
+.pill.em-validacao {
+  background: #fff4d4;
+  color: #9a6b00;
 }
 
 .pill.atrasado {

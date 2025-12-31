@@ -10,7 +10,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
-  <link rel="stylesheet" href="styles.css?v=20251227-12">
+  <link rel="stylesheet" href="styles.css?v=20251227-14">
 </head>
 <body>
   <div id="login-screen" class="login-screen">
@@ -58,11 +58,11 @@
 
     <div class="main">
       <header class="topbar">
-        <div class="crumbs">
-          <span>Home</span>
-          <span>/</span>
-          <span id="crumb-path">Inicio</span>
-        </div>
+        <nav class="crumbs" aria-label="breadcrumb">
+          <button type="button" class="crumb-link" data-crumb="home">Home</button>
+          <span class="crumb-sep">/</span>
+          <span id="crumb-path" class="crumb-current">Inicio</span>
+        </nav>
         <div class="top-actions">
           <button class="btn" data-section="relatorio">Gerar Relatório</button>
           <button class="btn ghost" id="open-employee-modal">Cadastrar Funcionarios</button>
@@ -195,6 +195,7 @@
           <select name="status" required>
             <option value="planejado" selected>Nao iniciado</option>
             <option value="em_andamento">Em andamento</option>
+            <option value="em_validacao">Em validacao</option>
             <option value="parado">Parado</option>
             <option value="concluido">Concluido</option>
           </select>
@@ -226,6 +227,6 @@
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
-  <script src="./app.js?v=20251227-12" defer></script>
+  <script src="./app.js?v=20251227-14" defer></script>
 </body>
 </html>

@@ -60,7 +60,6 @@ const state = {
             { title: "Enviar Status Email - Posicao 01", phase: "GESTAO", status: "concluido", start: "2025-10-23", due: "2025-10-23" },
             { title: "DESENVOLVIMENTO - PACOTE 02", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-10-28", due: "2026-01-12" },
             { title: "Servico para Callback da Execucao", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-15", due: "2025-12-15" },
-            { title: "Liberacao Rotas BTH - Ford", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-11-04", due: "2026-01-12" },
             { title: "Servico de Distribuicao", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-31", due: "2025-10-31" },
             { title: "Motor para Classificacao e Compactacao dos XML", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-28", due: "2025-10-29" },
             { title: "GO LIVE", phase: "DEPLOY", status: "planejado", start: "2025-12-17", due: "2025-12-22" },
@@ -229,9 +228,57 @@ const LOCAL_STORAGE_KEY = "controle_projetos_state_v1";
 const STATUS_OPTIONS = [
   { value: "planejado", label: "Planejado", className: "planejado" },
   { value: "em_andamento", label: "Em andamento", className: "em-andamento" },
+  { value: "em_validacao", label: "Em validacao", className: "em-validacao" },
   { value: "atrasado", label: "Atrasado", className: "atrasado" },
   { value: "concluido", label: "Concluido", className: "concluido" }
 ];
+
+function normStatus(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^\d+\s*[-.:]?\s*/g, "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+const STATUS_IN_PROGRESS = new Set(
+  ["em andamento", "em desenvolvimento", "em execucao", "em progresso", "in progress", "doing", "atrasado"].map(
+    normStatus
+  )
+);
+const STATUS_VALIDATION = new Set(
+  ["em validacao", "validacao", "aguardando validacao", "aguardando aprovacao"].map(normStatus)
+);
+const STATUS_DONE = new Set(["concluido", "concluida", "done", "finalizado", "finalizada", "feito", "feita"].map(normStatus));
+const STATUS_PLANNED = new Set(
+  [
+    "planejado",
+    "planejada",
+    "nao iniciado",
+    "nao iniciada",
+    "todo",
+    "to do",
+    "a fazer",
+    "backlog",
+    "pendente",
+    "pendencia",
+    "pendencias"
+  ].map(normStatus)
+);
+
+function normalizeTaskStatus(status) {
+  const value = normStatus(status);
+  if (!value) return "planejado";
+  if (STATUS_DONE.has(value)) return "concluido";
+  if (STATUS_VALIDATION.has(value)) return "em_validacao";
+  if (STATUS_IN_PROGRESS.has(value)) return "em_andamento";
+  if (value === "parado") return "parado";
+  if (STATUS_PLANNED.has(value)) return "planejado";
+  return value.replace(/\s+/g, "_");
+}
 
 const DASHBOARD_COLUMNS = [
   { key: "name", label: "Projeto", type: "text" },
@@ -936,11 +983,13 @@ function wireModals() {
         due: data.get("due"),
         status: data.get("status")
       };
+      applyTaskStatus(task, task.status);
       if (state.editingTaskIndex !== null && state.editingTaskIndex !== undefined) {
         const idx = Number(state.editingTaskIndex);
         const currentTask = selectedProject.tasks?.[idx];
         if (!currentTask) return;
         const payload = { ...currentTask, ...task };
+        applyTaskStatus(payload, payload.status);
         if (db && selectedProject.id && selectedProject.clientId && currentTask.id) {
           updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload)
             .then(async () => {
@@ -1069,7 +1118,7 @@ function openActivityModal(mode = "new", taskIndex = null) {
     }
     form.elements.package.value = derivedPackage || "";
     form.elements.due.value = task.due || "";
-    form.elements.status.value = task.status || "planejado";
+    form.elements.status.value = normalizeTaskStatus(task.status) || "planejado";
     title.textContent = "Editar Atividade";
     submitBtn.textContent = "Salvar Alteracoes";
   } else {
@@ -1321,11 +1370,24 @@ function updateActivityPackageField() {
 
 function statusInfo(status) {
   return (
-    STATUS_OPTIONS.find((opt) => opt.value === status) || {
+    STATUS_OPTIONS.find((opt) => opt.value === normalizeTaskStatus(status)) || {
       label: "Planejado",
       className: "planejado"
     }
   );
+}
+
+function applyTaskStatus(task, status) {
+  if (!task) return;
+  task.status = status;
+  const normalized = normalizeTaskStatus(status);
+  if (normalized === "concluido") {
+    if (!task.dataConclusao) {
+      task.dataConclusao = new Date().toISOString().slice(0, 10);
+    }
+    return;
+  }
+  task.dataConclusao = null;
 }
 
 function setupStatusPopover() {
@@ -1368,10 +1430,11 @@ function setupStatusPopover() {
   select.addEventListener("change", () => {
     const idx = Number(popover.dataset.taskIndex);
     if (Number.isNaN(idx) || !state.selectedProject) return;
-    state.selectedProject.tasks[idx].status = select.value;
     const task = state.selectedProject.tasks[idx];
+    applyTaskStatus(task, select.value);
+    const statusPayload = { status: task.status, dataConclusao: task.dataConclusao ?? null };
     if (db && state.selectedProject.id && task.id) {
-      updateTaskStatusOnDb(state.selectedProject.clientId, state.selectedProject.id, task.id, select.value)
+      updateTaskStatusOnDb(state.selectedProject.clientId, state.selectedProject.id, task.id, statusPayload)
         .then(() => {
           hideStatusPopover();
           renderMain();
@@ -1447,7 +1510,7 @@ function openStatusPopover(target) {
   const idx = target.dataset.taskIndex;
   popover.dataset.taskIndex = idx;
   const currentStatus = state.selectedProject?.tasks[Number(idx)]?.status;
-  if (currentStatus) select.value = currentStatus;
+  if (currentStatus) select.value = normalizeTaskStatus(currentStatus);
   const rect = target.getBoundingClientRect();
   popover.style.top = `${rect.bottom + window.scrollY + 6}px`;
   popover.style.left = `${rect.left + window.scrollX}px`;
@@ -1671,6 +1734,13 @@ function wireLogin() {
       }
       return;
     }
+    if (!auth) {
+      if (errEl) {
+        errEl.textContent = "Login indisponivel no momento. Tente novamente.";
+        errEl.classList.remove("hidden");
+      }
+      return;
+    }
     try {
       await auth.signInWithEmailAndPassword(email, pass);
     } catch (err) {
@@ -1691,6 +1761,7 @@ async function logout() {
 
 async function init() {
   showLogin();
+  wireLogin();
   const ok = await initFirebase();
   if (!ok) return;
   if (!firebase?.auth) {
@@ -1698,7 +1769,6 @@ async function init() {
     return;
   }
   auth = firebase.auth();
-  wireLogin();
 
   auth.onAuthStateChanged(async (user) => {
     if (!user) {
@@ -1768,12 +1838,13 @@ async function saveTaskToDb(clientId, projectId, task) {
     package: task.package,
     due: task.due,
     status: task.status,
+    ...(task.dataConclusao ? { dataConclusao: task.dataConclusao } : {}),
     createdAt: firebase.database.ServerValue.TIMESTAMP
   });
 }
 
-async function updateTaskStatusOnDb(clientId, projectId, taskId, status) {
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({ status });
+async function updateTaskStatusOnDb(clientId, projectId, taskId, payload) {
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(payload);
 }
 
 async function updateTaskOnDb(clientId, projectId, taskId, payload) {
@@ -1782,7 +1853,8 @@ async function updateTaskOnDb(clientId, projectId, taskId, payload) {
     phase: payload.phase,
     package: payload.package,
     due: payload.due,
-    status: payload.status
+    status: payload.status,
+    ...(payload.dataConclusao !== undefined ? { dataConclusao: payload.dataConclusao } : {})
   });
 }
 
@@ -1796,7 +1868,7 @@ async function updateProjectPackagesOnDb(clientId, projectId, packages) {
 
 function projectMetrics(tasks = []) {
   const total = tasks.length;
-  const done = tasks.filter((t) => t.status === "concluido").length;
+  const done = tasks.filter((t) => normalizeTaskStatus(t.status) === "concluido").length;
   const pending = Math.max(total - done, 0);
   const progress = total ? Math.round((done / total) * 100) : 0;
   return { total, done, pending, progress };
@@ -1887,8 +1959,8 @@ function getSubEpicTitle(task) {
 }
 
 function taskStatusRank(status) {
-  const key = (status || "").toLowerCase();
-  if (key === "em_andamento") return 0;
+  const key = normalizeTaskStatus(status);
+  if (key === "em_andamento" || key === "em_validacao") return 0;
   if (key === "atrasado") return 1;
   if (key === "planejado") return 2;
   if (key === "concluido") return 3;
@@ -2039,7 +2111,7 @@ function projectStatus(project, metrics = projectMetrics(project.tasks || [])) {
   if (metrics.progress === 100 && metrics.total > 0) return "concluido";
   const goLive = goLiveValue(project.end);
   if (goLive !== null && goLive < Date.now() && metrics.progress < 100) return "atrasado";
-  const hasWorkStarted = (project.tasks || []).some((t) => t.status && t.status !== "planejado");
+  const hasWorkStarted = (project.tasks || []).some((t) => normalizeTaskStatus(t.status) !== "planejado");
   return hasWorkStarted ? "em_andamento" : "planejado";
 }
 

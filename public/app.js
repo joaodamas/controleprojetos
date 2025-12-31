@@ -60,7 +60,6 @@ const state = {
             { title: "Enviar Status Email - Posicao 01", phase: "GESTAO", status: "concluido", start: "2025-10-23", due: "2025-10-23" },
             { title: "DESENVOLVIMENTO - PACOTE 02", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-10-28", due: "2026-01-12" },
             { title: "Servico para Callback da Execucao", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-15", due: "2025-12-15" },
-            { title: "Liberacao Rotas BTH - Ford", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-11-04", due: "2026-01-12" },
             { title: "Servico de Distribuicao", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-31", due: "2025-10-31" },
             { title: "Motor para Classificacao e Compactacao dos XML", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-28", due: "2025-10-29" },
             { title: "GO LIVE", phase: "DEPLOY", status: "planejado", start: "2025-12-17", due: "2025-12-22" },
@@ -207,6 +206,7 @@ const state = {
     { name: "DEV Alovado", role: "Desenvolvedor", email: "dev.alovado@empresa.com" },
     { name: "Ana Lima", role: "Gestora de Projetos", email: "ana.lima@empresa.com" }
   ],
+  improvements: [],
   selectedClient: null,
   selectedProject: null,
   collapsedPhases: {},
@@ -229,6 +229,7 @@ const LOCAL_STORAGE_KEY = "controle_projetos_state_v1";
 const STATUS_OPTIONS = [
   { value: "planejado", label: "Nao iniciado", className: "planejado" },
   { value: "em_andamento", label: "Em andamento", className: "em-andamento" },
+  { value: "em_validacao", label: "Em validacao", className: "em-validacao" },
   { value: "parado", label: "Parado", className: "parado" },
   { value: "atrasado", label: "Atrasado", className: "atrasado" },
   { value: "concluido", label: "Concluido", className: "concluido" }
@@ -237,6 +238,7 @@ const STATUS_OPTIONS = [
 const TASK_STATUS_OPTIONS = [
   { value: "planejado", label: "Nao iniciado", className: "planejado" },
   { value: "em_andamento", label: "Em andamento", className: "em-andamento" },
+  { value: "em_validacao", label: "Em validacao", className: "em-validacao" },
   { value: "parado", label: "Parado", className: "parado" },
   { value: "concluido", label: "Concluido", className: "concluido" }
 ];
@@ -318,6 +320,7 @@ function projectTaskCounts(tasks = []) {
   const counts = {
     total: tasks.length,
     em_andamento: 0,
+    em_validacao: 0,
     planejado: 0,
     parado: 0,
     concluido: 0
@@ -325,6 +328,7 @@ function projectTaskCounts(tasks = []) {
   tasks.forEach((task) => {
     const status = normalizeTaskStatus(getTaskStatus(task));
     if (status === "em_andamento") counts.em_andamento += 1;
+    else if (status === "em_validacao") counts.em_validacao += 1;
     else if (status === "planejado") counts.planejado += 1;
     else if (status === "parado") counts.parado += 1;
     else if (status === "concluido") counts.concluido += 1;
@@ -341,9 +345,27 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function setCrumbPathText(label) {
+  const crumbPath = byId("crumb-path");
+  if (!crumbPath) return;
+  crumbPath.textContent = label;
+}
+
+function setCrumbPathProject(client, project) {
+  const crumbPath = byId("crumb-path");
+  if (!crumbPath) return;
+  const clientLabel = escapeHtml(client?.name || "Cliente");
+  const projectLabel = escapeHtml(project?.name || "Projeto");
+  crumbPath.innerHTML =
+    `<button type="button" class="crumb-link" data-crumb="client">${clientLabel}</button>` +
+    `<span class="crumb-sep">/</span>` +
+    `<button type="button" class="crumb-link current" data-crumb="project">${projectLabel}</button>`;
+}
+
 function normStatus(value) {
   return String(value || "")
     .trim()
+    .replace(/^\d+\s*[-.:]?\s*/g, "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -355,6 +377,9 @@ const STATUS_IN_PROGRESS = new Set(
   ["em andamento", "em desenvolvimento", "em execucao", "em progresso", "in progress", "doing", "atrasado"].map(
     normStatus
   )
+);
+const STATUS_VALIDATION = new Set(
+  ["em validacao", "validacao", "aguardando validacao", "aguardando aprovacao"].map(normStatus)
 );
 const STATUS_DONE = new Set(["concluido", "concluida", "done", "finalizado", "finalizada", "feito", "feita"].map(normStatus));
 const STATUS_PLANNED = new Set(
@@ -427,22 +452,21 @@ function taskDateValueSafe(task) {
 }
 
 function isDoneTask(task) {
-  const st = normStatus(getTaskStatus(task));
-  const p = taskProgress(task);
-  return STATUS_DONE.has(st) || p === 100;
+  const st = normalizeTaskStatus(getTaskStatus(task));
+  return st === "concluido";
 }
 
 function isInProgressTask(task) {
-  const st = normStatus(getTaskStatus(task));
-  if (STATUS_IN_PROGRESS.has(st)) return true;
+  const st = normalizeTaskStatus(getTaskStatus(task));
+  if (st === "em_andamento" || st === "em_validacao") return true;
   const p = taskProgress(task);
   return p != null && p > 0 && p < 100 && !isDoneTask(task);
 }
 
 function isPlannedTask(task) {
-  const st = normStatus(getTaskStatus(task));
-  if (!st || STATUS_PLANNED.has(st)) return true;
-  if (STATUS_IN_PROGRESS.has(st) || STATUS_DONE.has(st)) return false;
+  const st = normalizeTaskStatus(getTaskStatus(task));
+  if (!st || st === "planejado") return true;
+  if (st === "em_andamento" || st === "em_validacao" || st === "concluido") return false;
   const p = taskProgress(task);
   return p === 0;
 }
@@ -729,6 +753,8 @@ function getSystemColors(rootEl) {
       cssVar("--color-warning", cssVar("--warning-text", "#f97316", rootEl), rootEl),
       rootEl
     ),
+    warn: cssVar("--color-warning", cssVar("--warning-text", "#f59e0b", rootEl), rootEl),
+    ok: cssVar("--color-success", cssVar("--success-text", "#16a34a", rootEl), rootEl),
     danger: cssVar("--color-danger", cssVar("--danger-text", "#ef4444", rootEl), rootEl),
     grid: cssVar("--color-border", cssVar("--border", "#e5e7eb", rootEl), rootEl),
     text: cssVar("--color-text", cssVar("--text", "#111827", rootEl), rootEl),
@@ -775,6 +801,53 @@ function startOfDay(date) {
   return d;
 }
 
+function round1(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 10) / 10;
+}
+
+function formatMetric(value) {
+  if (!Number.isFinite(value)) return "0";
+  const rounded = round1(value);
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function formatSignedMetric(value) {
+  const num = Number(value);
+  const base = formatMetric(value);
+  if (Number.isFinite(num) && num > 0) return `+${base}`;
+  return base;
+}
+
+function baselinePctFromDates(startValue, endValue, now = new Date()) {
+  const start = parseTaskDate(startValue);
+  const end = parseTaskDate(endValue);
+  if (!start || !end) return 0;
+  const startDay = startOfDay(start);
+  const endDay = startOfDay(end);
+  const nowDay = startOfDay(now);
+  const total = endDay.getTime() - startDay.getTime();
+  if (total <= 0) return nowDay >= endDay ? 100 : 0;
+  if (nowDay <= startDay) return 0;
+  if (nowDay >= endDay) return 100;
+  const pct = ((nowDay.getTime() - startDay.getTime()) / total) * 100;
+  return Math.max(0, Math.min(100, round1(pct)));
+}
+
+function gapStatusInfo(gap) {
+  if (gap < -15) return { className: "bad", label: "Atraso critico" };
+  if (gap < 0) return { className: "warn", label: "Em risco" };
+  return { className: "ok", label: "Em dia" };
+}
+
+function projectBaselinePct(project, progressPct) {
+  const series = computeSCurveDailyBaseline(project, project?.activities || null, progressPct);
+  if (series && Number.isFinite(series.baselineNow)) {
+    return Math.max(0, Math.min(100, round1(series.baselineNow * 100)));
+  }
+  return baselinePctFromDates(project?.start || project?.startDate, project?.end || project?.goLive || project?.goLiveDate);
+}
+
 function activityDueDate(activity) {
   return (
     activity?.dueDate ||
@@ -787,7 +860,14 @@ function activityDueDate(activity) {
 }
 
 function activityDoneDate(activity) {
-  return activity?.completedAt || activity?.doneAt || activity?.finishedAt || activity?.completed || "";
+  return (
+    activity?.dataConclusao ||
+    activity?.completedAt ||
+    activity?.doneAt ||
+    activity?.finishedAt ||
+    activity?.completed ||
+    ""
+  );
 }
 
 function getActivityWeight(activity) {
@@ -796,12 +876,15 @@ function getActivityWeight(activity) {
 }
 
 function computeProjectProgress01(project, tasks, progressPct = null) {
+  const list = project ? flattenProjectTasks(project) : Array.isArray(tasks) ? tasks : [];
+  if (list.length) {
+    const metrics = projectMetrics(list);
+    return clamp01((metrics?.progress ?? 0) / 100);
+  }
   if (typeof progressPct === "number" && Number.isFinite(progressPct)) {
     return clamp01(progressPct / 100);
   }
-  const list = project ? flattenProjectTasks(project) : Array.isArray(tasks) ? tasks : [];
-  const metrics = projectMetrics(list);
-  return clamp01((metrics?.progress ?? 0) / 100);
+  return 0;
 }
 
 function computeSCurveFromActivities(project, activities, points = 10) {
@@ -838,12 +921,10 @@ function computeSCurveFromActivities(project, activities, points = 10) {
 
   const actual = buckets.map((b) => {
     const w = tasks.reduce((sum, a) => {
-      let done = parseDateSafe(activityDoneDate(a));
-      if (!done && normalizeTaskStatus(getTaskStatus(a)) === "concluido") {
-        done = report;
-      }
-      const doneEff = done ? startOfDay(done) : null;
-      return doneEff && doneEff <= b ? sum + getActivityWeight(a) : sum;
+      const done = parseDateSafe(activityDoneDate(a));
+      if (!done || normalizeTaskStatus(getTaskStatus(a)) !== "concluido") return sum;
+      const doneEff = startOfDay(done);
+      return doneEff <= b ? sum + getActivityWeight(a) : sum;
     }, 0);
     return clamp01(w / totalW);
   });
@@ -868,12 +949,10 @@ function computeSCurveFromActivities(project, activities, points = 10) {
 
   const actualNow = clamp01(
     tasks.reduce((sum, a) => {
-      let done = parseDateSafe(activityDoneDate(a));
-      if (!done && normalizeTaskStatus(getTaskStatus(a)) === "concluido") {
-        done = report;
-      }
-      const doneEff = done ? startOfDay(done) : null;
-      return doneEff && doneEff <= report ? sum + getActivityWeight(a) : sum;
+      const done = parseDateSafe(activityDoneDate(a));
+      if (!done || normalizeTaskStatus(getTaskStatus(a)) !== "concluido") return sum;
+      const doneEff = startOfDay(done);
+      return doneEff <= report ? sum + getActivityWeight(a) : sum;
     }, 0) / totalW
   );
 
@@ -919,27 +998,21 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
 
   const dates = buildDailyDates(start, end);
   const totalDays = Math.max(1, dates.length - 1);
-  const totalW = tasks.reduce((sum, t) => sum + getActivityWeight(t), 0) || 1;
   const report = startOfDay(parseDateSafe(project?.reportDate) ?? new Date());
 
   const doneDates = tasks.map((t) => {
+    if (normalizeTaskStatus(getTaskStatus(t)) !== "concluido") return null;
     const doneAt = parseDateSafe(activityDoneDate(t));
-    if (doneAt) return startOfDay(doneAt);
-    if (!isDoneTask(t)) return null;
-    const updatedAt = parseDateSafe(t?.updatedAt || t?.updated_at || t?.updatedOn);
-    if (updatedAt) return startOfDay(updatedAt);
-    const dueAt = parseDateSafe(activityDueDate(t));
-    if (dueAt) return startOfDay(dueAt);
-    return report;
+    return doneAt ? startOfDay(doneAt) : null;
   });
-  const weights = tasks.map((t) => getActivityWeight(t));
+  const totalTasks = tasks.length || 1;
 
   const baseline = dates.map((_, i) => clamp01(i / totalDays));
   const realized = dates.map((d) => {
-    const w = doneDates.reduce((sum, doneAt, idx) => {
-      return doneAt && doneAt <= d ? sum + weights[idx] : sum;
+    const doneCount = doneDates.reduce((sum, doneAt) => {
+      return doneAt && doneAt <= d ? sum + 1 : sum;
     }, 0);
-    return clamp01(w / totalW);
+    return clamp01(doneCount / totalTasks);
   });
 
   const startDate = dates[0];
@@ -949,11 +1022,10 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
   const idxNow = Math.max(0, Math.min(dates.length - 1, daysDiff(clampedReport, startDate)));
 
   const baselineNow = baseline[idxNow];
-  const realizedNow = computeProjectProgress01(project, tasks, progressPct);
-  realized[idxNow] = Math.max(realized[idxNow], realizedNow);
-  for (let i = idxNow + 1; i < realized.length; i += 1) {
+  for (let i = 1; i < realized.length; i += 1) {
     realized[i] = Math.max(realized[i], realized[i - 1]);
   }
+  const realizedNow = realized[idxNow];
   const ds = downsampleSeries(dates, baseline, realized, 60);
 
   return {
@@ -1003,12 +1075,93 @@ function renderSCurveSvgDaily(sc, opts = {}) {
   const basePath = pathFrom(sc.baseline);
   const realPath = pathFrom(sc.realized);
 
+  const points = sc.dates.map((d, i) => ({
+    x: xAtDate(d),
+    base: sc.baseline[i],
+    real: sc.realized[i]
+  }));
+  const gapAreas = [];
+  let gapArea = null;
+  const addAreaPoint = (pt) => {
+    gapArea.base.push({ x: pt.x, y: yAt(pt.base) });
+    gapArea.real.push({ x: pt.x, y: yAt(pt.real) });
+  };
+  const addIntersection = (p0, p1) => {
+    const g0 = p0.base - p0.real;
+    const g1 = p1.base - p1.real;
+    const denom = g1 - g0;
+    const t = Math.abs(denom) < 1e-6 ? 0 : -g0 / denom;
+    const clamped = Math.max(0, Math.min(1, t));
+    const x = p0.x + (p1.x - p0.x) * clamped;
+    const base = p0.base + (p1.base - p0.base) * clamped;
+    const real = p0.real + (p1.real - p0.real) * clamped;
+    const y = yAt(base);
+    gapArea.base.push({ x, y });
+    gapArea.real.push({ x, y });
+  };
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const p0 = points[i];
+    const p1 = points[i + 1];
+    const g0 = p0.base - p0.real;
+    const g1 = p1.base - p1.real;
+    const gap0 = g0 > 0.0001;
+    const gap1 = g1 > 0.0001;
+
+    if (gap0 && gap1) {
+      if (!gapArea) {
+        gapArea = { base: [], real: [] };
+        addAreaPoint(p0);
+      }
+      addAreaPoint(p1);
+      continue;
+    }
+    if (gap0 && !gap1) {
+      if (!gapArea) {
+        gapArea = { base: [], real: [] };
+        addAreaPoint(p0);
+      }
+      addIntersection(p0, p1);
+      gapAreas.push(gapArea);
+      gapArea = null;
+      continue;
+    }
+    if (!gap0 && gap1) {
+      gapArea = { base: [], real: [] };
+      addIntersection(p0, p1);
+      addAreaPoint(p1);
+    }
+  }
+  if (gapArea) gapAreas.push(gapArea);
+
+  const gapPaths = gapAreas
+    .filter((area) => area.base.length > 1 && area.real.length > 1)
+    .map((area) => {
+      const baseSegment = area.base
+        .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x.toFixed(2)} ${pt.y.toFixed(2)}`)
+        .join(" ");
+      const realSegment = area.real
+        .slice()
+        .reverse()
+        .map((pt) => `L ${pt.x.toFixed(2)} ${pt.y.toFixed(2)}`)
+        .join(" ");
+      return `${baseSegment} ${realSegment} Z`;
+    });
+
   const xToday = xAtDate(sc.report);
   const yBaseNow = yAt(sc.baselineNow);
   const yRealNow = yAt(sc.realizedNow);
 
   const basePct = Math.round(sc.baselineNow * 100);
   const realPct = Math.round(sc.realizedNow * 100);
+  const gapPP = round1((sc.realizedNow - sc.baselineNow) * 100);
+  const gapLabel = `${gapPP > 0 ? "+" : ""}${gapPP}pp`;
+  const gapTone = gapPP < -15 ? "bad" : gapPP < 0 ? "warn" : "ok";
+  const gapColor = gapTone === "bad" ? c.danger : gapTone === "warn" ? c.warn : c.ok;
+  const labelText = `GAP ${gapLabel}`;
+  const labelWidth = Math.max(52, labelText.length * 6.4);
+  const labelHeight = 18;
+  const gapLabelX = Math.max(pad.l + labelWidth / 2, Math.min(W - pad.r - labelWidth / 2, xToday));
+  const gapLabelY = Math.max(pad.t + 14, Math.min(yBaseNow, yRealNow) - 18);
   const labelX = xToday;
 
   return `
@@ -1022,10 +1175,16 @@ function renderSCurveSvgDaily(sc, opts = {}) {
         .join("")}
       <text x="${pad.l}" y="${pad.t - 6}" font-size="10" fill="${c.muted}" font-family="Arial">Progresso (%)</text>
 
+      ${gapPaths.map((path) => `<path d="${path}" fill="${c.danger}" fill-opacity="0.12" stroke="none"/>`).join("")}
+
       <path d="${basePath}" fill="none" stroke="${c.planned}" stroke-width="3" stroke-dasharray="6 4"/>
       <path d="${realPath}" fill="none" stroke="${c.actual}" stroke-width="4"/>
 
       <line x1="${xToday}" y1="${pad.t}" x2="${xToday}" y2="${H - pad.b}" stroke="${c.danger}" stroke-width="2" opacity="0.85"/>
+
+      <circle cx="${xToday}" cy="${yRealNow}" r="4" fill="${gapColor}" stroke="${c.bg}" stroke-width="2"/>
+      <rect x="${(gapLabelX - labelWidth / 2).toFixed(2)}" y="${(gapLabelY - labelHeight).toFixed(2)}" width="${labelWidth.toFixed(2)}" height="${labelHeight}" rx="9" fill="${gapColor}" opacity="0.16" stroke="${gapColor}"/>
+      <text x="${gapLabelX.toFixed(2)}" y="${(gapLabelY - 6).toFixed(2)}" text-anchor="middle" font-size="10" fill="${gapColor}" font-family="Arial" font-weight="700">${labelText}</text>
 
       <text x="${labelX}" y="${yBaseNow - 10}" text-anchor="middle" font-size="11" fill="${c.planned}" font-family="Arial" font-weight="700">${basePct}%</text>
       <text x="${labelX}" y="${yRealNow + 18}" text-anchor="middle" font-size="11" fill="${c.actual}" font-family="Arial" font-weight="700">${realPct}%</text>
@@ -1156,11 +1315,11 @@ function renderOnePageSCurve({ root, project, metrics }) {
 
 function latestCompletedTasks(tasks = [], limit = 5) {
   return tasks
-    .filter((task) => (task.status || "").toLowerCase() === "concluido")
+    .filter((task) => normalizeTaskStatus(getTaskStatus(task)) === "concluido")
     .slice()
     .sort((a, b) => {
-      const aTs = dateMetricValue(a.due) ?? Number.NEGATIVE_INFINITY;
-      const bTs = dateMetricValue(b.due) ?? Number.NEGATIVE_INFINITY;
+      const aTs = dateMetricValue(activityDoneDate(a) || a.due) ?? Number.NEGATIVE_INFINITY;
+      const bTs = dateMetricValue(activityDoneDate(b) || b.due) ?? Number.NEGATIVE_INFINITY;
       if (aTs !== bTs) return bTs - aTs;
       return (a.title || "").localeCompare(b.title || "");
     })
@@ -1336,7 +1495,7 @@ function buildProjectReportStyles() {
 
     .report-page .kpis {
       display: grid;
-      grid-template-columns: 1.2fr 1fr 1fr;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
       gap: 12px;
     }
 
@@ -1413,6 +1572,16 @@ function buildProjectReportStyles() {
     .report-page .healthTag.ok { background: rgba(22, 163, 74, 0.10); color: #166534; }
     .report-page .healthTag.warn { background: rgba(245, 158, 11, 0.12); color: #92400e; }
     .report-page .healthTag.bad { background: rgba(239, 68, 68, 0.12); color: #991b1b; }
+
+    .report-page .gap-card.ok { background: rgba(22, 163, 74, 0.08); border-color: rgba(22, 163, 74, 0.22); }
+    .report-page .gap-card.warn { background: rgba(245, 158, 11, 0.10); border-color: rgba(245, 158, 11, 0.22); }
+    .report-page .gap-card.bad { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3); }
+    .report-page .gap-card.ok .kpiValue,
+    .report-page .gap-card.ok .kpiSub { color: #166534; }
+    .report-page .gap-card.warn .kpiValue,
+    .report-page .gap-card.warn .kpiSub { color: #92400e; }
+    .report-page .gap-card.bad .kpiValue,
+    .report-page .gap-card.bad .kpiSub { color: #991b1b; }
 
     .report-page .mid {
       display: grid;
@@ -1570,7 +1739,7 @@ function buildOnePageContent({ project, client, metrics, exportMode = false }) {
   const { done, inProgress, nextSteps } = pickExportLists(project, listLimit);
   const schedule = computeScheduleSummary(project);
   const statusBadge = statusInfo(projectStatus(project, reportMetrics));
-  const progressPct = clampPct(project?.progress ?? reportMetrics?.progress ?? 0);
+  const progressPct = clampPct(reportMetrics?.progress ?? project?.progress ?? 0);
   const goLiveLabel = formatDateBR(project.end || project.goLive || project.goLiveDate || "");
   const reportDate = formatDateBR(project?.reportDate || Date.now());
   const developer = project.developer || "A definir";
@@ -1594,7 +1763,8 @@ function buildOnePageContent({ project, client, metrics, exportMode = false }) {
   const realizedLabel = sCurveSeries ? `${realizedPct}%` : "--";
   const gapPP = sCurveSeries ? realizedPct - baselinePct : 0;
   const gapLabel = sCurveSeries ? `${gapPP > 0 ? "+" : ""}${gapPP}pp` : "--";
-  const gapTone = sCurveSeries ? (gapPP < 0 ? "bad" : "ok") : "ok";
+  const gapTone = !sCurveSeries ? "ok" : gapPP < -15 ? "bad" : gapPP < 0 ? "warn" : "ok";
+  const gapStatusLabel = !sCurveSeries ? "Sem baseline" : gapPP < -15 ? "Atraso critico" : gapPP < 0 ? "Atraso" : "Em dia";
 
   const todayTs = todayStartTs();
   const urgentTasks = pickMostOverdueTasks(project, 5);
@@ -1660,6 +1830,32 @@ function buildOnePageContent({ project, client, metrics, exportMode = false }) {
 
         <div class="card">
           <div class="cardHeader">
+            <h2>Previsto</h2>
+            <span class="pill">Baseline</span>
+          </div>
+          <div class="cardBody">
+            <div class="kpiTop">
+              <div class="kpiValue">${baselineLabel}</div>
+            </div>
+            <div class="kpiSub">Meta para hoje</div>
+          </div>
+        </div>
+
+        <div class="card gap-card ${gapTone}">
+          <div class="cardHeader">
+            <h2>GAP (pp)</h2>
+            <span class="pill">${gapStatusLabel}</span>
+          </div>
+          <div class="cardBody">
+            <div class="kpiTop">
+              <div class="kpiValue">${gapLabel}</div>
+            </div>
+            <div class="kpiSub">Desvio atual</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
             <h2>Cronograma</h2>
             <span class="healthTag ${scheduleTone}">${scheduleLabel}</span>
           </div>
@@ -1676,32 +1872,6 @@ function buildOnePageContent({ project, client, metrics, exportMode = false }) {
           </div>
         </div>
 
-        <div class="card">
-          <div class="cardHeader">
-            <h2>Risco principal</h2>
-            <span class="tag ${topUrgentTag ? topUrgentTag.cls : "ok"}">${
-              topUrgentTag ? escapeHtml(topUrgentTag.text) : "Sem riscos"
-            }</span>
-          </div>
-          <div class="cardBody">
-            ${
-              topUrgent
-                ? `
-                <div class="itemName" title="${escapeHtml(taskTitle(topUrgent))}">
-                  ${escapeHtml(taskTitle(topUrgent))}
-                </div>
-                <div class="itemMeta">
-                  <span>Venc.: <b>${escapeHtml(topUrgentDue)}</b></span>
-                  <span>•</span>
-                  <span>Status: <b>${escapeHtml(topUrgentStatus)}</b></span>
-                </div>
-              `
-                : `
-                <div class="kpiSub">Nenhuma atividade critica detectada.</div>
-              `
-            }
-          </div>
-        </div>
       </div>
 
       <div class="mid">
@@ -2238,7 +2408,7 @@ function countTasksNextDays(clients, days = 7) {
     const tasks = getAllTasksFromProject(project);
 
     for (const t of tasks) {
-      if ((t.status || "").toLowerCase() === "concluido") continue;
+      if (normalizeTaskStatus(getTaskStatus(t)) === "concluido") continue;
 
       const dt = parseTaskDate(t.due);
       if (!dt) continue;
@@ -2607,9 +2777,230 @@ function renderClientList() {
 }
 
 function highlightActiveProject(name) {
-  document.querySelectorAll(".project-chip").forEach((chip) => {
+  document.querySelectorAll("#client-list .project-chip").forEach((chip) => {
     chip.classList.toggle("active", chip.textContent === name);
   });
+}
+
+function ensureSelectedImprovement() {
+  if (!Array.isArray(state.improvements) || !state.improvements.length) {
+    state.selectedImprovement = null;
+    return;
+  }
+  if (!state.selectedImprovement) {
+    state.selectedImprovement = state.improvements[0];
+    return;
+  }
+  const match = state.improvements.find((item) => item.id === state.selectedImprovement.id);
+  state.selectedImprovement = match || state.improvements[0];
+}
+
+function highlightActiveImprovement() {
+  const activeId = state.selectedImprovement?.id;
+  document.querySelectorAll("#improvement-list [data-improvement-id]").forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.improvementId === activeId);
+  });
+}
+
+function renderImprovementList() {
+  const list = byId("improvement-list");
+  if (!list) return;
+  list.innerHTML = "";
+  ensureSelectedImprovement();
+  if (!state.improvements.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Nenhuma melhoria cadastrada.";
+    list.appendChild(empty);
+    return;
+  }
+  state.improvements.forEach((improvement) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "project-chip";
+    btn.dataset.improvementId = improvement.id;
+    btn.textContent = improvement.name;
+    btn.addEventListener("click", () => openImprovement(improvement));
+    list.appendChild(btn);
+  });
+  highlightActiveImprovement();
+}
+
+function openImprovement(improvement) {
+  if (!improvement) return;
+  state.selectedImprovement = improvement;
+  state.currentSection = "minhas-melhorias";
+  setActiveNav(state.currentSection);
+  renderImprovementList();
+  renderMain();
+}
+
+function improvementScheduleStatus(improvement) {
+  const end = parseTaskDate(improvement?.end);
+  if (!end) return "em_dia";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const progress = clampPct(improvement?.progress || 0);
+  if (end.getTime() < today && progress < 100) return "em_atraso";
+  return "em_dia";
+}
+
+function renderImprovementsDashboard(container) {
+  setCrumbPathText("Dashboard Melhorias");
+  const header = document.createElement("div");
+  header.className = "section-header span-all";
+  header.innerHTML = `
+    <div class="header-row">
+      <h2>Resumo de Melhorias</h2>
+    </div>
+    <div class="muted">Demandas menores separadas dos projetos principais.</div>
+  `;
+
+  const table = document.createElement("div");
+  table.className = "table-card span-all";
+  const rows = state.improvements
+    .map((item) => {
+      const statusBadge = statusInfo(item.status);
+      const scheduleBadge = scheduleStatusInfo(improvementScheduleStatus(item));
+      const progress = clampPct(item.progress || 0);
+      return `
+        <tr data-improvement-row="${item.id}">
+          <td>${escapeHtml(item.name)}</td>
+          <td>${escapeHtml(item.client || "-")}</td>
+          <td>${escapeHtml(item.owner || "A definir")}</td>
+          <td><span class="pill ${statusBadge.className}">${statusBadge.label}</span></td>
+          <td>${progress}%</td>
+          <td><span class="pill ${scheduleBadge.className}">${scheduleBadge.label}</span></td>
+        </tr>
+      `;
+    })
+    .join("");
+  table.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Melhoria</th>
+          <th>Cliente</th>
+          <th>Responsavel</th>
+          <th>Status</th>
+          <th>Progresso</th>
+          <th>Prazo</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows || `<tr><td colspan="6">Nenhuma melhoria cadastrada.</td></tr>`}
+      </tbody>
+    </table>
+  `;
+
+  table.querySelectorAll("[data-improvement-row]").forEach((row) => {
+    row.addEventListener("click", () => {
+      const improvement = state.improvements.find((item) => item.id === row.dataset.improvementRow);
+      if (improvement) openImprovement(improvement);
+    });
+  });
+
+  container.appendChild(header);
+  container.appendChild(table);
+}
+
+function renderImprovementDetail(container) {
+  const improvement = state.selectedImprovement;
+  setCrumbPathText(improvement ? `Melhorias / ${improvement.name}` : "Melhorias");
+  if (!improvement) {
+    container.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;">
+      <h2>Nenhuma melhoria selecionada</h2>
+      <p>Selecione uma melhoria na barra lateral para ver os detalhes.</p>
+    </div>`;
+    return;
+  }
+
+  const statusBadge = statusInfo(improvement.status);
+  const scheduleBadge = scheduleStatusInfo(improvementScheduleStatus(improvement));
+  const progress = clampPct(improvement.progress || 0);
+  const baselinePct = baselinePctFromDates(improvement.start, improvement.end);
+  const gap = round1(progress - baselinePct);
+  const gapStatus = gapStatusInfo(gap);
+  const baselineLabel = formatMetric(baselinePct);
+  const gapLabel = formatSignedMetric(gap);
+
+  const headerCard = document.createElement("div");
+  headerCard.className = "card project-header span-all";
+  headerCard.innerHTML = `
+    <div class="project-header-top">
+      <div>
+        <h2>${escapeHtml(improvement.name)}</h2>
+        <div class="project-subtitle">${escapeHtml(improvement.client || "Cliente")}</div>
+      </div>
+      <div class="project-header-badges">
+        <span class="pill project-status ${statusBadge.className}">${statusBadge.label}</span>
+        <span class="pill schedule-status ${scheduleBadge.className}">${scheduleBadge.label}</span>
+      </div>
+    </div>
+    <div class="project-meta-grid">
+      <div class="meta-item">
+        <div class="label">Cliente</div>
+        <div class="value">${escapeHtml(improvement.client || "-")}</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Responsavel</div>
+        <div class="value">${escapeHtml(improvement.owner || "A definir")}</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Data inicio</div>
+        <div class="value">${formatDateBR(improvement.start) || "-"}</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Prazo</div>
+        <div class="value">${formatDateBR(improvement.end) || "-"}</div>
+      </div>
+    </div>
+    <div>
+      <div class="label">Progresso (%)</div>
+      <div class="progress"><div class="progress-bar" style="width: ${progress}%"></div></div>
+      <div class="value" style="margin-top:6px;">${progress}% concluido</div>
+    </div>
+  `;
+
+  const metricsGrid = document.createElement("div");
+  metricsGrid.className = "metrics-grid span-all";
+  metricsGrid.innerHTML = `
+    <div class="metric-card">
+      <div class="label">Status</div>
+      <div class="value">${statusBadge.label}</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Prazo</div>
+      <div class="value">${scheduleBadge.label}</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">% Progresso</div>
+      <div class="value">${progress}%</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Responsavel</div>
+      <div class="value">${escapeHtml(improvement.owner || "A definir")}</div>
+    </div>
+  `;
+
+  const performanceGrid = document.createElement("div");
+  performanceGrid.className = "metrics-grid performance-grid span-all";
+  performanceGrid.innerHTML = `
+    <div class="metric-card">
+      <div class="label">Previsto (baseline)</div>
+      <div class="value">${baselineLabel}%</div>
+      <div class="sub">Meta para hoje</div>
+    </div>
+    <div class="metric-card gap ${gapStatus.className}">
+      <div class="label">GAP (pp)</div>
+      <div class="value">${gapLabel}pp</div>
+      <div class="sub">${gapStatus.label}</div>
+    </div>
+  `;
+
+  container.appendChild(headerCard);
+  container.appendChild(performanceGrid);
+  container.appendChild(metricsGrid);
 }
 
 function setActiveNav(section) {
@@ -2648,7 +3039,7 @@ function updateTopActions() {
 }
 
 function renderHome(container) {
-  byId("crumb-path").textContent = "Inicio";
+  setCrumbPathText("Inicio");
   container.innerHTML = renderHomeMacroSummary();
 }
 
@@ -2680,7 +3071,7 @@ function renderRelatorioSection() {
   const project = state.selectedProject;
   const client = state.selectedClient;
 
-  byId("crumb-path").textContent = "Relatório do Projeto";
+  setCrumbPathText("Relatório do Projeto");
 
   if (!project || !client) {
     contentArea.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;">
@@ -2715,6 +3106,10 @@ function renderMain() {
   setActiveNav(state.currentSection);
   updateTopActions();
 
+  if (state.currentSection === "dashboard-melhorias" || state.currentSection === "minhas-melhorias") {
+    state.currentSection = "dashboard";
+  }
+
   if (state.currentSection === "inicio") {
     renderHome(panels);
     return;
@@ -2735,12 +3130,20 @@ function renderMain() {
     return;
   }
 
-  byId("crumb-path").textContent = `${selectedClient.name} / ${selectedProject.name}`;
+  setCrumbPathProject(selectedClient, selectedProject);
 
   const metrics = projectMetrics(selectedProject.tasks || []);
   const status = projectStatus(selectedProject, metrics);
   const statusBadge = statusInfo(status);
   const scheduleBadge = scheduleStatusInfo(projectScheduleStatus(selectedProject));
+  const progressPct = clampPct(metrics.progress ?? selectedProject.progress ?? 0);
+  const sCurveSeries = computeSCurveDailyBaseline(selectedProject, selectedProject?.tasks || null, progressPct);
+  const baselinePct = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(selectedProject, progressPct);
+  const realizedPct = sCurveSeries ? round1(sCurveSeries.realizedNow * 100) : progressPct;
+  const gap = round1(realizedPct - baselinePct);
+  const gapStatus = gapStatusInfo(gap);
+  const baselineLabel = formatMetric(baselinePct);
+  const gapLabel = formatSignedMetric(gap);
 
   const headerCard = document.createElement("div");
   headerCard.className = "card project-header span-all";
@@ -2774,15 +3177,43 @@ function renderMain() {
         <div class="value">${formatDateBR(selectedProject.end) || "-"}</div>
       </div>
     </div>
-    <div>
-      <div class="label">Progresso (%)</div>
-      <div class="progress"><div class="progress-bar" style="width: ${metrics.progress}%"></div></div>
-      <div class="value" style="margin-top:6px;">${metrics.progress}% concluido</div>
+  `;
+
+  const performanceGrid = document.createElement("div");
+  performanceGrid.className = "metrics-grid performance-grid project-performance-grid span-all";
+  performanceGrid.innerHTML = `
+    <div class="metric-card performance-card realizado">
+      <div class="label">Realizado (%)</div>
+      <div class="value">${progressPct}%</div>
+      <div class="sub">Atividades concluidas</div>
+    </div>
+    <div class="metric-card performance-card previsto">
+      <div class="label">Previsto (Baseline)</div>
+      <div class="value">${baselineLabel}%</div>
+      <div class="sub">Meta para hoje</div>
+    </div>
+    <div class="metric-card performance-card gap ${gapStatus.className}">
+      <div class="label">GAP (Desvio)</div>
+      <div class="value">${gapLabel}pp</div>
+      <div class="sub">${gapStatus.label}</div>
+    </div>
+  `;
+
+  const progressCompare = document.createElement("div");
+  progressCompare.className = "card progress-compare span-all";
+  progressCompare.innerHTML = `
+    <div class="progress-compare-head">
+      <div class="label">Avanco vs meta</div>
+      <div class="meta">Realizado <b>${progressPct}%</b> | Previsto <b>${baselineLabel}%</b></div>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill ${gapStatus.className}" style="width: ${progressPct}%" data-value="${progressPct}%"></div>
+      <div class="progress-marker" style="left: ${baselinePct}%"><span>Meta</span></div>
     </div>
   `;
 
   const metricsGrid = document.createElement("div");
-  metricsGrid.className = "metrics-grid span-all";
+  metricsGrid.className = "metrics-grid project-metrics-grid span-all";
   metricsGrid.innerHTML = `
     <div class="metric-card">
       <div class="label">Total de atividades</div>
@@ -2798,7 +3229,7 @@ function renderMain() {
     </div>
     <div class="metric-card">
       <div class="label">% Progresso</div>
-      <div class="value">${metrics.progress}%</div>
+      <div class="value">${progressPct}%</div>
     </div>
   `;
 
@@ -2937,12 +3368,41 @@ function renderMain() {
   tasksCard.appendChild(tasksBox);
 
   panels.appendChild(headerCard);
+  panels.appendChild(performanceGrid);
+  panels.appendChild(progressCompare);
   panels.appendChild(metricsGrid);
   panels.appendChild(tasksCard);
 }
 
 function wireNav() {
   document.body.addEventListener("click", (e) => {
+    const crumbLink = e.target.closest(".crumb-link[data-crumb]");
+    if (crumbLink) {
+      const target = crumbLink.dataset.crumb;
+      if (target === "home") {
+        state.currentSection = "inicio";
+        setActiveNav(state.currentSection);
+        renderMain();
+        return;
+      }
+      if (target === "client") {
+        if (state.selectedClient) {
+          ensureDashboardState();
+          state.dashboard.filters = { clientName: [state.selectedClient.name] };
+          state.currentSection = "dashboard";
+          setActiveNav(state.currentSection);
+          renderMain();
+        }
+        return;
+      }
+      if (target === "project") {
+        if (state.selectedClient && state.selectedProject) {
+          openProject(state.selectedClient, state.selectedProject);
+        }
+        return;
+      }
+    }
+
     const navBtn = e.target.closest(".nav-link, .btn[data-section]");
     if (!navBtn) return;
 
@@ -3343,6 +3803,32 @@ function resetActivityModal() {
   updateActivityPackageField();
 }
 
+function openImprovementModal(improvementId = null) {
+  const modal = byId("improvement-modal");
+  const form = byId("improvement-form");
+  const title = byId("improvement-modal-title");
+  if (!modal || !form) return;
+  const improvement = state.improvements.find((item) => item.id === improvementId) || null;
+  state.editingImprovementId = improvement?.id || null;
+  form.elements.name.value = improvement?.name || "";
+  form.elements.client.value = improvement?.client || "";
+  form.elements.owner.value = improvement?.owner || "";
+  form.elements.start.value = improvement?.start || "";
+  form.elements.end.value = improvement?.end || "";
+  form.elements.status.value = improvement?.status || "planejado";
+  form.elements.progress.value = improvement?.progress ?? 0;
+  if (title) title.textContent = improvement ? "Editar Melhoria" : "Nova Melhoria";
+  showModal(modal);
+}
+
+function resetImprovementModal() {
+  const form = byId("improvement-form");
+  const title = byId("improvement-modal-title");
+  state.editingImprovementId = null;
+  if (form) form.reset();
+  if (title) title.textContent = "Nova Melhoria";
+}
+
 function deleteTaskByIndex(idx) {
   const project = state.selectedProject;
   if (!project || !project.tasks || !project.tasks[idx]) return;
@@ -3625,6 +4111,7 @@ function normalizeTaskStatus(status) {
   const value = normStatus(status);
   if (!value) return "planejado";
   if (STATUS_DONE.has(value)) return "concluido";
+  if (STATUS_VALIDATION.has(value)) return "em_validacao";
   if (STATUS_IN_PROGRESS.has(value)) return "em_andamento";
   if (value === "parado") return "parado";
   if (STATUS_PLANNED.has(value)) return "planejado";
@@ -3634,9 +4121,14 @@ function normalizeTaskStatus(status) {
 function applyTaskStatus(task, status) {
   if (!task) return;
   task.status = status;
-  if (normalizeTaskStatus(status) === "concluido" && !task.completedAt) {
-    task.completedAt = new Date().toISOString();
+  const normalized = normalizeTaskStatus(status);
+  if (normalized === "concluido") {
+    if (!task.dataConclusao) {
+      task.dataConclusao = new Date().toISOString().slice(0, 10);
+    }
+    return;
   }
+  task.dataConclusao = null;
 }
 
 function taskStatusInfo(status) {
@@ -3684,7 +4176,7 @@ function projectScheduleStatus(project) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const hasOverdue = tasks.some((task) => {
-    if ((task.status || "").toLowerCase() === "concluido") return false;
+    if (normalizeTaskStatus(getTaskStatus(task)) === "concluido") return false;
     const dt = parseTaskDate(task.due);
     return dt && dt.getTime() < today;
   });
@@ -3734,8 +4226,7 @@ function setupStatusPopover() {
     if (Number.isNaN(idx) || !state.selectedProject) return;
     const task = state.selectedProject.tasks[idx];
     applyTaskStatus(task, select.value);
-    const statusPayload = { status: task.status };
-    if (task.completedAt) statusPayload.completedAt = task.completedAt;
+    const statusPayload = { status: task.status, dataConclusao: task.dataConclusao ?? null };
     if (db && state.selectedProject.id && task.id) {
       updateTaskStatusOnDb(state.selectedProject.clientId, state.selectedProject.id, task.id, statusPayload)
         .then(() => {
@@ -4146,6 +4637,13 @@ function wireLogin() {
       }
       return;
     }
+    if (!auth) {
+      if (errEl) {
+        errEl.textContent = "Login indisponivel no momento. Tente novamente.";
+        errEl.classList.remove("hidden");
+      }
+      return;
+    }
     try {
       await auth.signInWithEmailAndPassword(email, pass);
     } catch (err) {
@@ -4166,6 +4664,7 @@ async function logout() {
 
 async function init() {
   showLogin();
+  wireLogin();
   const ok = await initFirebase();
   if (!ok) return;
   if (!firebase?.auth) {
@@ -4173,7 +4672,6 @@ async function init() {
     return;
   }
   auth = firebase.auth();
-  wireLogin();
 
   auth.onAuthStateChanged(async (user) => {
     if (!user) {
@@ -4250,7 +4748,7 @@ async function saveTaskToDb(clientId, projectId, task) {
     due: task.due,
     status: task.status,
     progress: task.progress,
-    ...(task.completedAt ? { completedAt: task.completedAt } : {}),
+    ...(task.dataConclusao ? { dataConclusao: task.dataConclusao } : {}),
     createdAt: firebase.database.ServerValue.TIMESTAMP
   });
 }
@@ -4273,8 +4771,8 @@ async function updateTaskOnDb(clientId, projectId, taskId, payload) {
     status: payload.status,
     progress: payload.progress
   };
-  if ("completedAt" in payload) {
-    updatePayload.completedAt = payload.completedAt;
+  if ("dataConclusao" in payload) {
+    updatePayload.dataConclusao = payload.dataConclusao;
   }
   await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(updatePayload);
 }
@@ -4289,7 +4787,7 @@ async function updateProjectPackagesOnDb(clientId, projectId, packages) {
 
 function projectMetrics(tasks = []) {
   const total = tasks.length;
-  const done = tasks.filter((t) => t.status === "concluido").length;
+  const done = tasks.filter((t) => isDoneTask(t)).length;
   const pending = Math.max(total - done, 0);
   const progress = total ? Math.round((done / total) * 100) : 0;
   return { total, done, pending, progress };
@@ -4380,8 +4878,8 @@ function getSubEpicTitle(task) {
 }
 
 function taskStatusRank(status) {
-  const key = (status || "").toLowerCase();
-  if (key === "em_andamento") return 0;
+  const key = normalizeTaskStatus(status);
+  if (key === "em_andamento" || key === "em_validacao") return 0;
   if (key === "atrasado") return 1;
   if (key === "planejado") return 2;
   if (key === "concluido") return 3;
@@ -4529,7 +5027,7 @@ function projectStatus(project, metrics = projectMetrics(project.tasks || [])) {
   if (metrics.progress === 100 && metrics.total > 0) return "concluido";
   const goLive = goLiveValue(project.end);
   if (goLive !== null && goLive < Date.now() && metrics.progress < 100) return "atrasado";
-  const hasWorkStarted = (project.tasks || []).some((t) => t.status && t.status !== "planejado");
+  const hasWorkStarted = (project.tasks || []).some((t) => normalizeTaskStatus(getTaskStatus(t)) !== "planejado");
   return hasWorkStarted ? "em_andamento" : "planejado";
 }
 
@@ -4547,7 +5045,7 @@ function sortProjectsForDashboard(a, b) {
 }
 
 function renderDashboard(container) {
-  byId("crumb-path").textContent = "Dashboard Projetos";
+  setCrumbPathText("Dashboard Projetos");
   ensureDashboardState();
   const all = allProjects();
   const filtered = applyDashboardFilters(all);
