@@ -1877,7 +1877,7 @@ function buildOnePageContent({ project, client, metrics, exportMode = false }) {
       <div class="mid">
         <div class="card">
           <div class="cardHeader">
-            <h2>Curva S - Avanco fisico acumulado</h2>
+            <h2>Curva S - Avanço fisico acumulado</h2>
             <div class="curveMeta">
               <span class="miniStat"><i class="legendDot baseline"></i> Baseline <b>${baselineLabel}</b></span>
               <span class="miniStat"><i class="legendDot real"></i> Realizado <b>${realizedLabel}</b></span>
@@ -3141,6 +3141,9 @@ function renderMain() {
   const baselinePct = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(selectedProject, progressPct);
   const realizedPct = sCurveSeries ? round1(sCurveSeries.realizedNow * 100) : progressPct;
   const gap = round1(realizedPct - baselinePct);
+  const gapStart = round1(Math.min(realizedPct, baselinePct));
+  const gapWidth = round1(Math.abs(realizedPct - baselinePct));
+  const progressTrendClass = gap > 0 ? "is-ahead" : gap < 0 ? "is-behind" : "";
   const gapStatus = gapStatusInfo(gap);
   const baselineLabel = formatMetric(baselinePct);
   const gapLabel = formatSignedMetric(gap);
@@ -3160,19 +3163,19 @@ function renderMain() {
       </div>
     </div>
     <div class="project-meta-grid">
-      <div class="meta-item">
+      <div class="meta-item card--meta">
         <div class="label">Cliente</div>
         <div class="value">${selectedClient.name}</div>
       </div>
-      <div class="meta-item">
+      <div class="meta-item card--meta">
         <div class="label">Responsavel</div>
         <div class="value">${selectedProject.developer || "A definir"}</div>
       </div>
-      <div class="meta-item">
+      <div class="meta-item card--meta">
         <div class="label">Data inicio</div>
         <div class="value">${formatDateBR(selectedProject.start) || "-"}</div>
       </div>
-      <div class="meta-item">
+      <div class="meta-item card--meta">
         <div class="label">Go Live previsto</div>
         <div class="value">${formatDateBR(selectedProject.end) || "-"}</div>
       </div>
@@ -3182,17 +3185,17 @@ function renderMain() {
   const performanceGrid = document.createElement("div");
   performanceGrid.className = "metrics-grid performance-grid project-performance-grid span-all";
   performanceGrid.innerHTML = `
-    <div class="metric-card performance-card realizado">
+    <div class="metric-card card--kpi performance-card realizado">
       <div class="label">Realizado (%)</div>
       <div class="value">${progressPct}%</div>
       <div class="sub">Atividades concluidas</div>
     </div>
-    <div class="metric-card performance-card previsto">
+    <div class="metric-card card--kpi performance-card previsto">
       <div class="label">Previsto (Baseline)</div>
       <div class="value">${baselineLabel}%</div>
       <div class="sub">Meta para hoje</div>
     </div>
-    <div class="metric-card performance-card gap ${gapStatus.className}">
+    <div class="metric-card card--kpi performance-card gap ${gapStatus.className}">
       <div class="label">GAP (Desvio)</div>
       <div class="value">${gapLabel}pp</div>
       <div class="sub">${gapStatus.label}</div>
@@ -3200,36 +3203,40 @@ function renderMain() {
   `;
 
   const progressCompare = document.createElement("div");
-  progressCompare.className = "card progress-compare span-all";
+  progressCompare.className = "card progress-compare card--progress span-all";
   progressCompare.innerHTML = `
-    <div class="progress-compare-head">
-      <div class="label">Avanco vs meta</div>
-      <div class="meta">Realizado <b>${progressPct}%</b> | Previsto <b>${baselineLabel}%</b></div>
+    <div class="progress-head">
+      <div class="progress-title">Avanço vs meta</div>
+      <div class="progress-legend">
+        <span class="leg"><b>Realizado</b> <span>${progressPct}%</span></span>
+        <span class="dot">•</span>
+        <span class="leg"><b>Previsto</b> <span>${baselineLabel}%</span></span>
+      </div>
+      <div class="delta-badge ${gapStatus.className}">${gapLabel}pp</div>
     </div>
-    <div class="progress-track">
-      <div class="progress-fill ${gapStatus.className}" style="width: ${progressPct}%" data-value="${progressPct}%"></div>
-      <div class="progress-marker" style="left: ${baselinePct}%"><span>Meta</span></div>
+    <div class="progress-track ${progressTrendClass}" style="--realized: ${realizedPct}%; --baseline: ${baselinePct}%; --gapStart: ${gapStart}%; --gapW: ${gapWidth}%;">
+      <div class="progress-baseline"></div>
+      <div class="progress-gap" aria-hidden="true"></div>
+      <div class="progress-realized ${gapStatus.className}"></div>
+      <div class="progress-marker"></div>
+      <div class="progress-knob ${gapStatus.className}" aria-hidden="true"></div>
     </div>
   `;
 
   const metricsGrid = document.createElement("div");
   metricsGrid.className = "metrics-grid project-metrics-grid span-all";
   metricsGrid.innerHTML = `
-    <div class="metric-card">
+    <div class="metric-card card--kpi">
       <div class="label">Total de atividades</div>
       <div class="value">${metrics.total}</div>
     </div>
-    <div class="metric-card">
+    <div class="metric-card card--kpi">
       <div class="label">Atividades concluidas</div>
       <div class="value">${metrics.done}</div>
     </div>
-    <div class="metric-card">
+    <div class="metric-card card--kpi">
       <div class="label">Atividades pendentes</div>
       <div class="value">${metrics.pending}</div>
-    </div>
-    <div class="metric-card">
-      <div class="label">% Progresso</div>
-      <div class="value">${progressPct}%</div>
     </div>
   `;
 

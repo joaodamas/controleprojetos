@@ -600,7 +600,7 @@ function renderHome(container) {
     <div class="welcome-header">
       <div class="welcome-icon">👋</div>
       <div>
-        <p class="welcome-title">Bem-vindo ao Controle de Projetos</p>
+        <p class="welcome-title">Bem-vindo ao Acurra - Project Manager</p>
         <div class="welcome-meta">📅 Ultimo acesso: ${state.home.lastAccess}</div>
       </div>
     </div>
