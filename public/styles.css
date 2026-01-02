@@ -377,6 +377,185 @@ body {
   gap: 20px;
 }
 
+.monitor-container {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  display: grid;
+  gap: 18px;
+}
+
+.monitor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.monitor-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.monitor-select {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.monitor-select select {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #f8f9fd;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.monitor-filter {
+  position: relative;
+}
+
+.btn-filtro {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13px;
+  transition: background 0.2s ease;
+}
+
+.btn-filtro:hover {
+  background: #f8fafc;
+}
+
+.monitor-filter-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 180px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.12);
+  padding: 8px;
+  display: none;
+  z-index: 40;
+  gap: 6px;
+}
+
+.monitor-filter-menu.show {
+  display: grid;
+}
+
+.monitor-filter-menu button {
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  text-align: left;
+  border-radius: 8px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.monitor-filter-menu button:hover {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.monitor-filter-menu button.active {
+  background: rgba(14, 116, 144, 0.12);
+  color: var(--accent-dark);
+}
+
+.cliente-secao-titulo {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+  font-weight: 700;
+  margin: 4px 0 8px 4px;
+}
+
+.atividade-card {
+  position: relative;
+  background: #fff;
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
+
+.atividade-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 6px;
+  background: transparent;
+}
+
+.status-atrasado::before {
+  background-color: #ef4444;
+}
+
+.status-proximo::before {
+  background-color: #3b82f6;
+}
+
+.info-principal h4 {
+  margin: 0 0 4px 8px;
+  font-size: 16px;
+  color: #1e293b;
+}
+
+.info-principal p {
+  margin: 0 0 0 8px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.responsavel-nome {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.badge-data {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.badge-atrasado {
+  background: #fef2f2;
+  color: #ef4444;
+  border: 1px solid #fee2e2;
+}
+
+.badge-proximo {
+  background: #eff6ff;
+  color: #3b82f6;
+  border: 1px solid #dbeafe;
+}
+
 .span-all {
   grid-column: 1 / -1;
 }

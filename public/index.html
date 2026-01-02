@@ -42,6 +42,7 @@
       <nav class="nav">
         <button class="nav-link active" data-section="inicio">Inicio</button>
         <button class="nav-link" data-section="dashboard">Dashboard Projetos</button>
+        <button class="nav-link" data-section="monitor">Monitor de Atividades</button>
         <div class="nav-group">
           <button class="nav-link with-caret" data-section="meus-projetos">
             Meus Projetos
@@ -226,6 +227,36 @@
           <button type="submit" class="btn primary">Salvar Atividade</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div class="modal" id="monitor-task-modal">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Editar Atividade</h2>
+        <button class="icon-btn" data-close-modal>&times;</button>
+      </div>
+      <form class="form" id="monitor-task-form">
+        <label>
+          Nome da Atividade
+          <input type="text" id="monitor-task-name" name="name" required>
+        </label>
+        <div class="form-grid">
+          <label>
+            Prazo
+            <input type="date" id="monitor-task-due" name="due">
+          </label>
+          <label>
+            Responsavel
+            <select id="monitor-task-responsible" name="responsible"></select>
+          </label>
+        </div>
+      </form>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
+        <button type="submit" class="btn primary" form="monitor-task-form">Salvar Alteracoes</button>
+      </div>
     </div>
   </div>
 

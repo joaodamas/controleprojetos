@@ -221,7 +221,14 @@ const state = {
   dashboard: {
     sort: { key: null, direction: "asc" },
     filters: {}
-  }
+  },
+  monitor: {
+    filter: "all",
+    client: "",
+    project: "",
+    responsible: ""
+  },
+  monitorEditing: null
 };
 
 const LOCAL_STORAGE_KEY = "controle_projetos_state_v1";
@@ -253,6 +260,12 @@ const DASHBOARD_COLUMNS = [
   { key: "baseline", label: "Previsto", type: "number" },
   { key: "gap", label: "GAP (pp)", type: "number" },
   { key: "goLive", label: "Go Live previsto", type: "date" }
+];
+
+const MONITOR_FILTERS = [
+  { key: "all", label: "Todos" },
+  { key: "atrasado", label: "Atrasadas" },
+  { key: "proximo", label: "Proximas" }
 ];
 
 const DEFAULT_EPICS = ["LEVANTAMENTO", "DESENVOLVIMENTO", "TESTES", "DEPLOY"];
@@ -731,6 +744,63 @@ function taskUrgencyTag(task, todayTs = todayStartTs()) {
   if (diffDays === 0) return { cls: "warn", text: "Vence hoje" };
   const ahead = Math.abs(diffDays);
   return { cls: "ok", text: `Em dia • ${ahead}d` };
+}
+
+function monitorFilterLabel(filterKey) {
+  const match = MONITOR_FILTERS.find((item) => item.key === filterKey);
+  return match ? match.label : "Todos";
+}
+
+function formatMonitorDateLabel(dueDay, today) {
+  const diff = daysDiff(dueDay, today);
+  if (diff === 0) return "HOJE";
+  if (diff === 1) return "AMANHA";
+  const months = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"];
+  const dd = String(dueDay.getDate()).padStart(2, "0");
+  const mm = months[dueDay.getMonth()] || "";
+  return `${dd} ${mm}`.trim();
+}
+
+function buildMonitorItems() {
+  const today = startOfDay(new Date());
+  const upcomingLimit = startOfDay(addDays(today, 7));
+  const items = [];
+
+  state.clients.forEach((client, clientIndex) => {
+    (client.projects || []).forEach((project, projectIndex) => {
+      (project.tasks || []).forEach((task, taskIndex) => {
+        if (!task) return;
+        if (normalizeTaskStatus(getTaskStatus(task)) === "concluido") return;
+        const dueRaw = taskDueStr(task);
+        const dueDate = parseTaskDate(dueRaw);
+        if (!dueDate) return;
+        const dueDay = startOfDay(dueDate);
+        const isOverdue = dueDay < today;
+        const isUpcoming = dueDay >= today && dueDay <= upcomingLimit;
+        if (!isOverdue && !isUpcoming) return;
+
+        const responsible = taskOwner(task) || project.developer || "A definir";
+        items.push({
+          clientIndex,
+          projectIndex,
+          taskIndex,
+          clientName: client.name,
+          projectName: project.name,
+          projectDeveloper: project.developer || "",
+          taskTitle: taskTitle(task),
+          taskOwner: taskOwner(task),
+          responsible,
+          dueDay,
+          status: isOverdue ? "atrasado" : "proximo",
+          taskId: task.id || "",
+          projectId: project.id || "",
+          clientId: client.id || ""
+        });
+      });
+    });
+  });
+
+  return items;
 }
 
 function renderOnePageItem(task, options = {}) {
@@ -2864,6 +2934,7 @@ async function initApp() {
   wireModals();
   wireInlineProjectDates();
   wireInlineTaskDates();
+  setupMonitorActions();
   setupStatusPopover();
   setupProgressPopover();
   setupTaskActions();
@@ -3252,8 +3323,188 @@ function renderRelatorioSection() {
   contentArea.appendChild(reportWrapper);
 }
 
+function renderMonitorActivities(container) {
+  setCrumbPathText("Monitor de Atividades");
+  const filter = state.monitor?.filter || "all";
+  const clientFilter = state.monitor?.client || "";
+  const projectFilter = state.monitor?.project || "";
+  const responsibleFilter = state.monitor?.responsible || "";
+  const items = buildMonitorItems();
+  const statusFiltered = items.filter((item) => {
+    if (filter === "atrasado") return item.status === "atrasado";
+    if (filter === "proximo") return item.status === "proximo";
+    return true;
+  });
+  const clientOptions = Array.from(new Set(statusFiltered.map((item) => item.clientName))).sort();
+  if (clientFilter && !clientOptions.includes(clientFilter)) {
+    state.monitor.client = "";
+  }
+  const projectPool = (state.monitor.client || clientFilter)
+    ? statusFiltered.filter((item) => item.clientName === (state.monitor.client || clientFilter))
+    : statusFiltered;
+  const projectOptions = Array.from(new Set(projectPool.map((item) => item.projectName))).sort();
+  if (projectFilter && !projectOptions.includes(projectFilter)) {
+    state.monitor.project = "";
+  }
+  const responsiblePool = statusFiltered.filter((item) => {
+    if (state.monitor.client && item.clientName !== state.monitor.client) return false;
+    if (state.monitor.project && item.projectName !== state.monitor.project) return false;
+    return true;
+  });
+  const responsibleOptions = Array.from(new Set(responsiblePool.map((item) => item.responsible))).sort();
+  if (responsibleFilter && !responsibleOptions.includes(responsibleFilter)) {
+    state.monitor.responsible = "";
+  }
+
+  const filtered = statusFiltered.filter((item) => {
+    if (state.monitor.client && item.clientName !== state.monitor.client) return false;
+    if (state.monitor.project && item.projectName !== state.monitor.project) return false;
+    if (state.monitor.responsible && item.responsible !== state.monitor.responsible) return false;
+    return true;
+  });
+
+  const header = document.createElement("div");
+  header.className = "monitor-container span-all";
+  header.innerHTML = `
+    <div class="monitor-header">
+      <h2>Monitor de Atividades</h2>
+      <div class="monitor-filter">
+        <button class="btn-filtro" type="button" data-monitor-filter-btn>
+          <span>🔍</span> Filtrar: ${monitorFilterLabel(filter)}
+        </button>
+        <div class="monitor-filter-menu" id="monitor-filter-popover">
+          ${MONITOR_FILTERS.map((option) => {
+            const active = option.key === filter ? "active" : "";
+            return `<button type="button" class="${active}" data-monitor-filter="${option.key}">${option.label}</button>`;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+    <div class="monitor-filters">
+      <label class="monitor-select">
+        <span>Cliente</span>
+        <select data-monitor-select="client">
+          <option value="">Todos</option>
+          ${clientOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.client === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="monitor-select">
+        <span>Projeto</span>
+        <select data-monitor-select="project">
+          <option value="">Todos</option>
+          ${projectOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.project === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="monitor-select">
+        <span>Responsavel</span>
+        <select data-monitor-select="responsible">
+          <option value="">Todos</option>
+          ${responsibleOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.responsible === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+  `;
+
+  const groups = new Map();
+  filtered.forEach((item) => {
+    if (!groups.has(item.clientName)) groups.set(item.clientName, []);
+    groups.get(item.clientName).push(item);
+  });
+
+  const list = document.createElement("div");
+  list.className = "monitor-container span-all";
+  if (!filtered.length) {
+    const empty = document.createElement("div");
+    empty.className = "card";
+    empty.textContent = "Nenhuma atividade encontrada para o filtro selecionado.";
+    list.appendChild(empty);
+  } else {
+    const today = startOfDay(new Date());
+    Array.from(groups.entries()).forEach(([clientName, groupItems]) => {
+      const group = document.createElement("div");
+      group.className = "cliente-grupo";
+      const title = document.createElement("div");
+      title.className = "cliente-secao-titulo";
+      title.textContent = `Cliente: ${clientName}`;
+      group.appendChild(title);
+
+      const orderedItems = groupItems.slice().sort((a, b) => {
+        const proj = a.projectName.localeCompare(b.projectName);
+        if (proj !== 0) return proj;
+        const due = a.dueDay.getTime() - b.dueDay.getTime();
+        if (due !== 0) return due;
+        return a.taskTitle.localeCompare(b.taskTitle);
+      });
+
+      orderedItems.forEach((item) => {
+        const statusClass = item.status === "atrasado" ? "status-atrasado" : "status-proximo";
+        const labelBase = formatMonitorDateLabel(item.dueDay, today);
+        const badgeLabel = item.status === "atrasado" ? `${labelBase} (ATRASADO)` : labelBase;
+        const badgeClass = item.status === "atrasado" ? "badge-atrasado" : "badge-proximo";
+        const responsible = item.responsible || "A definir";
+        const card = document.createElement("div");
+        card.className = `atividade-card ${statusClass}`;
+        card.dataset.monitorCard = "true";
+        card.dataset.clientIndex = String(item.clientIndex);
+        card.dataset.projectIndex = String(item.projectIndex);
+        card.dataset.taskIndex = String(item.taskIndex);
+        card.innerHTML = `
+          <div class="info-principal">
+            <h4>${escapeHtml(item.taskTitle)}</h4>
+            <p>Projeto: <strong>${escapeHtml(item.projectName)}</strong> • Resp: <span class="responsavel-nome">${escapeHtml(responsible)}</span></p>
+          </div>
+          <div class="info-data">
+            <span class="badge-data ${badgeClass}">${badgeLabel}</span>
+          </div>
+        `;
+        group.appendChild(card);
+      });
+
+      list.appendChild(group);
+    });
+  }
+
+  container.appendChild(header);
+  container.appendChild(list);
+}
+
+function captureScrollPositions() {
+  const positions = {};
+  document.querySelectorAll("[data-preserve-scroll]").forEach((el) => {
+    const key = el.dataset.preserveScroll;
+    if (!key) return;
+    positions[key] = el.scrollTop;
+  });
+  return positions;
+}
+
+function restoreScrollPositions(positions) {
+  if (!positions) return;
+  document.querySelectorAll("[data-preserve-scroll]").forEach((el) => {
+    const key = el.dataset.preserveScroll;
+    if (!key) return;
+    if (!(key in positions)) return;
+    el.scrollTop = positions[key];
+  });
+}
+
 function renderMain() {
   removeRelatorioStyles(); 
+
+  const prevContext = state.lastRenderContext || null;
+  const nextContext = {
+    section: state.currentSection,
+    clientId: state.selectedClient?.id || state.selectedClient?.name || null,
+    projectId: state.selectedProject?.id || state.selectedProject?.name || null
+  };
+  const preserveScroll =
+    prevContext &&
+    prevContext.section === nextContext.section &&
+    prevContext.clientId === nextContext.clientId &&
+    prevContext.projectId === nextContext.projectId;
+  const scrollX = preserveScroll ? window.scrollX : 0;
+  const scrollY = preserveScroll ? window.scrollY : 0;
+  const scrollPositions = preserveScroll ? captureScrollPositions() : null;
 
   const { selectedClient, selectedProject } = state;
   const panels = byId("dashboard-panels");
@@ -3265,23 +3516,45 @@ function renderMain() {
     state.currentSection = "dashboard";
   }
 
+  const finalizeRender = () => {
+    state.lastRenderContext = nextContext;
+    if (preserveScroll) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.scrollTo(scrollX, scrollY);
+          restoreScrollPositions(scrollPositions);
+        });
+      });
+    }
+  };
+
   if (state.currentSection === "inicio") {
     renderHome(panels);
+    finalizeRender();
     return;
   }
 
   if (state.currentSection === "dashboard") {
     renderDashboard(panels);
+    finalizeRender();
     return;
   }
 
   if (state.currentSection === "relatorio") {
     renderRelatorioSection();
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "monitor") {
+    renderMonitorActivities(panels);
+    finalizeRender();
     return;
   }
 
   if (!selectedClient || !selectedProject) {
     panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Bem-vindo!</h2><p>Selecione um cliente e um projeto na barra lateral para começar.</p></div>`;
+    finalizeRender();
     return;
   }
 
@@ -3419,6 +3692,7 @@ function renderMain() {
     </div>`;
   const tasksBox = document.createElement("div");
   tasksBox.className = "tasks";
+  tasksBox.dataset.preserveScroll = `tasks-${selectedProject.id || selectedProject.name || "default"}`;
   const tasksHeader = document.createElement("div");
   tasksHeader.className = "task-row header";
   tasksHeader.innerHTML = `
@@ -3545,6 +3819,8 @@ function renderMain() {
   panels.appendChild(progressCompare);
   panels.appendChild(metricsGrid);
   panels.appendChild(tasksCard);
+
+  finalizeRender();
 }
 
 function wireNav() {
@@ -3599,6 +3875,7 @@ function wireModals() {
   const employeeModal = byId("employee-modal");
   const clientModal = byId("client-modal");
   const activityModal = byId("activity-modal");
+  const monitorTaskModal = byId("monitor-task-modal");
   const deleteProjectBtn = byId("delete-project-btn");
   const deleteClientBtn = byId("delete-client-btn");
 
@@ -3642,9 +3919,11 @@ function wireModals() {
       if (employeeModal) hideModal(employeeModal);
       if (clientModal) hideModal(clientModal);
       if (activityModal) hideModal(activityModal);
+      if (monitorTaskModal) hideModal(monitorTaskModal);
       resetProjectModal();
       resetClientModal();
       resetActivityModal();
+      resetMonitorTaskModal();
     });
   });
 
@@ -4052,6 +4331,151 @@ function wireInlineTaskDates() {
     e.preventDefault();
     startEdit(target);
   });
+}
+
+function openMonitorTaskModalByIndexes(clientIndex, projectIndex, taskIndex) {
+  const client = state.clients?.[clientIndex];
+  const project = client?.projects?.[projectIndex];
+  const task = project?.tasks?.[taskIndex];
+  if (!client || !project || !task) return;
+
+  state.monitorEditing = { clientIndex, projectIndex, taskIndex };
+
+  const modal = byId("monitor-task-modal");
+  const form = byId("monitor-task-form");
+  if (!modal || !form) return;
+
+  form.elements.name.value = task.title || "";
+  form.elements.due.value = formatDateISO(taskDueStr(task));
+
+  const responsibleSelect = form.elements.responsible;
+  const options = new Set();
+  if (taskOwner(task)) options.add(taskOwner(task));
+  if (project.developer) options.add(project.developer);
+  (state.employees || []).forEach((employee) => {
+    if (employee?.name) options.add(employee.name);
+  });
+  responsibleSelect.innerHTML = "";
+  const emptyOption = document.createElement("option");
+  emptyOption.value = "";
+  emptyOption.textContent = "A definir";
+  responsibleSelect.appendChild(emptyOption);
+  Array.from(options).forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    responsibleSelect.appendChild(opt);
+  });
+  responsibleSelect.value = taskOwner(task) || project.developer || "";
+
+  showModal(modal);
+}
+
+function resetMonitorTaskModal() {
+  const form = byId("monitor-task-form");
+  state.monitorEditing = null;
+  if (form) form.reset();
+}
+
+function saveMonitorTaskChanges() {
+  const edit = state.monitorEditing;
+  if (!edit) return;
+  const client = state.clients?.[edit.clientIndex];
+  const project = client?.projects?.[edit.projectIndex];
+  const task = project?.tasks?.[edit.taskIndex];
+  if (!client || !project || !task) return;
+
+  const form = byId("monitor-task-form");
+  if (!form) return;
+
+  const name = form.elements.name.value.trim();
+  const dueValue = form.elements.due.value || "";
+  const responsible = form.elements.responsible.value || "";
+  const dueKey = taskDueKey(task);
+
+  const previous = { title: task.title, responsible: task.responsible, due: task[dueKey] };
+  task.title = name || task.title || "";
+  task.responsible = responsible;
+  task[dueKey] = dueValue;
+
+  const payload = { ...task, [dueKey]: dueValue, responsible };
+  if (db && project.id && client.id && task.id) {
+    updateTaskOnDb(client.id, project.id, task.id, payload)
+      .then(() => {
+        hideModal(byId("monitor-task-modal"));
+        resetMonitorTaskModal();
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        task.title = previous.title;
+        task.responsible = previous.responsible;
+        task[dueKey] = previous.due;
+        alert("Erro ao atualizar atividade.");
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  hideModal(byId("monitor-task-modal"));
+  resetMonitorTaskModal();
+  renderMain();
+}
+
+function setupMonitorActions() {
+  if (document.body.dataset.monitorWired) return;
+  document.body.dataset.monitorWired = "true";
+
+  document.body.addEventListener("click", (e) => {
+    const filterBtn = e.target.closest("[data-monitor-filter-btn]");
+    if (filterBtn) {
+      const popover = byId("monitor-filter-popover");
+      if (popover) popover.classList.toggle("show");
+      return;
+    }
+
+    const filterOpt = e.target.closest("[data-monitor-filter]");
+    if (filterOpt) {
+      state.monitor.filter = filterOpt.dataset.monitorFilter || "all";
+      renderMain();
+      return;
+    }
+
+    const card = e.target.closest("[data-monitor-card]");
+    if (card) {
+      const popover = byId("monitor-filter-popover");
+      if (popover) popover.classList.remove("show");
+      const clientIndex = Number(card.dataset.clientIndex);
+      const projectIndex = Number(card.dataset.projectIndex);
+      const taskIndex = Number(card.dataset.taskIndex);
+      if (Number.isFinite(clientIndex) && Number.isFinite(projectIndex) && Number.isFinite(taskIndex)) {
+        openMonitorTaskModalByIndexes(clientIndex, projectIndex, taskIndex);
+      }
+      return;
+    }
+
+    if (!e.target.closest("#monitor-filter-popover")) {
+      const popover = byId("monitor-filter-popover");
+      if (popover) popover.classList.remove("show");
+    }
+  });
+
+  document.body.addEventListener("change", (e) => {
+    const select = e.target.closest("[data-monitor-select]");
+    if (!select) return;
+    const key = select.dataset.monitorSelect;
+    if (!key) return;
+    state.monitor[key] = select.value || "";
+    renderMain();
+  });
+
+  const monitorForm = byId("monitor-task-form");
+  if (monitorForm) {
+    monitorForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      saveMonitorTaskChanges();
+    });
+  }
 }
 
 function showModal(modalEl) {
