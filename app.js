@@ -286,6 +286,8 @@ const DASHBOARD_COLUMNS = [
   { key: "developer", label: "Responsavel", type: "text" },
   { key: "status", label: "Status", type: "text" },
   { key: "progress", label: "Progresso", type: "number" },
+  { key: "baseline", label: "Previsto", type: "number" },
+  { key: "gap", label: "GAP (pp)", type: "number" },
   { key: "goLive", label: "Go Live previsto", type: "date" }
 ];
 
@@ -1980,6 +1982,45 @@ function parseDateValue(value) {
   return Number.NaN;
 }
 
+function startOfDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function round1(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 10) / 10;
+}
+
+function formatMetric(value) {
+  if (!Number.isFinite(value)) return "0";
+  const rounded = round1(value);
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function formatSignedMetric(value) {
+  const num = Number(value);
+  const base = formatMetric(value);
+  if (Number.isFinite(num) && num > 0) return `+${base}`;
+  return base;
+}
+
+function baselinePctFromDates(startValue, endValue, now = new Date()) {
+  const startMs = parseDateValue(startValue);
+  const endMs = parseDateValue(endValue);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return 0;
+  const start = startOfDay(new Date(startMs));
+  const end = startOfDay(new Date(endMs));
+  const today = startOfDay(now);
+  const total = end.getTime() - start.getTime();
+  if (total <= 0) return today >= end ? 100 : 0;
+  if (today <= start) return 0;
+  if (today >= end) return 100;
+  const pct = ((today.getTime() - start.getTime()) / total) * 100;
+  return Math.max(0, Math.min(100, round1(pct)));
+}
+
 function taskSortDate(value) {
   const parsed = parseDateValue(value);
   return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
@@ -2029,6 +2070,8 @@ function dashboardDisplayValue(project, key) {
   if (key === "developer") return project.developer || "-";
   if (key === "status") return statusInfo(project.status).label;
   if (key === "progress") return `${project.progress}%`;
+  if (key === "baseline") return `${formatMetric(project.baseline)}%`;
+  if (key === "gap") return `${formatSignedMetric(project.gap)}pp`;
   if (key === "goLive") return project.goLive || "-";
   return "";
 }
@@ -2038,7 +2081,8 @@ function dashboardFilterValues(projects, key) {
   const values = Array.from(new Set(projects.map((project) => dashboardDisplayValue(project, key))));
   return values.sort((a, b) => {
     if (column?.type === "number") {
-      return Number(String(a).replace("%", "")) - Number(String(b).replace("%", ""));
+      const toNumber = (value) => Number(String(value).replace(/[^0-9.+-]/g, ""));
+      return toNumber(a) - toNumber(b);
     }
     if (column?.type === "date") {
       const aValue = goLiveValue(a);
@@ -2095,11 +2139,15 @@ function allProjects() {
   return state.clients.flatMap((client) =>
     (client.projects || []).map((p) => {
       const metrics = projectMetrics(p.tasks || []);
+      const baseline = baselinePctFromDates(p.start, p.end);
+      const gap = round1(metrics.progress - baseline);
       return {
         ...p,
         clientName: client.name,
         metrics,
         progress: metrics.progress,
+        baseline,
+        gap,
         status: projectStatus(p, metrics),
         goLive: p.end || ""
       };
@@ -2181,6 +2229,8 @@ function renderDashboard(container) {
           <td>${p.developer || "-"}</td>
           <td><span class="pill project-status ${info.className}">${info.label}</span></td>
           <td>${p.progress}%</td>
+          <td>${formatMetric(p.baseline)}%</td>
+          <td>${formatSignedMetric(p.gap)}pp</td>
           <td>${p.goLive || "-"}</td>
         </tr>
       `;
@@ -2194,7 +2244,7 @@ function renderDashboard(container) {
         </tr>
       </thead>
       <tbody>
-        ${rows || "<tr><td colspan='6'>Nenhum projeto cadastrado.</td></tr>"}
+        ${rows || "<tr><td colspan='8'>Nenhum projeto cadastrado.</td></tr>"}
       </tbody>
     </table>
   `;

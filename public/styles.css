@@ -55,8 +55,8 @@ body {
 }
 
 .brand-logo {
-  height: 174px;
-  width: auto;
+  width: min(260px, 100%);
+  height: auto;
   display: block;
 }
 
@@ -777,6 +777,17 @@ body {
   width: var(--baseline);
   background: #d7dde5;
   border-radius: inherit;
+}
+
+.progress-track.is-critical .progress-baseline {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(239, 68, 68, 0.55) 0px,
+    rgba(239, 68, 68, 0.55) 6px,
+    rgba(239, 68, 68, 0.18) 6px,
+    rgba(239, 68, 68, 0.18) 12px
+  );
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.25);
 }
 
 .progress-gap {
@@ -1780,7 +1791,7 @@ body {
 }
 
 .login-logo {
-  width: 180px;
+  width: min(320px, 80vw);
   height: auto;
 }
 

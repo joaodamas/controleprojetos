@@ -725,51 +725,64 @@
     function computeSCurveDaily({ startDate, goLiveDate, tasks, progressPct }){
       const start = parseTaskDate(startDate) || new Date();
       const end = parseTaskDate(goLiveDate) || new Date(start.getTime()+7*86400000);
-      const totalDays = Math.max(1, daysDiff(start, end));
+      const startDay = new Date(start.getTime());
+      const endDay = new Date(end.getTime());
+      startDay.setHours(0,0,0,0);
+      endDay.setHours(0,0,0,0);
+      const totalDays = Math.max(1, daysDiff(startDay, endDay));
+
+      const taskWeight = (t) => {
+        const n = Number(t?.points ?? t?.weight ?? 1);
+        return Number.isFinite(n) && n > 0 ? n : 1;
+      };
 
       // Baseline linear 0->100 por dia
       const baseline = [];
       for(let d=0; d<=totalDays; d++){
-        const day = new Date(start.getTime() + d*86400000);
+        const day = new Date(startDay.getTime() + d*86400000);
         const pct = (d/totalDays)*100;
         baseline.push({ t: day, y: pct });
       }
 
-      // Real: por conclusao (peso igual por task) com backfill leve
+      // Real: acumulado por data de conclusao
       const validTasks = Array.isArray(tasks) ? tasks : [];
-      const total = validTasks.length || 1;
-      const report = new Date();
-      report.setHours(0,0,0,0);
-      const completions = validTasks
-        .map(t => {
-          if (normStatus(t.status) !== "done") return null;
-          const done = parseTaskDate(t.dataConclusao || t.completedAt);
-          return done || null;
-        })
-        .filter(Boolean)
-        .sort((a,b)=>a-b);
-
-      // Cumulativo por dia
-      const real = [];
-      let idx = 0;
-      for(let d=0; d<=totalDays; d++){
-        const day = new Date(start.getTime() + d*86400000);
-        while(idx < completions.length && completions[idx] <= day){
-          idx++;
+      const totalWeight = validTasks.reduce((sum, t) => sum + taskWeight(t), 0) || 1;
+      const doneWeightByDay = new Map();
+      validTasks.forEach(t => {
+        if (normStatus(t.status) !== "done") return;
+        const rawDone = t.dataConclusao || t.completedAt || t.doneAt || t.finishedAt || t.completed || "";
+        let done = parseTaskDate(rawDone);
+        if (!done && normStatus(t.status) === "done") {
+          done = parseTaskDate(t.due || t.end || t.plannedEnd || "");
         }
-        const pct = (idx/total)*100;
+        if (!done) return;
+        const day = new Date(done.getTime());
+        day.setHours(0,0,0,0);
+        const clamped = day > endDay ? endDay : day;
+        const key = clamped.getTime();
+        const weight = taskWeight(t);
+        doneWeightByDay.set(key, (doneWeightByDay.get(key) || 0) + weight);
+      });
+
+      const real = [];
+      let acc = 0;
+      for(let d=0; d<=totalDays; d++){
+        const day = new Date(startDay.getTime() + d*86400000);
+        const key = day.getTime();
+        acc += doneWeightByDay.get(key) || 0;
+        const pct = (acc/totalWeight)*100;
         real.push({ t: day, y: pct });
       }
 
       const today = new Date();
       today.setHours(0,0,0,0);
-      const clamped = today < start ? start : (today > end ? end : today);
-      const idxNow = Math.max(0, Math.min(totalDays, daysDiff(start, clamped)));
+      const clamped = today < startDay ? startDay : (today > endDay ? endDay : today);
+      const idxNow = Math.max(0, Math.min(totalDays, daysDiff(startDay, clamped)));
 
       return {
         baseline: downsample(baseline, 60),
         real: downsample(real, 60),
-        start, end,
+        start: startDay, end: endDay,
         baselineNow: (idxNow != null ? baseline[idxNow].y : 0),
         realizedNow: (idxNow != null ? real[idxNow].y : 0)
       };

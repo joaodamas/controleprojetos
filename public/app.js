@@ -250,6 +250,8 @@ const DASHBOARD_COLUMNS = [
   { key: "status", label: "Status", type: "text" },
   { key: "schedule", label: "Prazo", type: "text" },
   { key: "progress", label: "Progresso", type: "number" },
+  { key: "baseline", label: "Previsto", type: "number" },
+  { key: "gap", label: "GAP (pp)", type: "number" },
   { key: "goLive", label: "Go Live previsto", type: "date" }
 ];
 
@@ -860,14 +862,16 @@ function activityDueDate(activity) {
 }
 
 function activityDoneDate(activity) {
-  return (
+  const explicit =
     activity?.dataConclusao ||
     activity?.completedAt ||
     activity?.doneAt ||
     activity?.finishedAt ||
     activity?.completed ||
-    ""
-  );
+    "";
+  if (explicit) return explicit;
+  if (normalizeTaskStatus(getTaskStatus(activity)) !== "concluido") return "";
+  return activityDueDate(activity) || "";
 }
 
 function getActivityWeight(activity) {
@@ -1000,25 +1004,32 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
   const totalDays = Math.max(1, dates.length - 1);
   const report = startOfDay(parseDateSafe(project?.reportDate) ?? new Date());
 
-  const doneDates = tasks.map((t) => {
-    if (normalizeTaskStatus(getTaskStatus(t)) !== "concluido") return null;
-    const doneAt = parseDateSafe(activityDoneDate(t));
-    return doneAt ? startOfDay(doneAt) : null;
+  const endDate = startOfDay(end);
+  const totalWeight = tasks.reduce((sum, task) => sum + getActivityWeight(task), 0) || 1;
+  const doneWeightByDay = new Map();
+  tasks.forEach((task) => {
+    if (normalizeTaskStatus(getTaskStatus(task)) !== "concluido") return;
+    const doneAt = parseDateSafe(activityDoneDate(task));
+    if (!doneAt) return;
+    const doneDay = startOfDay(doneAt);
+    const clamped = doneDay > endDate ? endDate : doneDay;
+    const key = clamped.getTime();
+    const weight = getActivityWeight(task);
+    doneWeightByDay.set(key, (doneWeightByDay.get(key) || 0) + weight);
   });
-  const totalTasks = tasks.length || 1;
 
   const baseline = dates.map((_, i) => clamp01(i / totalDays));
+  let realizedAcc = 0;
   const realized = dates.map((d) => {
-    const doneCount = doneDates.reduce((sum, doneAt) => {
-      return doneAt && doneAt <= d ? sum + 1 : sum;
-    }, 0);
-    return clamp01(doneCount / totalTasks);
+    const key = startOfDay(d).getTime();
+    realizedAcc += doneWeightByDay.get(key) || 0;
+    return clamp01(realizedAcc / totalWeight);
   });
 
   const startDate = dates[0];
-  const endDate = dates[dates.length - 1];
+  const endChartDate = dates[dates.length - 1];
   const clampedReport =
-    report < startDate ? startDate : report > endDate ? endDate : report;
+    report < startDate ? startDate : report > endChartDate ? endChartDate : report;
   const idxNow = Math.max(0, Math.min(dates.length - 1, daysDiff(clampedReport, startDate)));
 
   const baselineNow = baseline[idxNow];
@@ -2741,7 +2752,7 @@ function renderClientList() {
     editBtn.textContent = "Editar";
     editBtn.addEventListener("click", (event) => {
       event.stopPropagation();
-      handleRenameClient(client);
+      openClientModal(client);
     });
     const caret = document.createElement("span");
     caret.className = "caret";
@@ -3139,12 +3150,19 @@ function renderMain() {
   const progressPct = clampPct(metrics.progress ?? selectedProject.progress ?? 0);
   const sCurveSeries = computeSCurveDailyBaseline(selectedProject, selectedProject?.tasks || null, progressPct);
   const baselinePct = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(selectedProject, progressPct);
-  const realizedPct = sCurveSeries ? round1(sCurveSeries.realizedNow * 100) : progressPct;
-  const gap = round1(realizedPct - baselinePct);
+  const realizedPct = progressPct;
+  const gap = round1(progressPct - baselinePct);
   const gapStart = round1(Math.min(realizedPct, baselinePct));
   const gapWidth = round1(Math.abs(realizedPct - baselinePct));
-  const progressTrendClass = gap > 0 ? "is-ahead" : gap < 0 ? "is-behind" : "";
   const gapStatus = gapStatusInfo(gap);
+  const progressTrendClass = gap > 0 ? "is-ahead" : gap < 0 ? "is-behind" : "";
+  const progressTrackClass = [
+    "progress-track",
+    progressTrendClass,
+    gapStatus.className === "bad" ? "is-critical" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
   const baselineLabel = formatMetric(baselinePct);
   const gapLabel = formatSignedMetric(gap);
 
@@ -3214,7 +3232,7 @@ function renderMain() {
       </div>
       <div class="delta-badge ${gapStatus.className}">${gapLabel}pp</div>
     </div>
-    <div class="progress-track ${progressTrendClass}" style="--realized: ${realizedPct}%; --baseline: ${baselinePct}%; --gapStart: ${gapStart}%; --gapW: ${gapWidth}%;">
+    <div class="${progressTrackClass}" style="--realized: ${realizedPct}%; --baseline: ${baselinePct}%; --gapStart: ${gapStart}%; --gapW: ${gapWidth}%;">
       <div class="progress-baseline"></div>
       <div class="progress-gap" aria-hidden="true"></div>
       <div class="progress-realized ${gapStatus.className}"></div>
@@ -3431,8 +3449,10 @@ function wireNav() {
 function wireModals() {
   const projectModal = byId("project-modal");
   const employeeModal = byId("employee-modal");
+  const clientModal = byId("client-modal");
   const activityModal = byId("activity-modal");
   const deleteProjectBtn = byId("delete-project-btn");
+  const deleteClientBtn = byId("delete-client-btn");
 
   const openProjectBtn = byId("open-project-modal");
   const editProjectBtn = byId("edit-project-btn");
@@ -3472,14 +3492,19 @@ function wireModals() {
     el.addEventListener("click", () => {
       if (projectModal) hideModal(projectModal);
       if (employeeModal) hideModal(employeeModal);
+      if (clientModal) hideModal(clientModal);
       if (activityModal) hideModal(activityModal);
       resetProjectModal();
+      resetClientModal();
       resetActivityModal();
     });
   });
 
   if (deleteProjectBtn) {
     deleteProjectBtn.addEventListener("click", () => handleDeleteProject());
+  }
+  if (deleteClientBtn) {
+    deleteClientBtn.addEventListener("click", () => handleDeleteClient());
   }
 
   const projectForm = byId("project-form");
@@ -3577,6 +3602,14 @@ function wireModals() {
       employeeForm.reset();
       if (employeeModal) hideModal(employeeModal);
       alert("Funcionario cadastrado!");
+    });
+  }
+
+  const clientForm = byId("client-form");
+  if (clientForm) {
+    clientForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      handleSaveClient();
     });
   }
 
@@ -3958,11 +3991,27 @@ function promptRenameClientName(currentName) {
   return name.trim();
 }
 
-async function handleRenameClient(client) {
+function getClientFromModal() {
+  const form = byId("client-form");
+  if (!form) return null;
+  const clientId = form.dataset.clientId;
+  const clientName = form.dataset.clientName;
+  if (clientId) {
+    const found = state.clients.find((c) => c.id === clientId);
+    if (found) return found;
+  }
+  if (clientName) {
+    const found = state.clients.find((c) => c.name === clientName);
+    if (found) return found;
+  }
+  return state.selectedClient || null;
+}
+
+async function renameClient(client, nextName) {
   if (!client) return;
-  const nextName = promptRenameClientName(client.name);
-  if (!nextName || nextName === client.name) return;
-  const existing = findClientByName(nextName);
+  const trimmed = String(nextName || "").trim();
+  if (!trimmed || trimmed === client.name) return;
+  const existing = findClientByName(trimmed);
   if (existing && existing !== client) {
     alert("Ja existe um cliente com esse nome.");
     return;
@@ -3971,11 +4020,11 @@ async function handleRenameClient(client) {
   const previousName = client.name;
   if (db && client.id) {
     try {
-      await db.ref(`clients/${client.id}`).update({ name: nextName });
+      await db.ref(`clients/${client.id}`).update({ name: trimmed });
       await loadStateFromDb({
         clientId: client.id,
         projectId: state.selectedProject?.id,
-        clientName: nextName,
+        clientName: trimmed,
         projectName: state.selectedProject?.name
       });
       return;
@@ -3986,15 +4035,119 @@ async function handleRenameClient(client) {
     }
   }
 
-  client.name = nextName;
+  client.name = trimmed;
   if (Object.prototype.hasOwnProperty.call(state.clientVisibility, previousName)) {
-    state.clientVisibility[nextName] = state.clientVisibility[previousName];
+    state.clientVisibility[trimmed] = state.clientVisibility[previousName];
     delete state.clientVisibility[previousName];
   }
   saveLocalState();
   renderClientList();
   renderMain();
   hydrateClientSelect(client.name);
+}
+
+async function handleRenameClient(client) {
+  if (!client) return;
+  const nextName = promptRenameClientName(client.name);
+  if (!nextName || nextName === client.name) return;
+  await renameClient(client, nextName);
+}
+
+function openClientModal(client) {
+  const modal = byId("client-modal");
+  const form = byId("client-form");
+  if (!modal || !form) return;
+  const nameInput = form.querySelector('input[name="name"]');
+  const title = modal.querySelector("h2");
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const deleteBtn = byId("delete-client-btn");
+  if (title) title.textContent = "Editar Cliente";
+  if (submitBtn) submitBtn.textContent = "Salvar Cliente";
+  if (nameInput) nameInput.value = client?.name || "";
+  form.dataset.clientId = client?.id || "";
+  form.dataset.clientName = client?.name || "";
+  if (deleteBtn) deleteBtn.classList.toggle("hidden", !client);
+  showModal(modal);
+  if (nameInput) nameInput.focus();
+}
+
+function resetClientModal() {
+  const modal = byId("client-modal");
+  const form = byId("client-form");
+  const deleteBtn = byId("delete-client-btn");
+  if (form) {
+    form.reset();
+    delete form.dataset.clientId;
+    delete form.dataset.clientName;
+  }
+  if (deleteBtn) deleteBtn.classList.add("hidden");
+  if (modal) {
+    const title = modal.querySelector("h2");
+    const submitBtn = modal.querySelector('button[type="submit"]');
+    if (title) title.textContent = "Editar Cliente";
+    if (submitBtn) submitBtn.textContent = "Salvar Cliente";
+  }
+}
+
+async function handleSaveClient() {
+  const form = byId("client-form");
+  if (!form) return;
+  const data = new FormData(form);
+  const nextName = data.get("name");
+  if (!nextName || !String(nextName).trim()) {
+    alert("Informe o nome do cliente.");
+    return;
+  }
+  const client = getClientFromModal();
+  if (!client) {
+    alert("Cliente nao encontrado.");
+    return;
+  }
+  await renameClient(client, nextName);
+  const modal = byId("client-modal");
+  resetClientModal();
+  if (modal) hideModal(modal);
+}
+
+async function handleDeleteClient() {
+  const client = getClientFromModal();
+  if (!client) {
+    alert("Nenhum cliente selecionado.");
+    return;
+  }
+  const confirmed = window.confirm(`Excluir o cliente "${client.name}"? Esta acao nao pode ser desfeita.`);
+  if (!confirmed) return;
+
+  const modal = byId("client-modal");
+  if (db && client.id) {
+    try {
+      await deleteClientFromDb(client.id);
+      await loadStateFromDb({});
+      resetClientModal();
+      if (modal) hideModal(modal);
+      return;
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao excluir cliente no Firebase.");
+      return;
+    }
+  }
+
+  const idx = state.clients.findIndex((c) => c === client || (c.id && c.id === client.id) || c.name === client.name);
+  if (idx >= 0) {
+    state.clients.splice(idx, 1);
+  }
+  if (Object.prototype.hasOwnProperty.call(state.clientVisibility, client.name)) {
+    delete state.clientVisibility[client.name];
+  }
+  state.selectedClient = state.clients[0] || null;
+  state.selectedProject = state.selectedClient?.projects?.[0] || null;
+  saveLocalState();
+  renderClientList();
+  renderMain();
+  hydrateClientSelect(state.selectedClient?.name || "");
+  resetClientModal();
+  if (modal) hideModal(modal);
 }
 
 function resetClientSelect(select) {
@@ -4721,6 +4874,10 @@ async function deleteProjectFromDb(clientId, projectId) {
   await db.ref(`clients/${clientId}/projects/${projectId}`).remove();
 }
 
+async function deleteClientFromDb(clientId) {
+  await db.ref(`clients/${clientId}`).remove();
+}
+
 async function saveProjectToDb(payload) {
   const client = await ensureClientDoc(payload.client);
   const projectRef = client.ref.child("projects").push();
@@ -4747,6 +4904,9 @@ async function updateProjectOnDb(clientId, projectId, payload) {
 
 async function saveTaskToDb(clientId, projectId, task) {
   const taskRef = db.ref(`clients/${clientId}/projects/${projectId}/tasks`).push();
+  const normalizedStatus = normalizeTaskStatus(task.status);
+  const dataConclusao =
+    task.dataConclusao || (normalizedStatus === "concluido" ? new Date().toISOString().slice(0, 10) : "");
   await taskRef.set({
     title: task.title,
     phase: task.phase,
@@ -4755,13 +4915,17 @@ async function saveTaskToDb(clientId, projectId, task) {
     due: task.due,
     status: task.status,
     progress: task.progress,
-    ...(task.dataConclusao ? { dataConclusao: task.dataConclusao } : {}),
+    ...(dataConclusao ? { dataConclusao } : {}),
     createdAt: firebase.database.ServerValue.TIMESTAMP
   });
 }
 
 async function updateTaskStatusOnDb(clientId, projectId, taskId, payload) {
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(payload);
+  const updatePayload = { ...payload };
+  if (normalizeTaskStatus(updatePayload.status) === "concluido" && !updatePayload.dataConclusao) {
+    updatePayload.dataConclusao = new Date().toISOString().slice(0, 10);
+  }
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(updatePayload);
 }
 
 async function updateTaskProgressOnDb(clientId, projectId, taskId, progress) {
@@ -4951,6 +5115,8 @@ function dashboardDisplayValue(project, key) {
   if (key === "status") return statusInfo(project.status).label;
   if (key === "schedule") return scheduleStatusInfo(project.schedule).label;
   if (key === "progress") return `${project.progress}%`;
+  if (key === "baseline") return `${formatMetric(project.baseline)}%`;
+  if (key === "gap") return `${formatSignedMetric(project.gap)}pp`;
   if (key === "goLive") return project.goLive || "-";
   return "";
 }
@@ -4960,7 +5126,8 @@ function dashboardFilterValues(projects, key) {
   const values = Array.from(new Set(projects.map((project) => dashboardDisplayValue(project, key))));
   return values.sort((a, b) => {
     if (column?.type === "number") {
-      return Number(String(a).replace("%", "")) - Number(String(b).replace("%", ""));
+      const toNumber = (value) => Number(String(value).replace(/[^0-9.+-]/g, ""));
+      return toNumber(a) - toNumber(b);
     }
     if (column?.type === "date") {
       const aValue = goLiveValue(a);
@@ -5017,11 +5184,17 @@ function allProjects() {
   return state.clients.flatMap((client) =>
     (client.projects || []).map((p) => {
       const metrics = projectMetrics(p.tasks || []);
+      const progressPct = clampPct(metrics.progress ?? p.progress ?? 0);
+      const sCurveSeries = computeSCurveDailyBaseline(p, p?.tasks || null, progressPct);
+      const baseline = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(p, progressPct);
+      const gap = round1(progressPct - baseline);
       return {
         ...p,
         clientName: client.name,
         metrics,
-        progress: metrics.progress,
+        progress: progressPct,
+        baseline,
+        gap,
         status: projectStatus(p, metrics),
         schedule: projectScheduleStatus(p),
         goLive: p.end || ""
@@ -5098,6 +5271,7 @@ function renderDashboard(container) {
     .map((p) => {
       const info = statusInfo(p.status);
       const scheduleInfo = scheduleStatusInfo(p.schedule);
+      const gapInfo = gapStatusInfo(p.gap);
       return `
         <tr data-client="${p.clientName}" data-project="${p.name}">
           <td>${p.name}</td>
@@ -5106,6 +5280,8 @@ function renderDashboard(container) {
           <td><span class="pill project-status ${info.className}">${info.label}</span></td>
           <td><span class="pill schedule-status ${scheduleInfo.className}">${scheduleInfo.label}</span></td>
           <td>${p.progress}%</td>
+          <td>${formatMetric(p.baseline)}%</td>
+          <td><span class="delta-badge ${gapInfo.className}">${formatSignedMetric(p.gap)}pp</span></td>
           <td>${formatDateBR(p.goLive) || "-"}</td>
         </tr>
       `;
@@ -5119,7 +5295,7 @@ function renderDashboard(container) {
         </tr>
       </thead>
       <tbody>
-        ${rows || "<tr><td colspan='7'>Nenhum projeto cadastrado.</td></tr>"}
+        ${rows || "<tr><td colspan='9'>Nenhum projeto cadastrado.</td></tr>"}
       </tbody>
     </table>
   `;

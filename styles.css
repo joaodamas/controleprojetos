@@ -53,8 +53,8 @@ body {
 }
 
 .brand-logo {
-  height: 174px;
-  width: auto;
+  width: min(260px, 100%);
+  height: auto;
   display: block;
 }
 
@@ -1088,7 +1088,7 @@ body {
 }
 
 .login-logo {
-  width: 180px;
+  width: min(320px, 80vw);
   height: auto;
 }
 
