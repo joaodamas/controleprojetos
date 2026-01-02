@@ -697,6 +697,56 @@ body {
   color: #c01b24;
 }
 
+.metric-card.gap.gap-ok {
+  background: rgba(39, 174, 96, 0.12);
+  border-color: rgba(39, 174, 96, 0.28);
+}
+
+.metric-card.gap.gap-ok .value,
+.metric-card.gap.gap-ok .sub {
+  color: #1f8f52;
+}
+
+.metric-card.gap.gap-low {
+  background: rgba(192, 216, 48, 0.14);
+  border-color: rgba(192, 216, 48, 0.32);
+}
+
+.metric-card.gap.gap-low .value,
+.metric-card.gap.gap-low .sub {
+  color: #6b7a10;
+}
+
+.metric-card.gap.gap-risk {
+  background: rgba(241, 196, 15, 0.14);
+  border-color: rgba(241, 196, 15, 0.32);
+}
+
+.metric-card.gap.gap-risk .value,
+.metric-card.gap.gap-risk .sub {
+  color: #9a7c08;
+}
+
+.metric-card.gap.gap-delayed {
+  background: rgba(230, 126, 34, 0.14);
+  border-color: rgba(230, 126, 34, 0.32);
+}
+
+.metric-card.gap.gap-delayed .value,
+.metric-card.gap.gap-delayed .sub {
+  color: #9a4c10;
+}
+
+.metric-card.gap.gap-critical {
+  background: rgba(176, 0, 32, 0.14);
+  border-color: rgba(176, 0, 32, 0.32);
+}
+
+.metric-card.gap.gap-critical .value,
+.metric-card.gap.gap-critical .sub {
+  color: #7a0017;
+}
+
 .progress-compare {
   display: grid;
   gap: 8px;
@@ -761,6 +811,31 @@ body {
 .delta-badge.bad {
   background: rgba(239, 68, 68, 0.14);
   color: #991b1b;
+}
+
+.delta-badge.gap-ok {
+  background: rgba(39, 174, 96, 0.14);
+  color: #1f8f52;
+}
+
+.delta-badge.gap-low {
+  background: rgba(192, 216, 48, 0.18);
+  color: #6b7a10;
+}
+
+.delta-badge.gap-risk {
+  background: rgba(241, 196, 15, 0.2);
+  color: #9a7c08;
+}
+
+.delta-badge.gap-delayed {
+  background: rgba(230, 126, 34, 0.18);
+  color: #9a4c10;
+}
+
+.delta-badge.gap-critical {
+  background: rgba(176, 0, 32, 0.16);
+  color: #7a0017;
 }
 
 .progress-track {
@@ -850,6 +925,26 @@ body {
   background: #ef4444;
 }
 
+.progress-realized.gap-ok {
+  background: #27ae60;
+}
+
+.progress-realized.gap-low {
+  background: #C0D830;
+}
+
+.progress-realized.gap-risk {
+  background: #F1C40F;
+}
+
+.progress-realized.gap-delayed {
+  background: #E67E22;
+}
+
+.progress-realized.gap-critical {
+  background: #B00020;
+}
+
 .progress-marker {
   position: absolute;
   top: -8px;
@@ -895,6 +990,26 @@ body {
 
 .progress-knob.bad {
   background: #ef4444;
+}
+
+.progress-knob.gap-ok {
+  background: #27ae60;
+}
+
+.progress-knob.gap-low {
+  background: #C0D830;
+}
+
+.progress-knob.gap-risk {
+  background: #F1C40F;
+}
+
+.progress-knob.gap-delayed {
+  background: #E67E22;
+}
+
+.progress-knob.gap-critical {
+  background: #B00020;
 }
 
 .project-metrics-grid .metric-card:nth-child(1) {
@@ -1197,6 +1312,33 @@ body {
   font-size: 18px;
 }
 
+.meta-item .value.is-editable {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meta-item .value.is-editable:hover {
+  text-decoration: underline;
+}
+
+.meta-item .value.is-editable:focus-visible {
+  outline: 2px solid rgba(14, 116, 144, 0.4);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.date-inline-input {
+  font: inherit;
+  color: var(--text);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px 6px;
+  min-width: 140px;
+}
+
 .card--meta {
   min-height: 64px;
   display: flex;
@@ -1245,6 +1387,32 @@ body {
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
+}
+
+.task-date {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.task-date-editable {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+.task-date-editable:hover {
+  text-decoration: underline;
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.task-date-editable:focus-visible {
+  outline: 2px solid rgba(14, 116, 144, 0.4);
+  outline-offset: 2px;
+}
+
+.task-date-editable .date-inline-input {
+  min-width: 0;
+  width: 100%;
 }
 
 .task-row.header {

@@ -318,6 +318,15 @@ function formatDateBR(value) {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+function formatDateISO(value) {
+  const dt = value instanceof Date ? value : parseTaskDate(value);
+  if (!dt) return "";
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const yyyy = dt.getFullYear();
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function projectTaskCounts(tasks = []) {
   const counts = {
     total: tasks.length,
@@ -433,6 +442,13 @@ function taskProgressValue(task) {
 
 function taskStartStr(task) {
   return task?.startDate || task?.start || task?.plannedStart || "";
+}
+
+function taskStartKey(task) {
+  if (task?.startDate != null) return "startDate";
+  if (task?.start != null) return "start";
+  if (task?.plannedStart != null) return "plannedStart";
+  return "start";
 }
 
 function taskDateStr(task) {
@@ -597,6 +613,16 @@ function taskDueStr(task) {
     task?.deadline ||
     ""
   );
+}
+
+function taskDueKey(task) {
+  if (task?.dueDate != null) return "dueDate";
+  if (task?.due != null) return "due";
+  if (task?.plannedEnd != null) return "plannedEnd";
+  if (task?.endDate != null) return "endDate";
+  if (task?.end != null) return "end";
+  if (task?.deadline != null) return "deadline";
+  return "due";
 }
 
 function taskDueValueSafe(task) {
@@ -837,9 +863,19 @@ function baselinePctFromDates(startValue, endValue, now = new Date()) {
 }
 
 function gapStatusInfo(gap) {
-  if (gap < -15) return { className: "bad", label: "Atraso critico" };
-  if (gap < 0) return { className: "warn", label: "Em risco" };
-  return { className: "ok", label: "Em dia" };
+  if (gap <= 0) {
+    return { className: "gap-ok", label: "Em dia", color: "#27ae60" };
+  }
+  if (gap <= 10) {
+    return { className: "gap-low", label: "Baixo risco", color: "#C0D830" };
+  }
+  if (gap <= 20) {
+    return { className: "gap-risk", label: "Risco", color: "#F1C40F" };
+  }
+  if (gap <= 30) {
+    return { className: "gap-delayed", label: "Em atraso", color: "#E67E22" };
+  }
+  return { className: "gap-critical", label: "Atraso critico", color: "#B00020" };
 }
 
 function projectBaselinePct(project, progressPct) {
@@ -1000,25 +1036,64 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
   const end = parseDateSafe(project?.goLiveDate || project?.goLive || project?.end);
   if (!start || !end) return null;
 
-  const dates = buildDailyDates(start, end);
-  const totalDays = Math.max(1, dates.length - 1);
-  const report = startOfDay(parseDateSafe(project?.reportDate) ?? new Date());
-
+  const startDate = startOfDay(start);
   const endDate = startOfDay(end);
+  const report = startOfDay(parseDateSafe(project?.reportDate) ?? new Date());
+  const clampedReport = report < startDate ? startDate : report > endDate ? endDate : report;
+  const dates = buildDailyDates(startDate, endDate);
+  const totalDays = Math.max(1, dates.length - 1);
+
+  const resolveDoneDate = (task) => {
+    if (normalizeTaskStatus(getTaskStatus(task)) !== "concluido") return null;
+    const explicit = parseDateSafe(
+      task?.dataConclusao ||
+        task?.completedAt ||
+        task?.doneAt ||
+        task?.finishedAt ||
+        task?.completed ||
+        ""
+    );
+    if (explicit) return explicit;
+    const due = parseDateSafe(activityDueDate(task));
+    if (due) {
+      const dueDay = startOfDay(due);
+      if (dueDay <= clampedReport) return dueDay;
+    }
+    const created = parseDateSafe(
+      task?.createdAt ||
+        task?.created_at ||
+        task?.created ||
+        task?.createdOn ||
+        task?.createdDate ||
+        ""
+    );
+    if (created) return created;
+    const updated = parseDateSafe(
+      task?.updatedAt ||
+        task?.updated_at ||
+        task?.updated ||
+        task?.updatedOn ||
+        task?.updatedDate ||
+        ""
+    );
+    if (updated) return updated;
+    return clampedReport;
+  };
+
   const totalWeight = tasks.reduce((sum, task) => sum + getActivityWeight(task), 0) || 1;
   const doneWeightByDay = new Map();
   tasks.forEach((task) => {
-    if (normalizeTaskStatus(getTaskStatus(task)) !== "concluido") return;
-    const doneAt = parseDateSafe(activityDoneDate(task));
+    const doneAt = resolveDoneDate(task);
     if (!doneAt) return;
     const doneDay = startOfDay(doneAt);
-    const clamped = doneDay > endDate ? endDate : doneDay;
+    if (doneDay > clampedReport) return;
+    const clamped = doneDay < startDate ? startDate : doneDay;
     const key = clamped.getTime();
     const weight = getActivityWeight(task);
     doneWeightByDay.set(key, (doneWeightByDay.get(key) || 0) + weight);
   });
 
-  const baseline = dates.map((_, i) => clamp01(i / totalDays));
+  const baseline = dates.map((d) => clamp01(daysDiff(d, startDate) / totalDays));
   let realizedAcc = 0;
   const realized = dates.map((d) => {
     const key = startOfDay(d).getTime();
@@ -1026,10 +1101,6 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
     return clamp01(realizedAcc / totalWeight);
   });
 
-  const startDate = dates[0];
-  const endChartDate = dates[dates.length - 1];
-  const clampedReport =
-    report < startDate ? startDate : report > endChartDate ? endChartDate : report;
   const idxNow = Math.max(0, Math.min(dates.length - 1, daysDiff(clampedReport, startDate)));
 
   const baselineNow = baseline[idxNow];
@@ -1038,6 +1109,9 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
   }
   const realizedNow = realized[idxNow];
   const ds = downsampleSeries(dates, baseline, realized, 60);
+  const reportIndex = ds.dates.reduce((idx, d, i) => {
+    return d.getTime() <= clampedReport.getTime() ? i : idx;
+  }, 0);
 
   return {
     start: startDate,
@@ -1047,7 +1121,8 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
     baseline: ds.a,
     realized: ds.b,
     baselineNow,
-    realizedNow
+    realizedNow,
+    reportIndex
   };
 }
 
@@ -1055,6 +1130,8 @@ function renderSCurveSvgDaily(sc, opts = {}) {
   if (!sc || !Array.isArray(sc.dates) || sc.dates.length < 2) return "";
   const W = opts.width ?? 1760;
   const H = opts.height ?? 240;
+  const footerPad = 18;
+  const svgH = H + footerPad;
   const c = opts.colors ?? getSystemColors();
 
   const pad = { l: 100, r: 18, t: 18, b: 46 };
@@ -1074,17 +1151,34 @@ function renderSCurveSvgDaily(sc, opts = {}) {
   const xAtDate = (d) => pad.l + innerW * clamp01((d.getTime() - t0) / Math.max(1, t1 - t0));
   const yAt = (p) => pad.t + innerH * (1 - clamp01(p));
 
-  const pathFrom = (arr) =>
+  const pathFrom = (arr, dateList = sc.dates) =>
     (arr || [])
       .map((p, i) => {
-        const xx = xAtDate(sc.dates[i]);
+        const xx = xAtDate(dateList[i]);
         const yy = yAt(p);
         return `${i === 0 ? "M" : "L"} ${xx.toFixed(2)} ${yy.toFixed(2)}`;
       })
       .join(" ");
+  const pathFromStep = (arr, dateList = sc.dates) => {
+    if (!arr || !arr.length) return "";
+    let d = `M ${xAtDate(dateList[0]).toFixed(2)} ${yAt(arr[0]).toFixed(2)}`;
+    for (let i = 1; i < arr.length; i += 1) {
+      const xx = xAtDate(dateList[i]).toFixed(2);
+      const yPrev = yAt(arr[i - 1]).toFixed(2);
+      const yy = yAt(arr[i]).toFixed(2);
+      d += ` L ${xx} ${yPrev} L ${xx} ${yy}`;
+    }
+    return d;
+  };
 
   const basePath = pathFrom(sc.baseline);
-  const realPath = pathFrom(sc.realized);
+  const realEndIndex = Math.min(
+    sc.realized.length - 1,
+    Number.isFinite(sc.reportIndex) ? sc.reportIndex : sc.realized.length - 1
+  );
+  const realDates = sc.dates.slice(0, realEndIndex + 1);
+  const realValues = sc.realized.slice(0, realEndIndex + 1);
+  const realPath = pathFromStep(realValues, realDates);
 
   const points = sc.dates.map((d, i) => ({
     x: xAtDate(d),
@@ -1164,10 +1258,10 @@ function renderSCurveSvgDaily(sc, opts = {}) {
 
   const basePct = Math.round(sc.baselineNow * 100);
   const realPct = Math.round(sc.realizedNow * 100);
-  const gapPP = round1((sc.realizedNow - sc.baselineNow) * 100);
+  const gapPP = round1((sc.baselineNow - sc.realizedNow) * 100);
   const gapLabel = `${gapPP > 0 ? "+" : ""}${gapPP}pp`;
-  const gapTone = gapPP < -15 ? "bad" : gapPP < 0 ? "warn" : "ok";
-  const gapColor = gapTone === "bad" ? c.danger : gapTone === "warn" ? c.warn : c.ok;
+  const gapStatus = gapStatusInfo(gapPP);
+  const gapColor = gapStatus.color;
   const labelText = `GAP ${gapLabel}`;
   const labelWidth = Math.max(52, labelText.length * 6.4);
   const labelHeight = 18;
@@ -1176,7 +1270,7 @@ function renderSCurveSvgDaily(sc, opts = {}) {
   const labelX = xToday;
 
   return `
-    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    <svg width="${W}" height="${svgH}" viewBox="0 0 ${W} ${svgH}" xmlns="http://www.w3.org/2000/svg">
       <rect x="0" y="0" width="${W}" height="${H}" rx="14" fill="${c.bg}" stroke="${c.grid}"/>
       ${[0, 0.5, 1]
         .map((p) => {
@@ -1202,6 +1296,8 @@ function renderSCurveSvgDaily(sc, opts = {}) {
 
       <text x="${pad.l}" y="${H - 26}" font-size="10" fill="${c.muted}" font-family="Arial">${fmtBR(sc.start)}</text>
       <text x="${W - pad.r}" y="${H - 26}" text-anchor="end" font-size="10" fill="${c.muted}" font-family="Arial">${fmtBR(sc.end)}</text>
+      <text x="${pad.l}" y="${svgH - 4}" font-size="10" fill="${c.muted}" font-family="Arial">Início: ${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${svgH - 4}" text-anchor="end" font-size="10" fill="${c.muted}" font-family="Arial">Go-Live: ${fmtBR(sc.end)}</text>
 
     </svg>
   `;
@@ -1211,6 +1307,8 @@ function renderSCurveSvg(sc, opts = {}) {
   if (!sc || !sc.start || !sc.end || !Array.isArray(sc.buckets) || sc.buckets.length < 2) return "";
   const W = opts.width ?? 1760;
   const H = opts.height ?? 240;
+  const footerPad = 18;
+  const svgH = H + footerPad;
   const c = opts.colors ?? getSystemColors();
 
   const pad = { l: 110, r: 24, t: 22, b: 44 };
@@ -1236,19 +1334,39 @@ function renderSCurveSvg(sc, opts = {}) {
   const yAt = (p) => pad.t + innerH * (1 - clamp01(p));
   const x = (i) => xAtDate(sc.buckets[i]);
 
-  const pathFrom = (arr) =>
-    (arr || []).map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(2)} ${yAt(p).toFixed(2)}`).join(" ");
+  const pathFrom = (arr, buckets = sc.buckets) =>
+    (arr || [])
+      .map((p, i) => {
+        const xx = xAtDate(buckets[i]);
+        return `${i === 0 ? "M" : "L"} ${xx.toFixed(2)} ${yAt(p).toFixed(2)}`;
+      })
+      .join(" ");
+  const pathFromStep = (arr, buckets = sc.buckets) => {
+    if (!arr || !arr.length) return "";
+    let d = `M ${xAtDate(buckets[0]).toFixed(2)} ${yAt(arr[0]).toFixed(2)}`;
+    for (let i = 1; i < arr.length; i += 1) {
+      const xx = xAtDate(buckets[i]).toFixed(2);
+      const yPrev = yAt(arr[i - 1]).toFixed(2);
+      const yy = yAt(arr[i]).toFixed(2);
+      d += ` L ${xx} ${yPrev} L ${xx} ${yy}`;
+    }
+    return d;
+  };
 
   const plannedPath = pathFrom(sc.planned);
-  const actualPath = pathFrom(sc.actual);
-
   const reportDate = sc.report || sc.end;
+  const reportIndex = sc.buckets.reduce((idx, d, i) => {
+    return d.getTime() <= reportDate.getTime() ? i : idx;
+  }, 0);
+  const actualBuckets = sc.buckets.slice(0, reportIndex + 1);
+  const actualPath = pathFromStep(sc.actual.slice(0, reportIndex + 1), actualBuckets);
+
   const xToday = xAtDate(reportDate);
   const plannedNow = clamp01(sc.plannedNow ?? 0);
   const actualNow = clamp01(sc.actualNow ?? 0);
   const yPlanNow = yAt(plannedNow);
   const yRealNow = yAt(actualNow);
-  const gapPP = Math.round((actualNow - plannedNow) * 100);
+  const gapPP = Math.round((plannedNow - actualNow) * 100);
   const endLabel = Math.round(1 * 100) + "%";
   const planPct = Math.round(plannedNow * 100);
   const realPct = Math.round(actualNow * 100);
@@ -1271,7 +1389,7 @@ function renderSCurveSvg(sc, opts = {}) {
     .join("");
 
   return `
-    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    <svg width="${W}" height="${svgH}" viewBox="0 0 ${W} ${svgH}" xmlns="http://www.w3.org/2000/svg">
       <rect x="0" y="0" width="${W}" height="${H}" fill="${c.bg}" stroke="${c.grid}" />
       ${gridH}
 
@@ -1295,6 +1413,8 @@ function renderSCurveSvg(sc, opts = {}) {
       </text>
       <text x="${pad.l}" y="${H - 18}" font-size="11" fill="${c.muted}" font-family="Arial">${fmtBR(sc.start)}</text>
       <text x="${W - pad.r}" y="${H - 18}" text-anchor="end" font-size="11" fill="${c.muted}" font-family="Arial">${fmtBR(sc.end)}</text>
+      <text x="${pad.l}" y="${svgH - 4}" font-size="10" fill="${c.muted}" font-family="Arial">Início: ${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${svgH - 4}" text-anchor="end" font-size="10" fill="${c.muted}" font-family="Arial">Go-Live: ${fmtBR(sc.end)}</text>
 
       <text x="${W / 2}" y="${H - 6}" text-anchor="middle" font-size="11" fill="${c.muted}" font-family="Arial">
         ${gapLabel}
@@ -1584,15 +1704,21 @@ function buildProjectReportStyles() {
     .report-page .healthTag.warn { background: rgba(245, 158, 11, 0.12); color: #92400e; }
     .report-page .healthTag.bad { background: rgba(239, 68, 68, 0.12); color: #991b1b; }
 
-    .report-page .gap-card.ok { background: rgba(22, 163, 74, 0.08); border-color: rgba(22, 163, 74, 0.22); }
-    .report-page .gap-card.warn { background: rgba(245, 158, 11, 0.10); border-color: rgba(245, 158, 11, 0.22); }
-    .report-page .gap-card.bad { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3); }
-    .report-page .gap-card.ok .kpiValue,
-    .report-page .gap-card.ok .kpiSub { color: #166534; }
-    .report-page .gap-card.warn .kpiValue,
-    .report-page .gap-card.warn .kpiSub { color: #92400e; }
-    .report-page .gap-card.bad .kpiValue,
-    .report-page .gap-card.bad .kpiSub { color: #991b1b; }
+    .report-page .gap-card.gap-ok { background: rgba(39, 174, 96, 0.10); border-color: rgba(39, 174, 96, 0.24); }
+    .report-page .gap-card.gap-low { background: rgba(192, 216, 48, 0.12); border-color: rgba(192, 216, 48, 0.3); }
+    .report-page .gap-card.gap-risk { background: rgba(241, 196, 15, 0.12); border-color: rgba(241, 196, 15, 0.3); }
+    .report-page .gap-card.gap-delayed { background: rgba(230, 126, 34, 0.12); border-color: rgba(230, 126, 34, 0.3); }
+    .report-page .gap-card.gap-critical { background: rgba(176, 0, 32, 0.12); border-color: rgba(176, 0, 32, 0.3); }
+    .report-page .gap-card.gap-ok .kpiValue,
+    .report-page .gap-card.gap-ok .kpiSub { color: #1f8f52; }
+    .report-page .gap-card.gap-low .kpiValue,
+    .report-page .gap-card.gap-low .kpiSub { color: #6b7a10; }
+    .report-page .gap-card.gap-risk .kpiValue,
+    .report-page .gap-card.gap-risk .kpiSub { color: #9a7c08; }
+    .report-page .gap-card.gap-delayed .kpiValue,
+    .report-page .gap-card.gap-delayed .kpiSub { color: #9a4c10; }
+    .report-page .gap-card.gap-critical .kpiValue,
+    .report-page .gap-card.gap-critical .kpiSub { color: #7a0017; }
 
     .report-page .mid {
       display: grid;
@@ -1623,8 +1749,11 @@ function buildProjectReportStyles() {
     }
 
     .report-page .miniStat b { color: var(--text); }
-    .report-page .miniStat.gap.ok b { color: var(--ok); }
-    .report-page .miniStat.gap.bad b { color: var(--bad); }
+    .report-page .miniStat.gap.gap-ok b { color: #27ae60; }
+    .report-page .miniStat.gap.gap-low b { color: #6b7a10; }
+    .report-page .miniStat.gap.gap-risk b { color: #9a7c08; }
+    .report-page .miniStat.gap.gap-delayed b { color: #9a4c10; }
+    .report-page .miniStat.gap.gap-critical b { color: #7a0017; }
 
     .report-page .legendDot {
       width: 10px;
@@ -1772,10 +1901,13 @@ function buildOnePageContent({ project, client, metrics, exportMode = false }) {
   const realizedPct = sCurveSeries ? Math.round(sCurveSeries.realizedNow * 100) : 0;
   const baselineLabel = sCurveSeries ? `${baselinePct}%` : "--";
   const realizedLabel = sCurveSeries ? `${realizedPct}%` : "--";
-  const gapPP = sCurveSeries ? realizedPct - baselinePct : 0;
-  const gapLabel = sCurveSeries ? `${gapPP > 0 ? "+" : ""}${gapPP}pp` : "--";
-  const gapTone = !sCurveSeries ? "ok" : gapPP < -15 ? "bad" : gapPP < 0 ? "warn" : "ok";
-  const gapStatusLabel = !sCurveSeries ? "Sem baseline" : gapPP < -15 ? "Atraso critico" : gapPP < 0 ? "Atraso" : "Em dia";
+  const gapPP = sCurveSeries ? round1(baselinePct - realizedPct) : 0;
+  const gapLabel = sCurveSeries ? `${formatSignedMetric(gapPP)}pp` : "--";
+  const gapStatus = sCurveSeries
+    ? gapStatusInfo(gapPP)
+    : { className: "gap-ok", label: "Sem baseline", color: "#27ae60" };
+  const gapTone = gapStatus.className;
+  const gapStatusLabel = gapStatus.label;
 
   const todayTs = todayStartTs();
   const urgentTasks = pickMostOverdueTasks(project, 5);
@@ -2720,6 +2852,8 @@ async function initApp() {
   }
   wireNav();
   wireModals();
+  wireInlineProjectDates();
+  wireInlineTaskDates();
   setupStatusPopover();
   setupProgressPopover();
   setupTaskActions();
@@ -2930,7 +3064,7 @@ function renderImprovementDetail(container) {
   const scheduleBadge = scheduleStatusInfo(improvementScheduleStatus(improvement));
   const progress = clampPct(improvement.progress || 0);
   const baselinePct = baselinePctFromDates(improvement.start, improvement.end);
-  const gap = round1(progress - baselinePct);
+  const gap = round1(baselinePct - progress);
   const gapStatus = gapStatusInfo(gap);
   const baselineLabel = formatMetric(baselinePct);
   const gapLabel = formatSignedMetric(gap);
@@ -3151,15 +3285,15 @@ function renderMain() {
   const sCurveSeries = computeSCurveDailyBaseline(selectedProject, selectedProject?.tasks || null, progressPct);
   const baselinePct = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(selectedProject, progressPct);
   const realizedPct = progressPct;
-  const gap = round1(progressPct - baselinePct);
+  const gap = round1(baselinePct - realizedPct);
   const gapStart = round1(Math.min(realizedPct, baselinePct));
   const gapWidth = round1(Math.abs(realizedPct - baselinePct));
   const gapStatus = gapStatusInfo(gap);
-  const progressTrendClass = gap > 0 ? "is-ahead" : gap < 0 ? "is-behind" : "";
+  const progressTrendClass = realizedPct > baselinePct ? "is-ahead" : realizedPct < baselinePct ? "is-behind" : "";
   const progressTrackClass = [
     "progress-track",
     progressTrendClass,
-    gapStatus.className === "bad" ? "is-critical" : ""
+    gapStatus.className === "gap-critical" ? "is-critical" : ""
   ]
     .filter(Boolean)
     .join(" ");
@@ -3191,11 +3325,15 @@ function renderMain() {
       </div>
       <div class="meta-item card--meta">
         <div class="label">Data inicio</div>
-        <div class="value">${formatDateBR(selectedProject.start) || "-"}</div>
+        <div class="value is-editable" data-edit-project-date="start" tabindex="0" role="button" aria-label="Editar data inicio">
+          ${formatDateBR(selectedProject.start) || "-"}
+        </div>
       </div>
       <div class="meta-item card--meta">
         <div class="label">Go Live previsto</div>
-        <div class="value">${formatDateBR(selectedProject.end) || "-"}</div>
+        <div class="value is-editable" data-edit-project-date="end" tabindex="0" role="button" aria-label="Editar data fim">
+          ${formatDateBR(selectedProject.end) || "-"}
+        </div>
       </div>
     </div>
   `;
@@ -3343,8 +3481,8 @@ function renderMain() {
             const progressLabel = `${taskProgressValue(task)}%`;
             row.innerHTML = `
               <div>${title}</div>
-              <div style="color: var(--muted); font-weight:500;">${startLabel}</div>
-              <div style="color: var(--muted); font-weight:500;">${endLabel}</div>
+              <div class="task-date task-date-editable" data-edit-task-date="start" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data inicio">${startLabel}</div>
+              <div class="task-date task-date-editable" data-edit-task-date="due" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data fim">${endLabel}</div>
               <button type="button" class="task-progress-btn" data-task-edit data-task-index="${task._idx}">
                 ${progressLabel}
               </button>
@@ -3372,8 +3510,8 @@ function renderMain() {
         const progressLabel = `${taskProgressValue(task)}%`;
         row.innerHTML = `
           <div>${task.title}</div>
-          <div style="color: var(--muted); font-weight:500;">${startLabel}</div>
-          <div style="color: var(--muted); font-weight:500;">${endLabel}</div>
+          <div class="task-date task-date-editable" data-edit-task-date="start" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data inicio">${startLabel}</div>
+          <div class="task-date task-date-editable" data-edit-task-date="due" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data fim">${endLabel}</div>
           <button type="button" class="task-progress-btn" data-task-edit data-task-index="${task._idx}">
             ${progressLabel}
           </button>
@@ -3702,6 +3840,208 @@ function wireModals() {
       updateActivityPackageField();
     });
   }
+}
+
+function wireInlineProjectDates() {
+  if (document.body.dataset.inlineDatesWired) return;
+  document.body.dataset.inlineDatesWired = "true";
+
+  const startEdit = (target) => {
+    const project = state.selectedProject;
+    const client = state.selectedClient;
+    if (!project || !client) return;
+    const field = target.dataset.editProjectDate;
+    if (!field || !["start", "end"].includes(field)) return;
+    if (target.querySelector("input")) return;
+
+    const currentValue = field === "start" ? project.start : project.end;
+    const prevText = target.textContent.trim();
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "date-inline-input";
+    input.value = formatDateISO(currentValue);
+    input.setAttribute("aria-label", field === "start" ? "Data inicio" : "Data fim");
+
+    target.textContent = "";
+    target.appendChild(input);
+    input.focus();
+
+    let finished = false;
+    let canceled = false;
+
+    const restore = () => {
+      target.textContent = prevText || "-";
+    };
+
+    const commit = () => {
+      if (finished || canceled) return;
+      finished = true;
+      const nextValue = input.value || "";
+      const payload = {
+        name: project.name,
+        developer: project.developer || "",
+        start: field === "start" ? nextValue : project.start || "",
+        end: field === "end" ? nextValue : project.end || "",
+        client: client.name
+      };
+
+      if (db && project.id && project.clientId) {
+        updateProjectOnDb(project.clientId, project.id, payload)
+          .then(async () => {
+            await loadStateFromDb();
+            renderClientList();
+            renderMain();
+          })
+          .catch((err) => {
+            console.error(err);
+            alert("Erro ao atualizar datas do projeto.");
+            restore();
+          });
+      } else {
+        updateProjectInState(payload);
+        saveLocalState();
+        renderClientList();
+        renderMain();
+      }
+    };
+
+    const cancel = () => {
+      if (finished) return;
+      canceled = true;
+      finished = true;
+      restore();
+    };
+
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        input.blur();
+      }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        cancel();
+      }
+    });
+    input.addEventListener("blur", () => {
+      if (canceled) return;
+      commit();
+    });
+  };
+
+  document.body.addEventListener("click", (e) => {
+    const target = e.target.closest("[data-edit-project-date]");
+    if (!target) return;
+    e.preventDefault();
+    startEdit(target);
+  });
+
+  document.body.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const target = e.target.closest("[data-edit-project-date]");
+    if (!target) return;
+    e.preventDefault();
+    startEdit(target);
+  });
+}
+
+function wireInlineTaskDates() {
+  if (document.body.dataset.inlineTaskDatesWired) return;
+  document.body.dataset.inlineTaskDatesWired = "true";
+
+  const startEdit = (target) => {
+    const project = state.selectedProject;
+    if (!project) return;
+    const idx = Number(target.dataset.taskIndex);
+    if (Number.isNaN(idx)) return;
+    const field = target.dataset.editTaskDate;
+    if (!field || !["start", "due"].includes(field)) return;
+    if (target.querySelector("input")) return;
+
+    const task = project.tasks?.[idx];
+    if (!task) return;
+
+    const currentValue = field === "start" ? taskStartStr(task) : taskDueStr(task);
+    const prevText = target.textContent.trim();
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "date-inline-input";
+    input.value = formatDateISO(currentValue);
+    input.setAttribute("aria-label", field === "start" ? "Data inicio" : "Data fim");
+
+    target.textContent = "";
+    target.appendChild(input);
+    input.focus();
+
+    let finished = false;
+    let canceled = false;
+
+    const restore = () => {
+      target.textContent = prevText || "-";
+    };
+
+    const commit = () => {
+      if (finished || canceled) return;
+      finished = true;
+      const nextValue = input.value || "";
+      const key = field === "start" ? taskStartKey(task) : taskDueKey(task);
+      const prevValue = task?.[key] ?? "";
+      task[key] = nextValue;
+
+      const payload = { ...task, [key]: nextValue };
+      if (db && project.id && project.clientId && task.id) {
+        updateTaskOnDb(project.clientId, project.id, task.id, payload)
+          .then(() => {
+            renderMain();
+          })
+          .catch((err) => {
+            console.error(err);
+            task[key] = prevValue;
+            alert("Erro ao atualizar datas da atividade.");
+            renderMain();
+          });
+        return;
+      }
+      saveLocalState();
+      renderMain();
+    };
+
+    const cancel = () => {
+      if (finished) return;
+      canceled = true;
+      finished = true;
+      restore();
+    };
+
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        input.blur();
+      }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        cancel();
+      }
+    });
+    input.addEventListener("blur", () => {
+      if (canceled) return;
+      commit();
+    });
+  };
+
+  document.body.addEventListener("click", (e) => {
+    const target = e.target.closest("[data-edit-task-date]");
+    if (!target) return;
+    e.preventDefault();
+    startEdit(target);
+  });
+
+  document.body.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const target = e.target.closest("[data-edit-task-date]");
+    if (!target) return;
+    e.preventDefault();
+    startEdit(target);
+  });
 }
 
 function showModal(modalEl) {
@@ -5187,7 +5527,7 @@ function allProjects() {
       const progressPct = clampPct(metrics.progress ?? p.progress ?? 0);
       const sCurveSeries = computeSCurveDailyBaseline(p, p?.tasks || null, progressPct);
       const baseline = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(p, progressPct);
-      const gap = round1(progressPct - baseline);
+      const gap = round1(baseline - progressPct);
       return {
         ...p,
         clientName: client.name,
