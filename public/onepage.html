@@ -1128,7 +1128,7 @@
       `));
 
       const gapValue = Math.round((curve.baseToday - vm.progressPct) * 10) / 10;
-      const gapStatus = gapStatusFromValue(gapValue);
+      const gapStatus = gapStatusFromValue(gapValue, curve.baseToday, vm.progressPct);
       const gapLabel = formatGapPlain(gapValue);
       const baselineLabel = `${Math.round(curve.baseToday)}%`;
 
@@ -1204,7 +1204,7 @@
               <div class="curveMeta">
                 <span class="miniStat"><i class="legendDot baseline"></i> Baseline <b>${Math.round(curve.baseToday)}%</b></span>
                 <span class="miniStat"><i class="legendDot real"></i> Realizado <b>${Math.round(curve.realToday)}%</b></span>
-                <span class="miniStat"><b>GAP</b> ${formatGap(gapValue)}</span>
+                <span class="miniStat"><b>GAP</b> ${formatGap(gapValue, curve.baseToday, vm.progressPct)}</span>
               </div>
             </div>
             <div class="cardBody">
@@ -1305,17 +1305,18 @@
       return diff;
     }
 
-    function formatGap(g){
+    function formatGap(g, baselinePct = null, realizedPct = null){
       const v = Math.round(g*10)/10;
       const sign = v > 0 ? "+" : (v < 0 ? "-" : "");
       const abs = Math.abs(v);
-      const tone = v <= 0
+      const status = gapStatusFromValue(v, baselinePct, realizedPct);
+      const tone = status.cls === "gap-ok"
         ? "#27ae60"
-        : v <= 10
+        : status.cls === "gap-low"
           ? "#6b7a10"
-          : v <= 20
+          : status.cls === "gap-risk"
             ? "#9a7c08"
-            : v <= 30
+            : status.cls === "gap-delayed"
               ? "#9a4c10"
               : "#7a0017";
       return `<span style="color:${tone}; font-weight:800">${sign}${abs}pp</span>`;
@@ -1329,7 +1330,15 @@
       return `${sign}${label}pp`;
     }
 
-    function gapStatusFromValue(g){
+    function gapStatusFromValue(g, baselinePct = null, realizedPct = null){
+      const base = Number(baselinePct);
+      const real = Number(realizedPct);
+      if (Number.isFinite(base) && Number.isFinite(real)) {
+        const baseRounded = Math.round(base);
+        if (baseRounded >= 100 && real < 100) {
+          return { cls: "gap-critical", label: "Atraso critico" };
+        }
+      }
       if (g <= 0) return { cls: "gap-ok", label: "Em dia" };
       if (g <= 10) return { cls: "gap-low", label: "Baixo risco" };
       if (g <= 20) return { cls: "gap-risk", label: "Risco" };

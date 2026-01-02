@@ -862,7 +862,15 @@ function baselinePctFromDates(startValue, endValue, now = new Date()) {
   return Math.max(0, Math.min(100, round1(pct)));
 }
 
-function gapStatusInfo(gap) {
+function gapStatusInfo(gap, baselinePct = null, realizedPct = null) {
+  const base = Number(baselinePct);
+  const real = Number(realizedPct);
+  if (Number.isFinite(base) && Number.isFinite(real)) {
+    const baseRounded = Math.round(base);
+    if (baseRounded >= 100 && real < 100) {
+      return { className: "gap-critical", label: "Atraso critico", color: "#B00020" };
+    }
+  }
   if (gap <= 0) {
     return { className: "gap-ok", label: "Em dia", color: "#27ae60" };
   }
@@ -1260,7 +1268,9 @@ function renderSCurveSvgDaily(sc, opts = {}) {
   const realPct = Math.round(sc.realizedNow * 100);
   const gapPP = round1((sc.baselineNow - sc.realizedNow) * 100);
   const gapLabel = `${gapPP > 0 ? "+" : ""}${gapPP}pp`;
-  const gapStatus = gapStatusInfo(gapPP);
+  const baselinePct = round1(sc.baselineNow * 100);
+  const realizedPct = round1(sc.realizedNow * 100);
+  const gapStatus = gapStatusInfo(gapPP, baselinePct, realizedPct);
   const gapColor = gapStatus.color;
   const labelText = `GAP ${gapLabel}`;
   const labelWidth = Math.max(52, labelText.length * 6.4);
@@ -1904,7 +1914,7 @@ function buildOnePageContent({ project, client, metrics, exportMode = false }) {
   const gapPP = sCurveSeries ? round1(baselinePct - realizedPct) : 0;
   const gapLabel = sCurveSeries ? `${formatSignedMetric(gapPP)}pp` : "--";
   const gapStatus = sCurveSeries
-    ? gapStatusInfo(gapPP)
+    ? gapStatusInfo(gapPP, baselinePct, realizedPct)
     : { className: "gap-ok", label: "Sem baseline", color: "#27ae60" };
   const gapTone = gapStatus.className;
   const gapStatusLabel = gapStatus.label;
@@ -3065,7 +3075,7 @@ function renderImprovementDetail(container) {
   const progress = clampPct(improvement.progress || 0);
   const baselinePct = baselinePctFromDates(improvement.start, improvement.end);
   const gap = round1(baselinePct - progress);
-  const gapStatus = gapStatusInfo(gap);
+  const gapStatus = gapStatusInfo(gap, baselinePct, progress);
   const baselineLabel = formatMetric(baselinePct);
   const gapLabel = formatSignedMetric(gap);
 
@@ -3288,7 +3298,7 @@ function renderMain() {
   const gap = round1(baselinePct - realizedPct);
   const gapStart = round1(Math.min(realizedPct, baselinePct));
   const gapWidth = round1(Math.abs(realizedPct - baselinePct));
-  const gapStatus = gapStatusInfo(gap);
+  const gapStatus = gapStatusInfo(gap, baselinePct, realizedPct);
   const progressTrendClass = realizedPct > baselinePct ? "is-ahead" : realizedPct < baselinePct ? "is-behind" : "";
   const progressTrackClass = [
     "progress-track",
@@ -5611,7 +5621,7 @@ function renderDashboard(container) {
     .map((p) => {
       const info = statusInfo(p.status);
       const scheduleInfo = scheduleStatusInfo(p.schedule);
-      const gapInfo = gapStatusInfo(p.gap);
+      const gapInfo = gapStatusInfo(p.gap, p.baseline, p.progress);
       return `
         <tr data-client="${p.clientName}" data-project="${p.name}">
           <td>${p.name}</td>
