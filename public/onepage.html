@@ -791,10 +791,7 @@
       const clampedReport = reportDay < startDay ? startDay : (reportDay > endDay ? endDay : reportDay);
       const totalDays = Math.max(1, daysDiff(startDay, endDay));
 
-      const taskWeight = (t) => {
-        const n = Number(t?.points ?? t?.weight ?? 1);
-        return Number.isFinite(n) && n > 0 ? n : 1;
-      };
+      const taskWeight = () => 1;
 
       // Baseline linear 0->100 por dia (periodo total)
       const baseline = [];
@@ -809,13 +806,18 @@
         const explicit = parseTaskDate(
           t.dataConclusao || t.completedAt || t.doneAt || t.finishedAt || t.completed || ""
         );
-        if (explicit) return explicit;
+        const explicitDay = explicit ? new Date(explicit.getTime()) : null;
+        if (explicitDay) explicitDay.setHours(0,0,0,0);
         const due = parseTaskDate(t.due || t.end || t.plannedEnd || t.dueDate || t.endDate || "");
-        if (due) {
-          const dueDay = new Date(due.getTime());
-          dueDay.setHours(0,0,0,0);
-          if (dueDay <= clampedReport) return dueDay;
+        const dueDay = due ? new Date(due.getTime()) : null;
+        if (dueDay) dueDay.setHours(0,0,0,0);
+        const explicitOk = explicitDay && explicitDay <= clampedReport;
+        const dueOk = dueDay && dueDay <= clampedReport;
+        if (explicitOk && dueOk) {
+          return dueDay <= explicitDay ? dueDay : explicitDay;
         }
+        if (dueOk) return dueDay;
+        if (explicitOk) return explicitDay;
         const created = parseTaskDate(
           t.createdAt || t.created_at || t.created || t.createdOn || t.createdDate || ""
         );
@@ -829,7 +831,7 @@
 
       // Real: acumulado por data de conclusao
       const validTasks = Array.isArray(tasks) ? tasks : [];
-      const totalWeight = validTasks.reduce((sum, t) => sum + taskWeight(t), 0) || 1;
+      const totalWeight = validTasks.length || 1;
       const doneWeightByDay = new Map();
       validTasks.forEach(t => {
         const done = resolveDoneDate(t);
@@ -839,8 +841,7 @@
         if (day > clampedReport) return;
         const clamped = day < startDay ? startDay : day;
         const key = clamped.getTime();
-        const weight = taskWeight(t);
-        doneWeightByDay.set(key, (doneWeightByDay.get(key) || 0) + weight);
+        doneWeightByDay.set(key, (doneWeightByDay.get(key) || 0) + 1);
       });
 
       const real = [];
@@ -930,10 +931,12 @@
 
       const xAxisY = h - pad;
       const yTop = pad;
+      const viewW = w - pad * 2;
+      const viewH = h + footerPad;
 
       return {
         svg: `
-<svg viewBox="0 0 ${w} ${svgH}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="${pad} 0 ${viewW} ${viewH}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="gridfade" x1="0" x2="0" y1="0" y2="1">
       <stop offset="0" stop-color="rgba(15,23,42,.10)"/>
@@ -954,7 +957,8 @@
   <path d="${base.d}" fill="none" stroke="rgba(15,23,42,.85)" stroke-width="2.4" stroke-dasharray="6 5"/>
 
   <!-- real -->
-  <path d="${realStep}" fill="none" stroke="rgba(161,98,7,.95)" stroke-width="3"/>
+  <path id="curve-real-path" d="${realStep}" fill="none" stroke="rgba(161,98,7,.95)" stroke-width="3"/>
+  <path id="curve-real-hit" d="${realStep}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"/>
 
   <!-- hoje -->
   <line x1="${todayX}" y1="${yTop}" x2="${todayX}" y2="${xAxisY}" stroke="rgba(239,68,68,.95)" stroke-width="2"/>
@@ -1141,14 +1145,14 @@
 
     function render(app, vm){
       const proj = vm.project;
-      const goLive = parseTaskDate(proj.goLiveDate);
-      const start = parseTaskDate(proj.startDate);
+      const goLive = parseTaskDate(proj.goLiveDate || proj.goLive || proj.end);
+      const start = parseTaskDate(proj.startDate || proj.start);
       const statusHealth = healthTag(vm.health);
 
       // Curva S
       const curveData = computeSCurveDaily({
-        startDate: proj.startDate,
-        goLiveDate: proj.goLiveDate,
+        startDate: proj.startDate || proj.start,
+        goLiveDate: proj.goLiveDate || proj.goLive || proj.end,
         reportDate: proj.reportDate,
         tasks: vm.tasks,
         progressPct: vm.progressPct
@@ -1271,8 +1275,6 @@
             <div class="cardBody">
               <div class="svgBox">
                 ${curve.svg}
-                <div class="curve-evidence-line"></div>
-                <div class="curve-tooltip"></div>
               </div>
             </div>
           </div>
@@ -1282,7 +1284,7 @@
       `);
       app.appendChild(mid);
 
-      setupCurveEvidence(app, curveData);
+      // Tooltip removido por solicitacao.
 
       // Bottom lists
       const bottom = el(`
@@ -1333,16 +1335,29 @@
       if (box.dataset.evidenceWired) return;
       box.dataset.evidenceWired = "true";
 
+      const svg = box.querySelector("svg");
       const line = box.querySelector(".curve-evidence-line");
       const tooltip = box.querySelector(".curve-tooltip");
-      if (!line || !tooltip) return;
+      const realPath = svg.querySelector("#curve-real-path");
+      const hitPath = svg.querySelector("#curve-real-hit") || realPath;
+      if (!line || !tooltip || !svg || !hitPath) return;
 
       const start = curveData.start;
       const end = curveData.end;
       const baselinePoints = curveData.baselineFull || curveData.baseline || [];
       const realPoints = curveData.realFull || curveData.real || [];
-      const svgWidth = 920;
+      const viewBox = svg.getAttribute("viewBox") || "0 0 920 258";
+      const vbParts = viewBox.split(/\s+/).map(Number);
+      const vbMinX = Number.isFinite(vbParts[0]) ? vbParts[0] : 0;
+      const vbMinY = Number.isFinite(vbParts[1]) ? vbParts[1] : 0;
+      const vbWidth = vbParts[2] || 920;
+      const vbHeight = vbParts[3] || 258;
       const pad = 16;
+      const plotHeight = 240;
+      const plotTop = pad;
+      const plotBottom = plotHeight - pad;
+      const plotLeft = vbMinX;
+      const plotRight = vbMinX + vbWidth;
 
       const gapColor = (cls) => {
         if (cls === "gap-ok") return "#27ae60";
@@ -1352,22 +1367,65 @@
         return "#7a0017";
       };
 
+      const findPathPointAtX = (pathEl, xTarget) => {
+        if (!pathEl || typeof pathEl.getTotalLength !== "function") return null;
+        const total = pathEl.getTotalLength();
+        if (!Number.isFinite(total) || total <= 0) return null;
+        let low = 0;
+        let high = total;
+        for (let i = 0; i < 24; i += 1) {
+          const mid = (low + high) / 2;
+          const pt = pathEl.getPointAtLength(mid);
+          if (pt.x < xTarget) low = mid;
+          else high = mid;
+        }
+        return pathEl.getPointAtLength((low + high) / 2);
+      };
+
       const update = (ev) => {
         const rect = box.getBoundingClientRect();
-        const x = clamp(ev.clientX - rect.left, 0, rect.width);
-        const svgX = clamp((x / rect.width) * svgWidth, pad, svgWidth - pad);
-        const ratio = (svgX - pad) / Math.max(1, svgWidth - pad * 2);
+        const svgRect = svg.getBoundingClientRect();
+        const svgLeft = svgRect.left - rect.left;
+        const svgTop = svgRect.top - rect.top;
+        const svgRight = svgLeft + svgRect.width;
+        const svgBottom = svgTop + svgRect.height;
+        const xLocal = clamp(ev.clientX - svgRect.left, 0, svgRect.width);
+        const yLocalRaw = clamp(ev.clientY - svgRect.top, 0, svgRect.height);
+        const xSvg = vbMinX + (xLocal / Math.max(1, svgRect.width)) * vbWidth;
+        const ySvgRaw = vbMinY + (yLocalRaw / Math.max(1, svgRect.height)) * vbHeight;
+        if (ySvgRaw < plotTop || ySvgRaw > plotBottom || xSvg < plotLeft || xSvg > plotRight) {
+          line.style.display = "none";
+          tooltip.style.display = "none";
+          return;
+        }
+        const ratio = clamp((xSvg - plotLeft) / Math.max(1, plotRight - plotLeft), 0, 1);
         const t = start.getTime() + ratio * (end.getTime() - start.getTime());
         const baseNow = interpolateAt(baselinePoints, t);
         const realNow = valueAtStep(realPoints, t);
         const gap = Math.round((baseNow - realNow) * 10) / 10;
         const gapInfo = gapStatusFromValue(gap, baseNow, realNow);
+        const ySvgFallback = pad + (1 - clamp(realNow, 0, 100) / 100) * (plotHeight - pad * 2);
+        const snapPoint = findPathPointAtX(realPath, xSvg);
+        const ySvg = snapPoint && Number.isFinite(snapPoint.y) ? snapPoint.y : ySvgFallback;
+        const snapThreshold = (12 / Math.max(1, svgRect.height)) * vbHeight;
+        if (Math.abs(ySvgRaw - ySvg) > snapThreshold) {
+          line.style.display = "none";
+          tooltip.style.display = "none";
+          return;
+        }
+        const yLocal = svgTop + ((ySvg - vbMinY) / vbHeight) * svgRect.height;
+        const xLine = clamp(svgLeft + xLocal, svgLeft, svgRight);
+        const lineTop = svgTop + ((plotTop - vbMinY) / vbHeight) * svgRect.height;
+        const lineHeight = ((plotBottom - plotTop) / vbHeight) * svgRect.height;
 
         line.style.display = "block";
-        line.style.left = `${x}px`;
+        line.style.left = `${xLine}px`;
+        line.style.top = `${lineTop}px`;
+        line.style.height = `${lineHeight}px`;
         tooltip.style.display = "block";
-        tooltip.style.left = `${Math.min(x + 12, rect.width - 180)}px`;
-        tooltip.style.top = `12px`;
+        tooltip.style.visibility = "hidden";
+        tooltip.style.left = "0px";
+        tooltip.style.top = "0px";
         tooltip.innerHTML = `
           <div class="tip-date">${fmtBR(new Date(t))}</div>
           <div class="tip-row"><span>Realizado:</span> <span class="tip-real">${Math.round(realNow)}%</span></div>
@@ -1376,10 +1434,22 @@
             GAP: ${gap > 0 ? "+" : ""}${gap}pp
           </div>
         `;
+        const tipW = tooltip.offsetWidth || 180;
+        const tipH = tooltip.offsetHeight || 80;
+        let left = xLine + 12;
+        if (left + tipW + 8 > svgRight) left = svgRight - tipW - 8;
+        if (left < svgLeft + 8) left = svgLeft + 8;
+        let top = yLocal - tipH - 12;
+        if (top < svgTop + 8) top = yLocal + 12;
+        if (top + tipH + 8 > svgBottom) top = svgBottom - tipH - 8;
+        if (top < svgTop + 8) top = svgTop + 8;
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top = `${top}px`;
+        tooltip.style.visibility = "visible";
       };
 
-      box.addEventListener("mousemove", update);
-      box.addEventListener("mouseleave", () => {
+      hitPath.addEventListener("mousemove", update);
+      hitPath.addEventListener("mouseleave", () => {
         line.style.display = "none";
         tooltip.style.display = "none";
       });
@@ -1550,8 +1620,8 @@
           responsible: project?.developer || project?.responsible || "-",
           reportDate: project?.reportDate || fmtBR(new Date()),
           statusLabel,
-          startDate: project?.startDate || project?.start || "",
-          goLiveDate: project?.goLiveDate || project?.goLive || project?.end || ""
+          startDate: project?.start || project?.startDate || "",
+          goLiveDate: project?.end || project?.goLiveDate || project?.goLive || ""
         },
         overall: {
           progressPct,

@@ -1010,8 +1010,8 @@ function computeSCurveFromActivities(project, activities, points = 10) {
   const tasks = list.length ? list : flattenProjectTasks(project);
   if (!tasks.length) return null;
 
-  const start = parseDateSafe(project?.startDate || project?.start);
-  const end = parseDateSafe(project?.goLiveDate || project?.goLive || project?.end);
+  const start = parseDateSafe(project?.start || project?.startDate);
+  const end = parseDateSafe(project?.end || project?.goLiveDate || project?.goLive);
   if (!start || !end) return null;
 
   const S = startOfDay(start);
@@ -1110,8 +1110,8 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
   const tasks = list.length ? list : flattenProjectTasks(project);
   if (!tasks.length) return null;
 
-  const start = parseDateSafe(project?.startDate || project?.start);
-  const end = parseDateSafe(project?.goLiveDate || project?.goLive || project?.end);
+  const start = parseDateSafe(project?.start || project?.startDate);
+  const end = parseDateSafe(project?.end || project?.goLiveDate || project?.goLive);
   if (!start || !end) return null;
 
   const startDate = startOfDay(start);
@@ -1131,12 +1131,16 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
         task?.completed ||
         ""
     );
-    if (explicit) return explicit;
+    const explicitDay = explicit ? startOfDay(explicit) : null;
     const due = parseDateSafe(activityDueDate(task));
-    if (due) {
-      const dueDay = startOfDay(due);
-      if (dueDay <= clampedReport) return dueDay;
+    const dueDay = due ? startOfDay(due) : null;
+    const explicitOk = explicitDay && explicitDay <= clampedReport;
+    const dueOk = dueDay && dueDay <= clampedReport;
+    if (explicitOk && dueOk) {
+      return dueDay <= explicitDay ? dueDay : explicitDay;
     }
+    if (dueOk) return dueDay;
+    if (explicitOk) return explicitDay;
     const created = parseDateSafe(
       task?.createdAt ||
         task?.created_at ||
@@ -1158,7 +1162,7 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
     return clampedReport;
   };
 
-  const totalWeight = tasks.reduce((sum, task) => sum + getActivityWeight(task), 0) || 1;
+  const totalWeight = tasks.length || 1;
   const doneWeightByDay = new Map();
   tasks.forEach((task) => {
     const doneAt = resolveDoneDate(task);
@@ -1167,8 +1171,7 @@ function computeSCurveDailyBaseline(project, activities, progressPct = null) {
     if (doneDay > clampedReport) return;
     const clamped = doneDay < startDate ? startDate : doneDay;
     const key = clamped.getTime();
-    const weight = getActivityWeight(task);
-    doneWeightByDay.set(key, (doneWeightByDay.get(key) || 0) + weight);
+    doneWeightByDay.set(key, (doneWeightByDay.get(key) || 0) + 1);
   });
 
   const baseline = dates.map((d) => clamp01(daysDiff(d, startDate) / totalDays));
@@ -4065,12 +4068,18 @@ function wireModals() {
         progress
       };
       applyTaskStatus(task, task.status);
+      if (normalizeTaskStatus(task.status) === "concluido" && task.due) {
+        task.dataConclusao = task.due;
+      }
       if (state.editingTaskIndex !== null && state.editingTaskIndex !== undefined) {
         const idx = Number(state.editingTaskIndex);
         const currentTask = selectedProject.tasks?.[idx];
         if (!currentTask) return;
         const payload = { ...currentTask, ...task };
         applyTaskStatus(payload, payload.status);
+        if (normalizeTaskStatus(payload.status) === "concluido" && payload.due) {
+          payload.dataConclusao = payload.due;
+        }
         if (db && selectedProject.id && selectedProject.clientId && currentTask.id) {
           updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload)
             .then(async () => {
@@ -4143,7 +4152,7 @@ function wireInlineProjectDates() {
     if (!field || !["start", "end"].includes(field)) return;
     if (target.querySelector("input")) return;
 
-    const currentValue = field === "start" ? project.start : project.end;
+  const currentValue = field === "start" ? (project.start || project.startDate) : (project.end || project.goLiveDate || project.goLive);
     const prevText = target.textContent.trim();
     const input = document.createElement("input");
     input.type = "date";
@@ -4166,11 +4175,15 @@ function wireInlineProjectDates() {
       if (finished || canceled) return;
       finished = true;
       const nextValue = input.value || "";
+      const nextStart = field === "start" ? nextValue : (project.start || project.startDate || "");
+      const nextEnd = field === "end" ? nextValue : (project.end || project.goLiveDate || project.goLive || "");
       const payload = {
         name: project.name,
         developer: project.developer || "",
-        start: field === "start" ? nextValue : project.start || "",
-        end: field === "end" ? nextValue : project.end || "",
+        start: nextStart,
+        end: nextEnd,
+        startDate: nextStart,
+        goLiveDate: nextEnd,
         client: client.name
       };
 
@@ -4272,11 +4285,14 @@ function wireInlineTaskDates() {
       if (finished || canceled) return;
       finished = true;
       const nextValue = input.value || "";
-      const key = field === "start" ? taskStartKey(task) : taskDueKey(task);
-      const prevValue = task?.[key] ?? "";
-      task[key] = nextValue;
+    const key = field === "start" ? taskStartKey(task) : taskDueKey(task);
+    const prevValue = task?.[key] ?? "";
+    task[key] = nextValue;
+    if (field === "due" && normalizeTaskStatus(task.status) === "concluido") {
+      task.dataConclusao = nextValue || task.dataConclusao || "";
+    }
 
-      const payload = { ...task, [key]: nextValue };
+    const payload = { ...task, [key]: nextValue };
       if (db && project.id && project.clientId && task.id) {
         updateTaskOnDb(project.clientId, project.id, task.id, payload)
           .then(() => {
@@ -4701,12 +4717,16 @@ function updateProjectInState(payload) {
   );
   if (idx === -1) return;
   const existing = client.projects[idx];
+  const nextStart = payload.start ?? existing.start ?? existing.startDate ?? "";
+  const nextEnd = payload.end ?? existing.end ?? existing.goLiveDate ?? existing.goLive ?? "";
   const updated = {
     ...existing,
     name: payload.name,
     developer: payload.developer,
-    start: payload.start,
-    end: payload.end
+    start: nextStart,
+    end: nextEnd,
+    startDate: nextStart,
+    goLiveDate: nextEnd
   };
   client.projects[idx] = updated;
   state.selectedClient = client;
@@ -5058,7 +5078,8 @@ function applyTaskStatus(task, status) {
   const normalized = normalizeTaskStatus(status);
   if (normalized === "concluido") {
     if (!task.dataConclusao) {
-      task.dataConclusao = new Date().toISOString().slice(0, 10);
+      const due = activityDueDate(task);
+      task.dataConclusao = due || new Date().toISOString().slice(0, 10);
     }
     return;
   }
@@ -5660,6 +5681,8 @@ async function saveProjectToDb(payload) {
     developer: payload.developer,
     start: payload.start,
     end: payload.end,
+    startDate: payload.start,
+    goLiveDate: payload.end,
     epics: DEFAULT_EPICS.slice(),
     packages: [],
     tasks: {},
@@ -5672,7 +5695,9 @@ async function updateProjectOnDb(clientId, projectId, payload) {
     name: payload.name,
     developer: payload.developer,
     start: payload.start,
-    end: payload.end
+    end: payload.end,
+    startDate: payload.startDate || payload.start,
+    goLiveDate: payload.goLiveDate || payload.end
   });
 }
 
