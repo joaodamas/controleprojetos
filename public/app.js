@@ -255,7 +255,7 @@ const DASHBOARD_COLUMNS = [
   { key: "clientName", label: "Cliente", type: "text" },
   { key: "developer", label: "Responsavel", type: "text" },
   { key: "status", label: "Status", type: "text" },
-  { key: "schedule", label: "Prazo", type: "text" },
+  { key: "schedule", label: "Saúde", type: "text" },
   { key: "progress", label: "Progresso", type: "number" },
   { key: "baseline", label: "Previsto", type: "number" },
   { key: "gap", label: "GAP (pp)", type: "number" },
@@ -5728,7 +5728,10 @@ async function updateTaskStatusOnDb(clientId, projectId, taskId, payload) {
 }
 
 async function updateTaskProgressOnDb(clientId, projectId, taskId, progress) {
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({ progress });
+  if (progress == null) return;
+  const value = Number(progress);
+  if (!Number.isFinite(value)) return;
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({ progress: value });
 }
 
 async function updateTaskOnDb(clientId, projectId, taskId, payload) {
@@ -5738,12 +5741,20 @@ async function updateTaskOnDb(clientId, projectId, taskId, payload) {
     package: payload.package,
     start: payload.start,
     due: payload.due,
-    status: payload.status,
-    progress: payload.progress
+    status: payload.status
   };
+  if (payload.progress != null) {
+    const progressValue = Number(payload.progress);
+    if (Number.isFinite(progressValue)) {
+      updatePayload.progress = progressValue;
+    }
+  }
   if ("dataConclusao" in payload) {
     updatePayload.dataConclusao = payload.dataConclusao;
   }
+  Object.keys(updatePayload).forEach((key) => {
+    if (updatePayload[key] === undefined) delete updatePayload[key];
+  });
   await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(updatePayload);
 }
 

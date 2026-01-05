@@ -1850,14 +1850,18 @@ async function updateTaskStatusOnDb(clientId, projectId, taskId, payload) {
 }
 
 async function updateTaskOnDb(clientId, projectId, taskId, payload) {
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({
+  const updatePayload = {
     title: payload.title,
     phase: payload.phase,
     package: payload.package,
     due: payload.due,
     status: payload.status,
     ...(payload.dataConclusao !== undefined ? { dataConclusao: payload.dataConclusao } : {})
+  };
+  Object.keys(updatePayload).forEach((key) => {
+    if (updatePayload[key] === undefined) delete updatePayload[key];
   });
+  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(updatePayload);
 }
 
 async function deleteTaskFromDb(clientId, projectId, taskId) {
