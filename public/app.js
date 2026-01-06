@@ -208,8 +208,11 @@ const state = {
   ],
   improvements: [],
   users: [],
+  groups: [],
   currentUserEmail: "",
   currentUserRole: "user",
+  currentUserKey: "",
+  dbAccessDenied: false,
   selectedClient: null,
   selectedProject: null,
   collapsedPhases: {},
@@ -286,6 +289,45 @@ const MOTIVATIONAL_QUOTES = [
 ];
 
 const byId = (id) => document.getElementById(id);
+
+function normalizeUserKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function currentUserKey(user = auth?.currentUser) {
+  return normalizeUserKey(user?.uid || user?.email || state.currentUserEmail || "");
+}
+
+function localStorageKeyForUser(user = auth?.currentUser) {
+  const key = currentUserKey(user);
+  return key ? `${LOCAL_STORAGE_KEY}_${key}` : LOCAL_STORAGE_KEY;
+}
+
+function resetUserState() {
+  state.clients = [];
+  state.employees = [];
+  state.improvements = [];
+  state.users = [];
+  state.groups = [];
+  state.selectedClient = null;
+  state.selectedProject = null;
+  state.collapsedPhases = {};
+  state.clientVisibility = {};
+  state.editingProjectId = null;
+  state.editingTaskIndex = null;
+  state.dashboard = { sort: { key: null, direction: "asc" }, filters: {} };
+  state.monitor = { filter: "all", client: "", project: "", responsible: "" };
+  state.currentSection = "inicio";
+  state.lastRenderContext = null;
+}
+
+function clearLocalState(user = auth?.currentUser) {
+  try {
+    localStorage.removeItem(localStorageKeyForUser(user));
+  } catch (err) {
+    console.warn("Nao foi possivel limpar dados locais.", err);
+  }
+}
 
 function formatDateTime(date) {
   const dd = String(date.getDate()).padStart(2, "0");
@@ -2875,12 +2917,13 @@ function loadHomeContext() {
 
 function loadLocalState() {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const raw = localStorage.getItem(localStorageKeyForUser());
     if (!raw) return false;
     const data = JSON.parse(raw);
     if (!data || !Array.isArray(data.clients)) return false;
     state.clients = data.clients;
     state.employees = Array.isArray(data.employees) ? data.employees : [];
+    state.dbAccessDenied = false;
     return true;
   } catch (err) {
     console.warn("Nao foi possivel carregar dados locais.", err);
@@ -2894,7 +2937,7 @@ function saveLocalState() {
       clients: state.clients,
       employees: state.employees
     };
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(payload));
+    localStorage.setItem(localStorageKeyForUser(), JSON.stringify(payload));
   } catch (err) {
     console.warn("Nao foi possivel salvar dados locais.", err);
   }
@@ -2923,32 +2966,104 @@ async function initFirebase() {
 }
 
 async function loadStateFromDb(keepSelection = null) {
-  if (!db) return;
-  const snapshot = await db.ref("clients").once("value");
-  const clientsData = snapshot.val() || {};
-  const clients = Object.entries(clientsData).map(([clientId, clientData]) => {
-    const projectsData = clientData.projects || {};
-    const projects = Object.entries(projectsData).map(([projectId, projData]) => {
-      const tasksData = projData.tasks || {};
-      const tasks = Object.entries(tasksData).map(([taskId, taskData]) => ({
-        id: taskId,
-        ...taskData
-      }));
-      const progress = computeProgress(tasks);
-      const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
-      const packages = Array.isArray(projData.packages) ? projData.packages : [];
-      return {
-        id: projectId,
-        clientId,
-        ...projData,
-        progress,
-        epics,
-        packages,
-        tasks
-      };
+  if (!db) return false;
+  const role = normalizeUserRole(state.currentUserRole);
+  let snapshot = null;
+  try {
+    if (role === "admin") {
+      snapshot = await db.ref("clients").once("value");
+    } else {
+      snapshot = null;
+    }
+  } catch (err) {
+    const message = String(err?.message || "");
+    const code = String(err?.code || "");
+    const denied = code === "PERMISSION_DENIED" || /permission/i.test(message);
+    console.error(err);
+    if (denied) {
+      state.dbAccessDenied = true;
+      resetUserState();
+      clearLocalState();
+      renderClientList();
+      renderMain();
+      hydrateClientSelect();
+      return false;
+    }
+    throw err;
+  }
+  let clients = [];
+  if (role === "admin") {
+    const clientsData = snapshot ? snapshot.val() || {} : {};
+    clients = Object.entries(clientsData).map(([clientId, clientData]) => {
+      const projectsData = clientData.projects || {};
+      const projects = Object.entries(projectsData).map(([projectId, projData]) => {
+        const tasksData = projData.tasks || {};
+        const tasks = Object.entries(tasksData).map(([taskId, taskData]) => ({
+          id: taskId,
+          ...taskData
+        }));
+        const progress = computeProgress(tasks);
+        const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
+        const packages = Array.isArray(projData.packages) ? projData.packages : [];
+        return {
+          id: projectId,
+          clientId,
+          ...projData,
+          progress,
+          epics,
+          packages,
+          tasks
+        };
+      });
+      return { id: clientId, ...clientData, projects };
     });
-    return { id: clientId, ...clientData, projects };
-  });
+    state.dbAccessDenied = false;
+  } else {
+    const groups = await loadGroupsFromDb();
+    state.groups = groups.slice();
+    const uid = auth?.currentUser?.uid;
+    const allowedGroups = uid ? groups.filter((group) => group.members?.[uid]) : [];
+    const clientIds = new Set();
+    allowedGroups.forEach((group) => {
+      Object.keys(group.clients || {}).forEach((clientId) => clientIds.add(clientId));
+    });
+    const clientPromises = Array.from(clientIds).map(async (clientId) => {
+      try {
+        const snap = await db.ref(`clients/${clientId}`).once("value");
+        const clientData = snap.val();
+        if (!clientData) return null;
+        const projectsData = clientData.projects || {};
+        const projects = Object.entries(projectsData).map(([projectId, projData]) => {
+          const tasksData = projData.tasks || {};
+          const tasks = Object.entries(tasksData).map(([taskId, taskData]) => ({
+            id: taskId,
+            ...taskData
+          }));
+          const progress = computeProgress(tasks);
+          const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
+          const packages = Array.isArray(projData.packages) ? projData.packages : [];
+          return {
+            id: projectId,
+            clientId,
+            ...projData,
+            progress,
+            epics,
+            packages,
+            tasks
+          };
+        });
+        return { id: clientId, ...clientData, projects };
+      } catch (err) {
+        console.error(err);
+        return null;
+      }
+    });
+    const resolved = await Promise.all(clientPromises);
+    clients = resolved.filter(Boolean);
+    if (!clients.length) {
+      state.dbAccessDenied = true;
+    }
+  }
 
   state.clients = clients;
   if (keepSelection && (keepSelection.clientId || keepSelection.projectId || keepSelection.clientName || keepSelection.projectName)) {
@@ -2978,6 +3093,7 @@ async function loadStateFromDb(keepSelection = null) {
   renderClientList();
   renderMain();
   hydrateClientSelect();
+  return true;
 }
 
 async function syncUserProfile(user) {
@@ -3013,6 +3129,31 @@ async function loadUsersFromDb() {
   }));
 }
 
+async function loadGroupsFromDb() {
+  if (!db) return [];
+  try {
+    const snapshot = await db.ref("groups").once("value");
+    const raw = snapshot.val() || {};
+    state.dbAccessDenied = false;
+    return Object.entries(raw).map(([groupId, data]) => ({
+      id: groupId,
+      name: data?.name || "Grupo",
+      members: data?.members || {},
+      clients: data?.clients || {}
+    }));
+  } catch (err) {
+    const message = String(err?.message || "");
+    const code = String(err?.code || "");
+    const denied = code === "PERMISSION_DENIED" || /permission/i.test(message);
+    console.error(err);
+    if (denied) {
+      state.dbAccessDenied = true;
+      return [];
+    }
+    throw err;
+  }
+}
+
 async function updateUserProfileInDb(uid, payload) {
   if (!db || !uid) return;
   await db.ref(`users/${uid}`).update({
@@ -3021,13 +3162,79 @@ async function updateUserProfileInDb(uid, payload) {
   });
 }
 
+async function createGroupInDb(name) {
+  if (!db) return null;
+  const groupRef = db.ref("groups").push();
+  await groupRef.set({
+    name: name || "Novo grupo",
+    members: {},
+    clients: {},
+    createdAt: firebase.database.ServerValue.TIMESTAMP
+  });
+  return groupRef.key;
+}
+
+async function updateGroupNameInDb(groupId, name) {
+  if (!db || !groupId) return;
+  await db.ref(`groups/${groupId}`).update({
+    name: name || "Grupo",
+    updatedAt: firebase.database.ServerValue.TIMESTAMP
+  });
+}
+
+async function updateGroupMemberInDb(groupId, uid, enabled) {
+  if (!db || !groupId || !uid) return;
+  const ref = db.ref(`groups/${groupId}/members/${uid}`);
+  if (enabled) {
+    await ref.set(true);
+  } else {
+    await ref.remove();
+  }
+}
+
+async function assignClientToGroup(clientId, groupId) {
+  if (!db || !clientId || !groupId) return;
+  const updates = {
+    [`groups/${groupId}/clients/${clientId}`]: true
+  };
+  (state.groups || []).forEach((group) => {
+    if (group.id !== groupId && group.clients?.[clientId]) {
+      updates[`groups/${group.id}/clients/${clientId}`] = null;
+    }
+  });
+  updates[`clients/${clientId}/groupId`] = groupId;
+  await db.ref().update(updates);
+}
+
+async function removeClientFromGroup(clientId, groupId) {
+  if (!db || !clientId || !groupId) return;
+  const updates = {
+    [`groups/${groupId}/clients/${clientId}`]: null,
+    [`clients/${clientId}/groupId`]: null
+  };
+  await db.ref().update(updates);
+}
+
+async function deleteGroupFromDb(groupId) {
+  if (!db || !groupId) return;
+  const group = (state.groups || []).find((item) => item.id === groupId);
+  const updates = {};
+  if (group?.clients) {
+    Object.keys(group.clients).forEach((clientId) => {
+      updates[`clients/${clientId}/groupId`] = null;
+    });
+  }
+  updates[`groups/${groupId}`] = null;
+  await db.ref().update(updates);
+}
+
 async function initApp() {
   loadHomeContext();
   const firebaseReady = db ? true : await initFirebase();
   if (firebaseReady) {
     try {
-      await loadStateFromDb();
-      if (!state.clients.length && loadLocalState()) {
+      const loaded = await loadStateFromDb();
+      if (!loaded && !state.dbAccessDenied && !state.clients.length && loadLocalState()) {
         state.selectedClient = state.clients[0] || null;
         state.selectedProject = state.clients[0]?.projects?.[0] || null;
         renderClientList();
@@ -3037,7 +3244,7 @@ async function initApp() {
       saveLocalState();
     } catch (err) {
       console.error(err);
-      const hasLocal = loadLocalState();
+      const hasLocal = !state.dbAccessDenied && loadLocalState();
       if (hasLocal) {
         state.selectedClient = state.clients[0] || null;
         state.selectedProject = state.clients[0]?.projects?.[0] || null;
@@ -3071,6 +3278,16 @@ async function initApp() {
 function renderClientList() {
   const list = byId("client-list");
   list.innerHTML = "";
+
+  if (!state.clients.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = state.dbAccessDenied
+      ? "Sem acesso aos projetos cadastrados."
+      : "Nenhum projeto cadastrado.";
+    list.appendChild(empty);
+    return;
+  }
 
   state.clients.forEach((client) => {
     const wrapper = document.createElement("div");
@@ -4286,6 +4503,20 @@ function renderConfig(container) {
           <div id="admin-users-list" class="config-admin-table">Carregando usuarios...</div>
           <div class="config-hint">Para trocar e-mail ou senha, o usuario deve atualizar na propria conta.</div>
         </div>
+
+        <div class="section-header">
+          <div class="header-row">
+            <h2>Grupos de acesso</h2>
+          </div>
+          <div class="muted">Defina quais usuarios visualizam cada cliente.</div>
+        </div>
+        <div class="config-card" id="admin-groups-section">
+          <div class="group-create">
+            <input class="config-input" id="group-name-input" type="text" placeholder="Nome do grupo">
+            <button class="btn sm primary" type="button" id="group-create-btn">Criar grupo</button>
+          </div>
+          <div id="admin-groups-list" class="config-groups">Carregando grupos...</div>
+        </div>
       ` : ""}
     </div>
   `;
@@ -4297,6 +4528,27 @@ function renderConfig(container) {
 
   if (admin) {
     loadAdminUsers();
+    loadAdminGroups();
+    const groupCreateBtn = byId("group-create-btn");
+    if (groupCreateBtn && !groupCreateBtn.dataset.wired) {
+      groupCreateBtn.addEventListener("click", async () => {
+        const input = byId("group-name-input");
+        const name = input?.value.trim() || "";
+        if (!name) {
+          alert("Informe o nome do grupo.");
+          return;
+        }
+        try {
+          await createGroupInDb(name);
+          if (input) input.value = "";
+          await loadAdminGroups();
+        } catch (err) {
+          console.error(err);
+          alert("Nao foi possivel criar o grupo.");
+        }
+      });
+      groupCreateBtn.dataset.wired = "true";
+    }
   }
 }
 
@@ -4405,6 +4657,26 @@ async function loadAdminUsers() {
   }
 }
 
+async function loadAdminGroups() {
+  const list = byId("admin-groups-list");
+  if (!list) return;
+  if (!db) {
+    list.textContent = "Grupos indisponiveis sem Firebase configurado.";
+    return;
+  }
+  try {
+    const groups = await loadGroupsFromDb();
+    state.groups = groups.slice();
+    if (!state.users.length) {
+      state.users = await loadUsersFromDb();
+    }
+    renderAdminGroups(list, groups, state.users);
+  } catch (err) {
+    console.error(err);
+    list.textContent = "Falha ao carregar grupos.";
+  }
+}
+
 function renderAdminUsers(container, users) {
   const rows = users
     .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
@@ -4477,6 +4749,130 @@ function renderAdminUsers(container, users) {
     });
     container.dataset.wired = "true";
   }
+}
+
+function renderAdminGroups(container, groups, users) {
+  const clients = state.clients || [];
+  const groupHtml = groups
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((group) => {
+      const membersHtml = users
+        .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
+        .map((user) => {
+          const name = escapeHtml(user.displayName || user.email || "Usuario");
+          const email = escapeHtml(user.email || "");
+          const isMember = Boolean(group.members?.[user.uid]);
+          return `
+            <label class="config-group-item">
+              <input type="checkbox" data-group-member data-user-id="${escapeHtml(user.uid)}"${isMember ? " checked" : ""}>
+              <span>${name}</span>
+              <small>${email}</small>
+            </label>
+          `;
+        })
+        .join("");
+
+      const clientsHtml = clients
+        .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+        .map((client) => {
+          const isAssigned = Boolean(group.clients?.[client.id]);
+          const clientName = escapeHtml(client.name || "Cliente");
+          return `
+            <label class="config-group-item">
+              <input type="checkbox" data-group-client data-client-id="${escapeHtml(client.id)}"${isAssigned ? " checked" : ""}>
+              <span>${clientName}</span>
+            </label>
+          `;
+        })
+        .join("");
+
+      return `
+        <div class="config-group" data-group-id="${escapeHtml(group.id)}">
+          <div class="config-group-header">
+            <input class="config-input" type="text" value="${escapeHtml(group.name)}" data-group-name>
+            <div class="config-group-actions">
+              <button class="btn sm ghost" type="button" data-group-save>Salvar</button>
+              <button class="btn sm ghost danger" type="button" data-group-delete>Excluir</button>
+            </div>
+          </div>
+          <div class="config-group-columns">
+            <div class="config-group-col">
+              <div class="config-group-title">Usuarios</div>
+              <div class="config-group-list">${membersHtml || "<div class=\"muted\">Sem usuarios</div>"}</div>
+            </div>
+            <div class="config-group-col">
+              <div class="config-group-title">Clientes</div>
+              <div class="config-group-list">${clientsHtml || "<div class=\"muted\">Sem clientes</div>"}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = groupHtml || "<div class=\"muted\">Nenhum grupo cadastrado.</div>";
+
+  if (container.dataset.wired) return;
+  container.dataset.wired = "true";
+
+  container.addEventListener("click", async (e) => {
+    const groupRow = e.target.closest("[data-group-id]");
+    if (!groupRow) return;
+    const groupId = groupRow.dataset.groupId;
+    if (e.target.closest("[data-group-save]")) {
+      const nameInput = groupRow.querySelector("[data-group-name]");
+      const name = nameInput?.value.trim() || "Grupo";
+      try {
+        await updateGroupNameInDb(groupId, name);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    if (e.target.closest("[data-group-delete]")) {
+      const confirmed = window.confirm("Excluir este grupo? Os clientes vinculados ficarao sem grupo.");
+      if (!confirmed) return;
+      try {
+        await deleteGroupFromDb(groupId);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  });
+
+  container.addEventListener("change", async (e) => {
+    const groupRow = e.target.closest("[data-group-id]");
+    if (!groupRow) return;
+    const groupId = groupRow.dataset.groupId;
+    const memberInput = e.target.closest("[data-group-member]");
+    if (memberInput) {
+      const uid = memberInput.dataset.userId;
+      const enabled = memberInput.checked;
+      try {
+        await updateGroupMemberInDb(groupId, uid, enabled);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
+    const clientInput = e.target.closest("[data-group-client]");
+    if (clientInput) {
+      const clientId = clientInput.dataset.clientId;
+      const enabled = clientInput.checked;
+      try {
+        if (enabled) {
+          await assignClientToGroup(clientId, groupId);
+        } else {
+          await removeClientFromGroup(clientId, groupId);
+        }
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  });
 }
 
 function captureScrollPositions() {
@@ -4576,7 +4972,14 @@ function renderMain() {
   }
 
   if (!selectedClient || !selectedProject) {
-    panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Bem-vindo!</h2><p>Selecione um cliente e um projeto na barra lateral para começar.</p></div>`;
+    if (!state.clients.length) {
+      const message = state.dbAccessDenied
+        ? "Sem acesso aos projetos cadastrados. Solicite liberacao ao administrador."
+        : "Nenhum projeto cadastrado no momento.";
+      panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Projetos indisponiveis</h2><p>${message}</p></div>`;
+    } else {
+      panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Bem-vindo!</h2><p>Selecione um cliente e um projeto na barra lateral para começar.</p></div>`;
+    }
     finalizeRender();
     return;
   }
@@ -6669,6 +7072,9 @@ function showLogin() {
   setLoginMode("login");
   state.currentUserEmail = "";
   state.currentUserRole = "user";
+  state.currentUserKey = "";
+  state.dbAccessDenied = false;
+  resetUserState();
   updateRoleNavVisibility();
   byId("login-screen")?.classList.remove("hidden");
   byId("app-shell")?.classList.add("hidden");
@@ -6795,6 +7201,12 @@ async function init() {
       return;
     }
     showApp();
+    const userKey = currentUserKey(user);
+    if (state.currentUserKey && state.currentUserKey !== userKey) {
+      resetUserState();
+    }
+    state.currentUserKey = userKey;
+    state.dbAccessDenied = false;
     state.currentUserEmail = user?.email || "";
     state.currentUserRole = normalizeUserRole(isAdminUser(user) ? "admin" : "user");
     updateUserHeader(user);
