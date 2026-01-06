@@ -845,15 +845,15 @@ function cssVar(name, fallback, rootEl = document.documentElement) {
 
 function getSystemColors(rootEl) {
   return {
-    planned: cssVar("--color-primary", cssVar("--accent-dark", "#2563eb", rootEl), rootEl),
+    planned: cssVar("--color-primary", cssVar("--accent-dark", "#245363", rootEl), rootEl),
     actual: cssVar(
       "--color-accent",
-      cssVar("--color-warning", cssVar("--warning-text", "#f97316", rootEl), rootEl),
+      cssVar("--color-warning", cssVar("--warning-text", "#c76b1a", rootEl), rootEl),
       rootEl
     ),
-    warn: cssVar("--color-warning", cssVar("--warning-text", "#f59e0b", rootEl), rootEl),
-    ok: cssVar("--color-success", cssVar("--success-text", "#16a34a", rootEl), rootEl),
-    danger: cssVar("--color-danger", cssVar("--danger-text", "#ef4444", rootEl), rootEl),
+    warn: cssVar("--color-warning", cssVar("--warning-text", "#c76b1a", rootEl), rootEl),
+    ok: cssVar("--color-success", cssVar("--success-text", "#2f8f61", rootEl), rootEl),
+    danger: cssVar("--color-danger", cssVar("--danger-text", "#9b1c23", rootEl), rootEl),
     grid: cssVar("--color-border", cssVar("--border", "#e5e7eb", rootEl), rootEl),
     text: cssVar("--color-text", cssVar("--text", "#111827", rootEl), rootEl),
     muted: cssVar("--color-muted", cssVar("--muted", "#6b7280", rootEl), rootEl),
@@ -938,22 +938,23 @@ function gapStatusInfo(gap, baselinePct = null, realizedPct = null) {
   if (Number.isFinite(base) && Number.isFinite(real)) {
     const baseRounded = Math.round(base);
     if (baseRounded >= 100 && real < 100) {
-      return { className: "gap-critical", label: "Atraso critico", color: "#B00020" };
+      return { className: "gap-critical", label: "Critico", color: "#9B1C23" };
     }
   }
-  if (gap <= 0) {
-    return { className: "gap-ok", label: "Em dia", color: "#27ae60" };
+  const gapValue = Number(gap);
+  if (gapValue < 0) {
+    return { className: "gap-ok", label: "Adiantado", color: "#2F8F61" };
   }
-  if (gap <= 10) {
-    return { className: "gap-low", label: "Baixo risco", color: "#C0D830" };
+  if (gapValue === 0) {
+    return { className: "gap-ok", label: "Em dia", color: "#2F8F61" };
   }
-  if (gap <= 20) {
-    return { className: "gap-risk", label: "Risco", color: "#F1C40F" };
+  if (gapValue < 10) {
+    return { className: "gap-low", label: "Sob controle", color: "#64748B" };
   }
-  if (gap <= 30) {
-    return { className: "gap-delayed", label: "Em atraso", color: "#E67E22" };
+  if (gapValue < 30) {
+    return { className: "gap-delayed", label: "Alerta", color: "#C76B1A" };
   }
-  return { className: "gap-critical", label: "Atraso critico", color: "#B00020" };
+  return { className: "gap-critical", label: "Critico", color: "#9B1C23" };
 }
 
 function projectBaselinePct(project, progressPct) {
@@ -1552,15 +1553,15 @@ function buildProjectReportStyles() {
       --shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
       --radius: 14px;
 
-      --ok: #16a34a;
-      --warn: #f59e0b;
-      --bad: #ef4444;
+      --ok: #2f8f61;
+      --warn: #c76b1a;
+      --bad: #9b1c23;
 
       --primary: #1ca7a6;
       --primary2: #0b3c5d;
 
       --baseline: #0f172a;
-      --real: #a16207;
+      --real: #c76b1a;
 
       --accent: #1ca7a6;
       --accent-dark: #0b3c5d;
@@ -1783,25 +1784,25 @@ function buildProjectReportStyles() {
       white-space: nowrap;
     }
 
-    .report-page .healthTag.ok { background: rgba(22, 163, 74, 0.10); color: #166534; }
-    .report-page .healthTag.warn { background: rgba(245, 158, 11, 0.12); color: #92400e; }
-    .report-page .healthTag.bad { background: rgba(239, 68, 68, 0.12); color: #991b1b; }
+    .report-page .healthTag.ok { background: rgba(47, 143, 97, 0.12); color: #1f6b4b; }
+    .report-page .healthTag.warn { background: rgba(199, 107, 26, 0.12); color: #9a5a12; }
+    .report-page .healthTag.bad { background: rgba(155, 28, 35, 0.12); color: #9b1c23; }
 
-    .report-page .gap-card.gap-ok { background: rgba(39, 174, 96, 0.10); border-color: rgba(39, 174, 96, 0.24); }
-    .report-page .gap-card.gap-low { background: rgba(192, 216, 48, 0.12); border-color: rgba(192, 216, 48, 0.3); }
-    .report-page .gap-card.gap-risk { background: rgba(241, 196, 15, 0.12); border-color: rgba(241, 196, 15, 0.3); }
-    .report-page .gap-card.gap-delayed { background: rgba(230, 126, 34, 0.12); border-color: rgba(230, 126, 34, 0.3); }
-    .report-page .gap-card.gap-critical { background: rgba(176, 0, 32, 0.12); border-color: rgba(176, 0, 32, 0.3); }
+    .report-page .gap-card.gap-ok { background: rgba(47, 143, 97, 0.10); border-color: rgba(47, 143, 97, 0.24); }
+    .report-page .gap-card.gap-low { background: rgba(100, 116, 139, 0.12); border-color: rgba(100, 116, 139, 0.28); }
+    .report-page .gap-card.gap-risk { background: rgba(199, 107, 26, 0.12); border-color: rgba(199, 107, 26, 0.28); }
+    .report-page .gap-card.gap-delayed { background: rgba(199, 107, 26, 0.18); border-color: rgba(199, 107, 26, 0.32); }
+    .report-page .gap-card.gap-critical { background: rgba(155, 28, 35, 0.12); border-color: rgba(155, 28, 35, 0.3); }
     .report-page .gap-card.gap-ok .kpiValue,
-    .report-page .gap-card.gap-ok .kpiSub { color: #1f8f52; }
+    .report-page .gap-card.gap-ok .kpiSub { color: #2f8f61; }
     .report-page .gap-card.gap-low .kpiValue,
-    .report-page .gap-card.gap-low .kpiSub { color: #6b7a10; }
+    .report-page .gap-card.gap-low .kpiSub { color: #64748b; }
     .report-page .gap-card.gap-risk .kpiValue,
-    .report-page .gap-card.gap-risk .kpiSub { color: #9a7c08; }
+    .report-page .gap-card.gap-risk .kpiSub { color: #b06013; }
     .report-page .gap-card.gap-delayed .kpiValue,
-    .report-page .gap-card.gap-delayed .kpiSub { color: #9a4c10; }
+    .report-page .gap-card.gap-delayed .kpiSub { color: #9c4f0f; }
     .report-page .gap-card.gap-critical .kpiValue,
-    .report-page .gap-card.gap-critical .kpiSub { color: #7a0017; }
+    .report-page .gap-card.gap-critical .kpiSub { color: #9b1c23; }
 
     .report-page .mid {
       display: grid;
@@ -1832,11 +1833,11 @@ function buildProjectReportStyles() {
     }
 
     .report-page .miniStat b { color: var(--text); }
-    .report-page .miniStat.gap.gap-ok b { color: #27ae60; }
-    .report-page .miniStat.gap.gap-low b { color: #6b7a10; }
-    .report-page .miniStat.gap.gap-risk b { color: #9a7c08; }
-    .report-page .miniStat.gap.gap-delayed b { color: #9a4c10; }
-    .report-page .miniStat.gap.gap-critical b { color: #7a0017; }
+    .report-page .miniStat.gap.gap-ok b { color: #2f8f61; }
+    .report-page .miniStat.gap.gap-low b { color: #64748b; }
+    .report-page .miniStat.gap.gap-risk b { color: #b06013; }
+    .report-page .miniStat.gap.gap-delayed b { color: #9c4f0f; }
+    .report-page .miniStat.gap.gap-critical b { color: #9b1c23; }
 
     .report-page .legendDot {
       width: 10px;
@@ -1905,9 +1906,9 @@ function buildProjectReportStyles() {
       white-space: nowrap;
     }
 
-    .report-page .tag.bad { color: #991b1b; background: rgba(239, 68, 68, 0.10); }
-    .report-page .tag.warn { color: #92400e; background: rgba(245, 158, 11, 0.12); }
-    .report-page .tag.ok { color: #166534; background: rgba(22, 163, 74, 0.10); }
+    .report-page .tag.bad { color: #9b1c23; background: rgba(155, 28, 35, 0.12); }
+    .report-page .tag.warn { color: #9a5a12; background: rgba(199, 107, 26, 0.12); }
+    .report-page .tag.ok { color: #1f6b4b; background: rgba(47, 143, 97, 0.12); }
 
     .report-page .bottom {
       display: grid;
@@ -1988,7 +1989,7 @@ function buildOnePageContent({ project, client, metrics, exportMode = false }) {
   const gapLabel = sCurveSeries ? `${formatSignedMetric(gapPP)}pp` : "--";
   const gapStatus = sCurveSeries
     ? gapStatusInfo(gapPP, baselinePct, realizedPct)
-    : { className: "gap-ok", label: "Sem baseline", color: "#27ae60" };
+    : { className: "gap-ok", label: "Sem baseline", color: "#2F8F61" };
   const gapTone = gapStatus.className;
   const gapStatusLabel = gapStatus.label;
 
@@ -2422,13 +2423,13 @@ function exportProjectReportPptx() {
 
   const statusColorMap = {
     planejado: { fill: "F1F2F6", text: "6B7280" },
-    "em-andamento": { fill: "E5F0FF", text: "1B63C3" },
-    atrasado: { fill: "FFE5E5", text: "C01B24" },
-    concluido: { fill: "E6F6ED", text: "1E824C" }
+    "em-andamento": { fill: "E3EDF1", text: "245363" },
+    atrasado: { fill: "F3DEDD", text: "9B1C23" },
+    concluido: { fill: "DFF3E9", text: "1F6B4B" }
   };
   const scheduleColorMap = {
-    "em-dia": { fill: "E6F6ED", text: "1E824C" },
-    "em-atraso": { fill: "FFE5E5", text: "C01B24" }
+    "em-dia": { fill: "DFF3E9", text: "1F6B4B" },
+    "em-atraso": { fill: "F7E8C9", text: "9A5A12" }
   };
   const statusColors = statusColorMap[statusBadge.className] || statusColorMap.planejado;
   const scheduleColors = scheduleColorMap[scheduleBadge.className] || scheduleColorMap["em-dia"];
@@ -2545,9 +2546,9 @@ function exportProjectReportPptx() {
   });
   const summaryItems = [
     { label: "Total", value: schedule.total, fill: "F8FAFC", text: "1F252F" },
-    { label: "Em andamento", value: schedule.inProgress, fill: "E5F0FF", text: "1B63C3" },
+    { label: "Em andamento", value: schedule.inProgress, fill: "E3EDF1", text: "245363" },
     { label: "Nao iniciado", value: schedule.planned, fill: "F1F2F6", text: "6B7280" },
-    { label: "Em atraso", value: schedule.overdue, fill: "FFE5E5", text: "C01B24" }
+    { label: "Em atraso", value: schedule.overdue, fill: "F7E8C9", text: "9A5A12" }
   ];
   summaryItems.forEach((item, idx) => {
     const x = 0.5 + idx * 3.1;
@@ -6049,6 +6050,24 @@ function renderDashboard(container) {
       <button class="btn sm ghost" type="button" data-clear-dashboard-sort>Limpar ordenacao</button>
     </div>
     <div class="muted">Ordenado por atrasos e Go Live mais proximo.</div>
+    <div class="dashboard-legend" role="note" aria-label="Legenda de cores">
+      <div class="legend-group">
+        <span class="legend-title">Status</span>
+        <span class="legend-item"><span class="legend-dot status-atrasado" aria-hidden="true"></span>Atrasado</span>
+        <span class="legend-item"><span class="legend-dot status-andamento" aria-hidden="true"></span>Em andamento</span>
+      </div>
+      <div class="legend-group">
+        <span class="legend-title">Saúde</span>
+        <span class="legend-item"><span class="legend-dot health-atraso" aria-hidden="true"></span>Em Atraso</span>
+        <span class="legend-item"><span class="legend-dot health-dia" aria-hidden="true"></span>Em Dia</span>
+      </div>
+      <div class="legend-group">
+        <span class="legend-title">GAP (pp)</span>
+        <span class="legend-item"><span class="legend-dot gap-critical" aria-hidden="true"></span>+30pp ou mais</span>
+        <span class="legend-item"><span class="legend-dot gap-delayed" aria-hidden="true"></span>+10pp a +29pp</span>
+        <span class="legend-item"><span class="legend-dot gap-ok" aria-hidden="true"></span>Negativo (adiantado)</span>
+      </div>
+    </div>
   `;
 
   const clearSortBtn = header.querySelector("[data-clear-dashboard-sort]");

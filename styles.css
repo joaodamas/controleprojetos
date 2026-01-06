@@ -729,15 +729,15 @@ body {
 }
 
 .progress-bar.previsto-bar.ok {
-  background: #16a34a;
+  background: #2f8f61;
 }
 
 .progress-bar.previsto-bar.warn {
-  background: #f59e0b;
+  background: #c76b1a;
 }
 
 .progress-bar.previsto-bar.bad {
-  background: #ef4444;
+  background: #9b1c23;
 }
 
 .tasks {
@@ -838,28 +838,28 @@ body {
 }
 
 .pill.em-andamento {
-  background: #e5f0ff;
-  color: #1b63c3;
+  background: #e3edf1;
+  color: #245363;
 }
 
 .pill.em-validacao {
-  background: #fff4d4;
-  color: #9a6b00;
+  background: #f7e8c9;
+  color: #9a5a12;
 }
 
 .pill.atrasado {
-  background: var(--accent-tint);
-  color: var(--accent-dark);
+  background: #f3dedd;
+  color: #9b1c23;
 }
 
 .project-status.atrasado {
-  background: #ffe5e5;
-  color: #c01b24;
+  background: #f3dedd;
+  color: #9b1c23;
 }
 
 .pill.concluido {
-  background: #e6f6ed;
-  color: #1e824c;
+  background: #dff3e9;
+  color: #1f6b4b;
 }
 
 .table-filter-popover {

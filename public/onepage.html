@@ -14,15 +14,15 @@
       --shadow:0 6px 18px rgba(15,23,42,.06);
       --radius:14px;
 
-      --ok:#16a34a;
-      --warn:#f59e0b;
-      --bad:#ef4444;
+      --ok:#2f8f61;
+      --warn:#c76b1a;
+      --bad:#9b1c23;
 
       --primary:#0ea5e9;
       --primary2:#2563eb;
 
       --baseline:#0f172a;
-      --real:#a16207;
+      --real:#c76b1a;
 
       --canvas-w: 1040px;
       --canvas-pad: 14px;
@@ -245,25 +245,25 @@
       font-size:12px;
       white-space:nowrap;
     }
-    .healthTag.ok{ background: rgba(22,163,74,.10); color: #166534; }
-    .healthTag.warn{ background: rgba(245,158,11,.12); color: #92400e; }
-    .healthTag.bad{ background: rgba(239,68,68,.12); color: #991b1b; }
+    .healthTag.ok{ background: rgba(47,143,97,.12); color: #1f6b4b; }
+    .healthTag.warn{ background: rgba(199,107,26,.12); color: #9a5a12; }
+    .healthTag.bad{ background: rgba(155,28,35,.12); color: #9b1c23; }
 
-    .gap-card.gap-ok{ background: rgba(39,174,96,.10); border-color: rgba(39,174,96,.24); }
-    .gap-card.gap-low{ background: rgba(192,216,48,.12); border-color: rgba(192,216,48,.3); }
-    .gap-card.gap-risk{ background: rgba(241,196,15,.12); border-color: rgba(241,196,15,.3); }
-    .gap-card.gap-delayed{ background: rgba(230,126,34,.12); border-color: rgba(230,126,34,.3); }
-    .gap-card.gap-critical{ background: rgba(176,0,32,.12); border-color: rgba(176,0,32,.3); }
+    .gap-card.gap-ok{ background: rgba(47,143,97,.10); border-color: rgba(47,143,97,.24); }
+    .gap-card.gap-low{ background: rgba(100,116,139,.12); border-color: rgba(100,116,139,.28); }
+    .gap-card.gap-risk{ background: rgba(199,107,26,.12); border-color: rgba(199,107,26,.28); }
+    .gap-card.gap-delayed{ background: rgba(199,107,26,.18); border-color: rgba(199,107,26,.32); }
+    .gap-card.gap-critical{ background: rgba(155,28,35,.12); border-color: rgba(155,28,35,.3); }
     .gap-card.gap-ok .kpiValue,
-    .gap-card.gap-ok .kpiSub{ color: #1f8f52; }
+    .gap-card.gap-ok .kpiSub{ color: #2f8f61; }
     .gap-card.gap-low .kpiValue,
-    .gap-card.gap-low .kpiSub{ color: #6b7a10; }
+    .gap-card.gap-low .kpiSub{ color: #64748b; }
     .gap-card.gap-risk .kpiValue,
-    .gap-card.gap-risk .kpiSub{ color: #9a7c08; }
+    .gap-card.gap-risk .kpiSub{ color: #b06013; }
     .gap-card.gap-delayed .kpiValue,
-    .gap-card.gap-delayed .kpiSub{ color: #9a4c10; }
+    .gap-card.gap-delayed .kpiSub{ color: #9c4f0f; }
     .gap-card.gap-critical .kpiValue,
-    .gap-card.gap-critical .kpiSub{ color: #7a0017; }
+    .gap-card.gap-critical .kpiSub{ color: #9b1c23; }
 
     /* Mid row: curve + urgent */
     .mid{
@@ -368,9 +368,9 @@
       color: var(--muted);
       white-space:nowrap;
     }
-    .tag.bad{ color:#991b1b; background: rgba(239,68,68,.10); }
-    .tag.warn{ color:#92400e; background: rgba(245,158,11,.12); }
-    .tag.ok{ color:#166534; background: rgba(22,163,74,.10); }
+    .tag.bad{ color:#9b1c23; background: rgba(155,28,35,.12); }
+    .tag.warn{ color:#9a5a12; background: rgba(199,107,26,.12); }
+    .tag.ok{ color:#1f6b4b; background: rgba(47,143,97,.12); }
 
     /* Bottom lists */
     .bottom{
@@ -1360,11 +1360,11 @@
       const plotRight = vbMinX + vbWidth;
 
       const gapColor = (cls) => {
-        if (cls === "gap-ok") return "#27ae60";
-        if (cls === "gap-low") return "#6b7a10";
-        if (cls === "gap-risk") return "#9a7c08";
-        if (cls === "gap-delayed") return "#9a4c10";
-        return "#7a0017";
+        if (cls === "gap-ok") return "#2f8f61";
+        if (cls === "gap-low") return "#64748b";
+        if (cls === "gap-risk") return "#b06013";
+        if (cls === "gap-delayed") return "#9c4f0f";
+        return "#9b1c23";
       };
 
       const findPathPointAtX = (pathEl, xTarget) => {
@@ -1506,14 +1506,14 @@
       const abs = Math.abs(v);
       const status = gapStatusFromValue(v, baselinePct, realizedPct);
       const tone = status.cls === "gap-ok"
-        ? "#27ae60"
+        ? "#2f8f61"
         : status.cls === "gap-low"
-          ? "#6b7a10"
+          ? "#64748b"
           : status.cls === "gap-risk"
-            ? "#9a7c08"
+            ? "#b06013"
             : status.cls === "gap-delayed"
-              ? "#9a4c10"
-              : "#7a0017";
+              ? "#9c4f0f"
+              : "#9b1c23";
       return `<span style="color:${tone}; font-weight:800">${sign}${abs}pp</span>`;
     }
 
