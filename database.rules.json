@@ -4,6 +4,14 @@
       ".read": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || auth.token.email === 'lucas.bonna@bbpaper.com.br' || auth.token.email === 'mario.zuchieri@bbpaper.com.br')",
       ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || auth.token.email === 'lucas.bonna@bbpaper.com.br' || auth.token.email === 'mario.zuchieri@bbpaper.com.br')"
     },
+    "users": {
+      ".read": "auth != null && auth.token.email === 'joaodamasit@gmail.com'",
+      ".write": "auth != null && auth.token.email === 'joaodamasit@gmail.com'",
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'joaodamasit@gmail.com')",
+        ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || (auth.uid === $uid && (!data.exists() || newData.child('role').val() == data.child('role').val()) && newData.child('role').val() != 'admin'))"
+      }
+    },
     ".read": false,
     ".write": false
   }

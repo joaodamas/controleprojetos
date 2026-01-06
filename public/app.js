@@ -207,6 +207,9 @@ const state = {
     { name: "Ana Lima", role: "Gestora de Projetos", email: "ana.lima@empresa.com" }
   ],
   improvements: [],
+  users: [],
+  currentUserEmail: "",
+  currentUserRole: "user",
   selectedClient: null,
   selectedProject: null,
   collapsedPhases: {},
@@ -232,6 +235,7 @@ const state = {
 };
 
 const LOCAL_STORAGE_KEY = "controle_projetos_state_v1";
+const ADMIN_EMAILS = new Set(["joaodamasit@gmail.com"]);
 
 const STATUS_OPTIONS = [
   { value: "planejado", label: "Nao iniciado", className: "planejado" },
@@ -384,6 +388,54 @@ function setCrumbPathProject(client, project) {
     `<button type="button" class="crumb-link" data-crumb="client">${clientLabel}</button>` +
     `<span class="crumb-sep">/</span>` +
     `<button type="button" class="crumb-link current" data-crumb="project">${projectLabel}</button>`;
+}
+
+function isAdminEmail(email) {
+  if (!email) return false;
+  return ADMIN_EMAILS.has(String(email).trim().toLowerCase());
+}
+
+function isAdminUser(user = auth?.currentUser) {
+  return isAdminEmail(user?.email);
+}
+
+async function loadCurrentUserRole(user = auth?.currentUser) {
+  const fallbackRole = isAdminUser(user) ? "admin" : "user";
+  if (!db || !user?.uid) {
+    state.currentUserRole = fallbackRole;
+    state.currentUserEmail = user?.email || "";
+    return fallbackRole;
+  }
+  try {
+    const snapshot = await db.ref(`users/${user.uid}`).once("value");
+    const data = snapshot.val() || {};
+    const role = data.role || fallbackRole;
+    state.currentUserRole = role;
+    state.currentUserEmail = user?.email || "";
+    return role;
+  } catch (err) {
+    console.warn("Nao foi possivel carregar o perfil do usuario.", err);
+    state.currentUserRole = fallbackRole;
+    state.currentUserEmail = user?.email || "";
+    return fallbackRole;
+  }
+}
+
+function initialsFromName(name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return "U";
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function updateUserHeader(user) {
+  const nameEl = document.querySelector(".user-name");
+  const avatarEl = document.querySelector(".user-avatar");
+  if (!nameEl && !avatarEl) return;
+  const label = user?.displayName || user?.email || "Usuario";
+  if (nameEl) nameEl.textContent = label;
+  if (avatarEl) avatarEl.textContent = initialsFromName(label);
 }
 
 function normStatus(value) {
@@ -2753,6 +2805,11 @@ function normalizePackageLabel(label) {
   return label.trim().replace(/\s+/g, " ");
 }
 
+function normalizePhaseLabel(label) {
+  const value = String(label || "").trim();
+  return value ? value.toUpperCase() : "OUTROS";
+}
+
 function parsePackageTitle(title) {
   if (!title) return "";
   const match = title.trim().match(/^PACOTE\s*\d+/i);
@@ -2896,6 +2953,47 @@ async function loadStateFromDb(keepSelection = null) {
   renderClientList();
   renderMain();
   hydrateClientSelect();
+}
+
+async function syncUserProfile(user) {
+  if (!db || !user?.uid) return;
+  const profileRef = db.ref(`users/${user.uid}`);
+  const snapshot = await profileRef.once("value");
+  const existing = snapshot.val() || {};
+  const role = isAdminUser(user) ? "admin" : (existing.role || "user");
+  const payload = {
+    uid: user.uid,
+    email: user.email || "",
+    displayName: user.displayName || "",
+    role,
+    lastLoginAt: firebase.database.ServerValue.TIMESTAMP
+  };
+  if (!snapshot.exists()) {
+    payload.createdAt = firebase.database.ServerValue.TIMESTAMP;
+  }
+  await profileRef.update(payload);
+}
+
+async function loadUsersFromDb() {
+  if (!db) return [];
+  const snapshot = await db.ref("users").once("value");
+  const raw = snapshot.val() || {};
+  return Object.entries(raw).map(([uid, data]) => ({
+    uid,
+    email: data?.email || "",
+    displayName: data?.displayName || "",
+    role: data?.role || (isAdminEmail(data?.email) ? "admin" : "user"),
+    createdAt: data?.createdAt || null,
+    lastLoginAt: data?.lastLoginAt || null
+  }));
+}
+
+async function updateUserProfileInDb(uid, payload) {
+  if (!db || !uid) return;
+  await db.ref(`users/${uid}`).update({
+    ...payload,
+    updatedAt: firebase.database.ServerValue.TIMESTAMP
+  });
 }
 
 async function initApp() {
@@ -3261,11 +3359,14 @@ function updateTopActions() {
   const openProjectBtn = byId("open-project-modal");
   const editProjectBtn = byId("edit-project-btn");
   const openEmployeeBtn = byId("open-employee-modal");
+  const openGanttBtn = byId("open-gantt-btn");
   const isHome = state.currentSection === "inicio";
+  const isConfig = state.currentSection === "config";
   const isProject = state.currentSection === "meus-projetos";
-  if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome);
-  if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome);
+  if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome || isConfig);
+  if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome || isConfig);
   if (editProjectBtn) editProjectBtn.classList.toggle("hidden", !isProject);
+  if (openGanttBtn) openGanttBtn.disabled = !state.selectedProject;
 }
 
 function renderHome(container) {
@@ -3472,6 +3573,528 @@ function renderMonitorActivities(container) {
   container.appendChild(list);
 }
 
+function openGanttModal() {
+  const modal = byId("gantt-modal");
+  if (!modal) return;
+  renderGanttModal();
+  showModal(modal);
+}
+
+function renderGanttModal() {
+  const container = byId("gantt-content");
+  if (!container) return;
+  const titleEl = byId("gantt-title");
+  const subtitleEl = byId("gantt-subtitle");
+  const footerRight = byId("gantt-footer-right");
+
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+
+  if (!project) {
+    if (titleEl) titleEl.textContent = "Cronograma do Projeto";
+    if (subtitleEl) subtitleEl.textContent = "Selecione um projeto para visualizar o Gantt.";
+    if (footerRight) footerRight.textContent = "";
+    container.innerHTML = `<div class="gantt-empty">Selecione um projeto para gerar o Gantt.</div>`;
+    return;
+  }
+
+  if (titleEl) titleEl.textContent = project.name || "Cronograma do Projeto";
+  if (subtitleEl) {
+    const clientLabel = client?.name ? `Cliente: ${client.name}` : "Projeto selecionado";
+    subtitleEl.textContent = clientLabel;
+  }
+
+  const tasks = flattenProjectTasks(project);
+  if (!tasks.length) {
+    if (footerRight) footerRight.textContent = "";
+    container.innerHTML = `<div class="gantt-empty">Nenhuma atividade cadastrada.</div>`;
+    return;
+  }
+
+  const normalizedTasks = tasks.map((task, idx) => {
+    const title = taskTitle(task);
+    const phase = normalizePhaseLabel(task.phase || task.epic || task.stage || "OUTROS");
+    const startRaw = taskStartStr(task) || taskDateStr(task);
+    const endRaw = taskDueStr(task) || taskDateStr(task);
+    let startDate = parseTaskDate(startRaw);
+    let endDate = parseTaskDate(endRaw);
+    if (!startDate && endDate) startDate = endDate;
+    if (!endDate && startDate) endDate = startDate;
+    const noDate = !startDate && !endDate;
+    if (startDate && endDate && endDate < startDate) {
+      const tmp = startDate;
+      startDate = endDate;
+      endDate = tmp;
+    }
+    const progress = taskProgressValue(task);
+    const gapValue = Number(
+      task?.gap ?? task?.gapPP ?? task?.gapPct ?? task?.gapPercent ?? task?.gapValue ?? Number.NaN
+    );
+    const done = progress >= 100 || isDoneTask(task);
+    const overdue = Number.isFinite(gapValue) ? gapValue > 0 : isOverdueTask(task);
+    const statusClass = done ? "is-done" : overdue ? "is-late" : "is-ok";
+    return {
+      id: task?.id || `task-${idx}`,
+      title,
+      phase,
+      startDate,
+      endDate,
+      startRaw,
+      endRaw,
+      progress,
+      statusClass,
+      noDate
+    };
+  });
+
+  const datedTasks = normalizedTasks.filter((task) => !task.noDate);
+  const taskMinTs = datedTasks.length ? Math.min(...datedTasks.map((task) => task.startDate.getTime())) : null;
+  const taskMaxTs = datedTasks.length ? Math.max(...datedTasks.map((task) => task.endDate.getTime())) : null;
+  const projectStart = parseDateSafe(project?.start || project?.startDate);
+  const projectEnd = parseDateSafe(project?.end || project?.goLive || project?.goLiveDate);
+  let rangeStart = projectStart
+    ? startOfDay(projectStart)
+    : taskMinTs
+      ? startOfDay(new Date(taskMinTs))
+      : startOfDay(new Date());
+  let rangeEnd = projectEnd
+    ? startOfDay(projectEnd)
+    : taskMaxTs
+      ? startOfDay(new Date(taskMaxTs))
+      : addDays(rangeStart, 1);
+  if (taskMinTs != null && taskMinTs < rangeStart.getTime()) {
+    rangeStart = startOfDay(new Date(taskMinTs));
+  }
+  if (taskMaxTs != null && taskMaxTs > rangeEnd.getTime()) {
+    rangeEnd = startOfDay(new Date(taskMaxTs));
+  }
+  if (rangeEnd.getTime() < rangeStart.getTime()) {
+    const tmp = rangeStart;
+    rangeStart = rangeEnd;
+    rangeEnd = tmp;
+  }
+  if (rangeEnd.getTime() === rangeStart.getTime()) {
+    rangeEnd = addDays(rangeStart, 1);
+  }
+  const minTs = rangeStart.getTime();
+  const maxTs = rangeEnd.getTime();
+  const rangeMs = Math.max(1, maxTs - minTs);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const formatTsBR = (ts) => {
+    const dt = new Date(ts);
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    const yyyy = dt.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const timelineTicks = [];
+  const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+  const tickStart = new Date(new Date(minTs).getFullYear(), new Date(minTs).getMonth(), 1);
+  const tickEnd = new Date(new Date(maxTs).getFullYear(), new Date(maxTs).getMonth(), 1);
+  for (let d = new Date(tickStart); d <= tickEnd; d.setMonth(d.getMonth() + 1)) {
+    const left = ((d.getTime() - minTs) / rangeMs) * 100;
+    timelineTicks.push({
+      label: `${months[d.getMonth()]} ${d.getFullYear()}`,
+      left: Math.max(0, Math.min(100, left))
+    });
+  }
+
+  const todayTs = todayStartTs();
+  const todayLeft = todayTs >= minTs && todayTs <= maxTs ? ((todayTs - minTs) / rangeMs) * 100 : null;
+  const startLabel = formatTsBR(minTs);
+  const endLabel = formatTsBR(maxTs);
+
+  const groupMap = new Map();
+  normalizedTasks.forEach((task) => {
+    if (!groupMap.has(task.phase)) groupMap.set(task.phase, []);
+    groupMap.get(task.phase).push(task);
+  });
+
+  const ganttPhaseOrder = new Map([
+    ["LEVANTAMENTO", 0],
+    ["DESENVOLVIMENTO", 1],
+    ["TESTES", 3],
+    ["DEPLOY", 4]
+  ]);
+  const groups = Array.from(groupMap.entries()).sort((a, b) => {
+    const aRank = ganttPhaseOrder.has(a[0]) ? ganttPhaseOrder.get(a[0]) : 2;
+    const bRank = ganttPhaseOrder.has(b[0]) ? ganttPhaseOrder.get(b[0]) : 2;
+    if (aRank !== bRank) return aRank - bRank;
+    return a[0].localeCompare(b[0]);
+  });
+
+  const groupsHtml = groups
+    .map(([phase, groupTasks]) => {
+      const anyLate = groupTasks.some((task) => task.statusClass === "is-late");
+      const allDone = groupTasks.every((task) => task.statusClass === "is-done");
+      const epicColor = allDone ? "#2f8f61" : anyLate ? "#9b1c23" : "#245363";
+      const progressAvg = groupTasks.length
+        ? Math.round(groupTasks.reduce((acc, task) => acc + (task.progress || 0), 0) / groupTasks.length)
+        : 0;
+      const tasksHtml = groupTasks
+        .sort((a, b) => {
+          if (a.noDate && b.noDate) return a.title.localeCompare(b.title);
+          if (a.noDate) return 1;
+          if (b.noDate) return -1;
+          return a.startDate.getTime() - b.startDate.getTime();
+        })
+        .map((task) => {
+          if (task.noDate) {
+            return `
+              <div class="gantt-row">
+                <div class="gantt-task-info">
+                  <div class="gantt-task-title">${escapeHtml(task.title)}</div>
+                </div>
+                <div class="gantt-task-bar no-date">
+                  <span class="gantt-task-meta">Sem datas definidas</span>
+                </div>
+              </div>
+            `;
+          }
+          const startTs = task.startDate.getTime();
+          const endTs = task.endDate.getTime();
+          const spanMs = Math.max(dayMs, endTs - startTs);
+          let leftPct = ((startTs - minTs) / rangeMs) * 100;
+          let widthPct = (spanMs / rangeMs) * 100;
+          if (!Number.isFinite(leftPct)) leftPct = 0;
+          if (!Number.isFinite(widthPct)) widthPct = 1.5;
+          widthPct = Math.max(widthPct, 1.5);
+          if (widthPct > 100) widthPct = 100;
+          leftPct = Math.max(0, Math.min(100 - widthPct, leftPct));
+          const progressValue = Number.isFinite(task.progress) ? task.progress : 0;
+          const progressPct = Math.max(0, Math.min(100, Math.round(progressValue)));
+          const isCompact = widthPct < 5;
+          const labelSide = leftPct + widthPct > 92 ? "label-left" : "label-right";
+          const compactClass = isCompact ? "is-compact" : "";
+          const labelClass = isCompact ? labelSide : "";
+          return `
+            <div class="gantt-row">
+              <div class="gantt-task-info">
+                <div class="gantt-task-title">${escapeHtml(task.title)}</div>
+              </div>
+              <div class="gantt-task-bar">
+                <div class="gantt-bar ${task.statusClass} ${compactClass}" style="left:${leftPct.toFixed(2)}%; width:${widthPct.toFixed(2)}%;">
+                  <div class="gantt-bar-fill" style="width:${progressPct}%;"></div>
+                  <span class="gantt-bar-label ${labelClass}">${progressPct}%</span>
+                </div>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+      return `
+        <section class="gantt-group">
+          <div class="gantt-group-header">
+            <span>${escapeHtml(phase)}</span>
+            <div class="gantt-epic-track">
+              <span style="width:${progressAvg}%; background:${epicColor};"></span>
+            </div>
+          </div>
+          ${tasksHtml || "<div class=\"gantt-empty\">Nenhuma atividade neste grupo.</div>"}
+        </section>
+      `;
+    })
+    .join("");
+
+  const ticksHtml = timelineTicks
+    .map((tick) => `<div class="gantt-tick" style="left:${tick.left.toFixed(2)}%"><span>${tick.label}</span></div>`)
+    .join("");
+  const todayHtml = todayLeft == null ? "" : `<div class="gantt-today" style="left:${todayLeft.toFixed(2)}%"></div>`;
+
+  container.innerHTML = `
+    <div class="gantt-canvas">
+      <div class="gantt-timeline">
+        ${ticksHtml}
+        ${todayHtml}
+      </div>
+      <div class="gantt-content">
+        <div class="gantt-top-row">
+          <div class="gantt-top-label">Estrutura / Epicos</div>
+          <div class="gantt-top-timeline">
+            <span>Inicio: ${startLabel}</span>
+            <span>Go Live: ${endLabel}</span>
+            <div class="gantt-top-line"></div>
+          </div>
+        </div>
+        ${groupsHtml}
+      </div>
+    </div>
+  `;
+
+  if (footerRight) {
+    footerRight.textContent = "";
+  }
+}
+
+function renderConfig(container) {
+  setCrumbPathText("Configuracoes");
+  const user = auth?.currentUser || null;
+  const displayName = user?.displayName || "";
+  const email = state.currentUserEmail || user?.email || "";
+  const admin = state.currentUserRole === "admin";
+
+  container.innerHTML = `
+    <div class="config-page span-all">
+      <div class="section-header">
+        <div class="header-row">
+          <h2>Configuracoes da conta</h2>
+        </div>
+        <div class="muted">Atualize seu nome, e-mail ou senha de acesso.</div>
+      </div>
+
+      <div class="config-grid">
+        <div class="config-card">
+          <form id="account-form" class="form">
+            <label>
+              Nome completo
+              <input id="account-name" type="text" value="${escapeHtml(displayName)}" placeholder="Seu nome completo">
+            </label>
+            <label>
+              E-mail
+              <input id="account-email" type="email" value="${escapeHtml(email)}" placeholder="seu@email.com">
+            </label>
+            <label>
+              Senha atual
+              <input id="account-current-password" type="password" placeholder="Obrigatoria para trocar e-mail ou senha" autocomplete="current-password">
+            </label>
+            <div class="form-grid">
+              <label>
+                Nova senha
+                <input id="account-new-password" type="password" placeholder="Nova senha" autocomplete="new-password">
+              </label>
+              <label>
+                Confirmar senha
+                <input id="account-confirm-password" type="password" placeholder="Repita a nova senha" autocomplete="new-password">
+              </label>
+            </div>
+            <div class="config-hint">Para alterar e-mail ou senha, confirme sua senha atual.</div>
+            <div class="config-actions">
+              <button class="btn primary" type="submit">Salvar alteracoes</button>
+            </div>
+            <p id="account-error" class="config-message error hidden"></p>
+            <p id="account-success" class="config-message success hidden"></p>
+          </form>
+        </div>
+
+        <div class="config-card">
+          <div class="config-card-title">Dados da conta</div>
+          <div class="config-info">
+            <div>
+              <div class="config-info-label">Usuario</div>
+              <div class="config-info-value" id="config-info-name">${escapeHtml(displayName || "Nao informado")}</div>
+            </div>
+            <div>
+              <div class="config-info-label">E-mail</div>
+              <div class="config-info-value" id="config-info-email">${escapeHtml(email || "-")}</div>
+            </div>
+            <div>
+              <div class="config-info-label">Perfil</div>
+              <div class="config-info-value">${admin ? "Administrador" : "Usuario"}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      ${admin ? `
+        <div class="section-header">
+          <div class="header-row">
+            <h2>Usuarios da plataforma</h2>
+          </div>
+          <div class="muted">Somente administradores podem visualizar e editar cadastros internos.</div>
+        </div>
+        <div class="config-card" id="admin-users-section">
+          <div id="admin-users-list" class="config-admin-table">Carregando usuarios...</div>
+          <div class="config-hint">Para trocar e-mail ou senha, o usuario deve atualizar na propria conta.</div>
+        </div>
+      ` : ""}
+    </div>
+  `;
+
+  const form = byId("account-form");
+  if (form) {
+    form.addEventListener("submit", handleAccountUpdate);
+  }
+
+  if (admin) {
+    loadAdminUsers();
+  }
+}
+
+async function handleAccountUpdate(e) {
+  e.preventDefault();
+  const user = auth?.currentUser;
+  if (!user) {
+    setAccountMessage("error", "Usuario nao autenticado.");
+    return;
+  }
+  const nameInput = byId("account-name");
+  const emailInput = byId("account-email");
+  const currentPassInput = byId("account-current-password");
+  const newPassInput = byId("account-new-password");
+  const confirmPassInput = byId("account-confirm-password");
+
+  const newName = nameInput?.value.trim() || "";
+  const newEmail = emailInput?.value.trim() || "";
+  const currentPassword = currentPassInput?.value || "";
+  const newPassword = newPassInput?.value || "";
+  const confirmPassword = confirmPassInput?.value || "";
+
+  setAccountMessage("", "");
+
+  if (!newEmail) {
+    setAccountMessage("error", "Informe um e-mail valido.");
+    return;
+  }
+  if (newPassword && newPassword.length < 6) {
+    setAccountMessage("error", "A nova senha precisa ter ao menos 6 caracteres.");
+    return;
+  }
+  if (newPassword && newPassword !== confirmPassword) {
+    setAccountMessage("error", "As novas senhas nao conferem.");
+    return;
+  }
+
+  const needsEmailUpdate = newEmail && newEmail !== user.email;
+  const needsPasswordUpdate = Boolean(newPassword);
+
+  try {
+    if (needsEmailUpdate || needsPasswordUpdate) {
+      await reauthenticateUser(user, currentPassword);
+    }
+    if (newName && newName !== user.displayName) {
+      await user.updateProfile({ displayName: newName });
+    }
+    if (needsEmailUpdate) {
+      await user.updateEmail(newEmail);
+    }
+    if (needsPasswordUpdate) {
+      await user.updatePassword(newPassword);
+    }
+    await syncUserProfile(user);
+    await loadCurrentUserRole(user);
+    updateUserHeader(user);
+    setAccountMessage("success", "Dados atualizados com sucesso.");
+    if (currentPassInput) currentPassInput.value = "";
+    if (newPassInput) newPassInput.value = "";
+    if (confirmPassInput) confirmPassInput.value = "";
+    const infoName = byId("config-info-name");
+    if (infoName && newName) infoName.textContent = newName;
+    const infoEmail = byId("config-info-email");
+    if (infoEmail && needsEmailUpdate) infoEmail.textContent = newEmail;
+    if (needsEmailUpdate) state.currentUserEmail = newEmail;
+  } catch (err) {
+    console.error(err);
+    if (err?.code === "auth/requires-recent-login") {
+      setAccountMessage("error", "Confirme sua autenticacao para atualizar dados sensiveis.");
+      return;
+    }
+    if (err?.code === "auth/wrong-password") {
+      setAccountMessage("error", "Senha atual incorreta.");
+      return;
+    }
+    if (err?.code === "auth/invalid-email") {
+      setAccountMessage("error", "E-mail invalido.");
+      return;
+    }
+    if (err?.code === "auth/email-already-in-use") {
+      setAccountMessage("error", "E-mail ja esta em uso.");
+      return;
+    }
+    if (err?.message) {
+      setAccountMessage("error", err.message);
+      return;
+    }
+    setAccountMessage("error", "Nao foi possivel atualizar os dados.");
+  }
+}
+
+async function loadAdminUsers() {
+  const list = byId("admin-users-list");
+  if (!list) return;
+  if (!db) {
+    list.textContent = "Usuarios indisponiveis sem Firebase configurado.";
+    return;
+  }
+  try {
+    const users = await loadUsersFromDb();
+    state.users = users.slice();
+    renderAdminUsers(list, users);
+  } catch (err) {
+    console.error(err);
+    list.textContent = "Falha ao carregar usuarios.";
+  }
+}
+
+function renderAdminUsers(container, users) {
+  const rows = users
+    .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
+    .map((user) => {
+      const email = escapeHtml(user.email || "");
+      const name = escapeHtml(user.displayName || "");
+      const isMaster = isAdminEmail(user.email);
+      const role = user.role === "admin" ? "admin" : "user";
+      return `
+        <div class="config-admin-row" data-user-id="${escapeHtml(user.uid)}">
+          <input class="config-input" type="text" value="${name}" placeholder="Nome" data-user-name>
+          <div class="config-user-email">${email || "-"}</div>
+          <select class="config-input" data-user-role ${isMaster ? "disabled" : ""}>
+            <option value="user"${role === "user" ? " selected" : ""}>Usuario</option>
+            <option value="admin"${role === "admin" ? " selected" : ""}>Administrador</option>
+          </select>
+          <button class="btn sm ghost" type="button" data-user-save ${isMaster ? "disabled" : ""}>Salvar</button>
+          <div class="config-admin-status" data-user-status></div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <div class="config-admin-row header">
+      <div>Nome</div>
+      <div>E-mail</div>
+      <div>Perfil</div>
+      <div>Acoes</div>
+      <div></div>
+    </div>
+    ${rows || "<div class=\"muted\">Nenhum usuario cadastrado.</div>"}
+  `;
+
+  if (!container.dataset.wired) {
+    container.addEventListener("click", async (e) => {
+      const button = e.target.closest("[data-user-save]");
+      if (!button) return;
+      const row = button.closest("[data-user-id]");
+      if (!row) return;
+      const uid = row.dataset.userId;
+      const nameInput = row.querySelector("[data-user-name]");
+      const roleSelect = row.querySelector("[data-user-role]");
+      const status = row.querySelector("[data-user-status]");
+      const newName = nameInput?.value.trim() || "";
+      const newRole = roleSelect?.value === "admin" ? "admin" : "user";
+      if (status) {
+        status.textContent = "Salvando...";
+        status.classList.remove("error");
+        status.classList.remove("success");
+      }
+      try {
+        await updateUserProfileInDb(uid, { displayName: newName, role: newRole });
+        if (status) {
+          status.textContent = "Salvo.";
+          status.classList.add("success");
+        }
+      } catch (err) {
+        console.error(err);
+        if (status) {
+          status.textContent = "Erro ao salvar.";
+          status.classList.add("error");
+        }
+      }
+    });
+    container.dataset.wired = "true";
+  }
+}
+
 function captureScrollPositions() {
   const positions = {};
   document.querySelectorAll("[data-preserve-scroll]").forEach((el) => {
@@ -3552,6 +4175,12 @@ function renderMain() {
 
   if (state.currentSection === "monitor") {
     renderMonitorActivities(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "config") {
+    renderConfig(panels);
     finalizeRender();
     return;
   }
@@ -3880,12 +4509,14 @@ function wireModals() {
   const clientModal = byId("client-modal");
   const activityModal = byId("activity-modal");
   const monitorTaskModal = byId("monitor-task-modal");
+  const ganttModal = byId("gantt-modal");
   const deleteProjectBtn = byId("delete-project-btn");
   const deleteClientBtn = byId("delete-client-btn");
 
   const openProjectBtn = byId("open-project-modal");
   const editProjectBtn = byId("edit-project-btn");
   const openEmployeeBtn = byId("open-employee-modal");
+  const openGanttBtn = byId("open-gantt-btn");
 
   if (openProjectBtn) {
     openProjectBtn.addEventListener("click", () => openProjectModal("new"));
@@ -3895,6 +4526,9 @@ function wireModals() {
   }
   if (openEmployeeBtn && employeeModal) {
     openEmployeeBtn.addEventListener("click", () => showModal(employeeModal));
+  }
+  if (openGanttBtn) {
+    openGanttBtn.addEventListener("click", () => openGanttModal());
   }
   document.body.addEventListener("click", (e) => {
     if (e.target.closest("[data-open-activity]")) {
@@ -3924,6 +4558,7 @@ function wireModals() {
       if (clientModal) hideModal(clientModal);
       if (activityModal) hideModal(activityModal);
       if (monitorTaskModal) hideModal(monitorTaskModal);
+      if (ganttModal) hideModal(ganttModal);
       resetProjectModal();
       resetClientModal();
       resetActivityModal();
@@ -5559,14 +6194,94 @@ function hideExportPopover() {
   popover.classList.remove("show");
 }
 
-function showLogin() {
-  byId("login-screen")?.classList.remove("hidden");
-  byId("app-shell")?.classList.add("hidden");
-  const errEl = byId("login-error");
+function setAccountMessage(type, message) {
+  const errEl = byId("account-error");
+  const successEl = byId("account-success");
   if (errEl) {
     errEl.textContent = "";
     errEl.classList.add("hidden");
   }
+  if (successEl) {
+    successEl.textContent = "";
+    successEl.classList.add("hidden");
+  }
+  if (!message) return;
+  if (type === "success" && successEl) {
+    successEl.textContent = message;
+    successEl.classList.remove("hidden");
+    return;
+  }
+  if (errEl) {
+    errEl.textContent = message;
+    errEl.classList.remove("hidden");
+  }
+}
+
+async function reauthenticateUser(user, currentPassword) {
+  if (!user) throw new Error("Usuario nao autenticado.");
+  const providers = user.providerData || [];
+  const hasPassword = providers.some((p) => p.providerId === "password");
+  if (hasPassword) {
+    if (!currentPassword) {
+      throw new Error("Informe sua senha atual para continuar.");
+    }
+    const credential = firebase.auth.EmailAuthProvider.credential(user.email || "", currentPassword);
+    await user.reauthenticateWithCredential(credential);
+    return;
+  }
+  const hasGoogle = providers.some((p) => p.providerId === "google.com");
+  if (hasGoogle) {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    await user.reauthenticateWithPopup(provider);
+    return;
+  }
+  throw new Error("Reautenticacao necessaria. Faca login novamente.");
+}
+
+function setLoginError(message) {
+  const errEl = byId("login-error");
+  if (!errEl) return;
+  if (!message) {
+    errEl.textContent = "";
+    errEl.classList.add("hidden");
+    return;
+  }
+  errEl.textContent = message;
+  errEl.classList.remove("hidden");
+}
+
+function getLoginMode() {
+  const card = byId("login-card");
+  return card?.dataset.mode === "signup" ? "signup" : "login";
+}
+
+function setLoginMode(mode) {
+  const card = byId("login-card");
+  if (!card) return;
+  const nextMode = mode === "signup" ? "signup" : "login";
+  card.dataset.mode = nextMode;
+  const title = byId("login-title");
+  if (title) title.textContent = nextMode === "signup" ? "Criar conta" : "Entrar";
+  const submit = byId("login-submit");
+  if (submit) submit.textContent = nextMode === "signup" ? "Criar conta" : "Entrar";
+  const switchText = byId("login-switch-text");
+  if (switchText) switchText.textContent = nextMode === "signup" ? "Ja tem conta?" : "Nao tem conta?";
+  const switchBtn = byId("login-switch-btn");
+  if (switchBtn) switchBtn.textContent = nextMode === "signup" ? "Entrar" : "Criar conta";
+  const passInput = byId("login-password");
+  if (passInput) {
+    passInput.autocomplete = nextMode === "signup" ? "new-password" : "current-password";
+  }
+  setLoginError("");
+}
+
+function showLogin() {
+  setLoginMode("login");
+  state.currentUserEmail = "";
+  state.currentUserRole = "user";
+  byId("login-screen")?.classList.remove("hidden");
+  byId("app-shell")?.classList.add("hidden");
+  setLoginError("");
 }
 
 function showApp() {
@@ -5577,37 +6292,91 @@ function showApp() {
 function wireLogin() {
   const form = byId("login-form");
   if (!form || form.dataset.wired) return;
+  const switchBtn = byId("login-switch-btn");
+  if (switchBtn) {
+    switchBtn.addEventListener("click", () => {
+      const current = getLoginMode();
+      setLoginMode(current === "signup" ? "login" : "signup");
+    });
+  }
+  const googleBtn = byId("login-google");
+  if (googleBtn) {
+    googleBtn.addEventListener("click", async () => {
+      setLoginError("");
+      if (!auth) {
+        setLoginError("Login indisponivel no momento. Tente novamente.");
+        return;
+      }
+      try {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        await auth.signInWithPopup(provider);
+      } catch (err) {
+        console.error(err);
+        setLoginError("Falha no login com Google. Tente novamente.");
+      }
+    });
+  }
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const mode = getLoginMode();
+    const name = byId("login-name")?.value.trim() || "";
     const email = byId("login-email")?.value.trim() || "";
     const pass = byId("login-password")?.value || "";
-    const errEl = byId("login-error");
-    if (errEl) {
-      errEl.textContent = "";
-      errEl.classList.add("hidden");
-    }
-    if (!email || !pass) {
-      if (errEl) {
-        errEl.textContent = "Falha no login. Verifique e-mail e senha.";
-        errEl.classList.remove("hidden");
+    const passConfirm = byId("login-password-confirm")?.value || "";
+    setLoginError("");
+    if (mode === "signup") {
+      if (!name || !email || !pass) {
+        setLoginError("Preencha nome, e-mail e senha para criar a conta.");
+        return;
       }
+      if (pass.length < 6) {
+        setLoginError("A senha precisa ter ao menos 6 caracteres.");
+        return;
+      }
+      if (pass !== passConfirm) {
+        setLoginError("As senhas nao conferem.");
+        return;
+      }
+    } else if (!email || !pass) {
+      setLoginError("Falha no login. Verifique e-mail e senha.");
       return;
     }
     if (!auth) {
-      if (errEl) {
-        errEl.textContent = "Login indisponivel no momento. Tente novamente.";
-        errEl.classList.remove("hidden");
-      }
+      setLoginError("Login indisponivel no momento. Tente novamente.");
       return;
     }
     try {
-      await auth.signInWithEmailAndPassword(email, pass);
+      if (mode === "signup") {
+        const cred = await auth.createUserWithEmailAndPassword(email, pass);
+        if (cred?.user && name) {
+          await cred.user.updateProfile({ displayName: name });
+        }
+      } else {
+        await auth.signInWithEmailAndPassword(email, pass);
+      }
     } catch (err) {
       console.error(err);
-      if (errEl) {
-        errEl.textContent = "Falha no login. Verifique e-mail e senha.";
-        errEl.classList.remove("hidden");
+      if (mode === "signup") {
+        if (err?.code === "auth/email-already-in-use") {
+          setLoginError("E-mail ja cadastrado. Use outro e-mail.");
+          return;
+        }
+        if (err?.code === "auth/invalid-email") {
+          setLoginError("E-mail invalido. Verifique o formato.");
+          return;
+        }
+        if (err?.code === "auth/weak-password") {
+          setLoginError("Senha fraca. Use ao menos 6 caracteres.");
+          return;
+        }
+        setLoginError("Falha ao criar conta. Tente novamente.");
+        return;
       }
+      if (err?.code === "auth/user-not-found" || err?.code === "auth/wrong-password") {
+        setLoginError("Falha no login. Verifique e-mail e senha.");
+        return;
+      }
+      setLoginError("Falha no login. Verifique e-mail e senha.");
     }
   });
   form.dataset.wired = "true";
@@ -5635,6 +6404,18 @@ async function init() {
       return;
     }
     showApp();
+    state.currentUserEmail = user?.email || "";
+    state.currentUserRole = isAdminUser(user) ? "admin" : "user";
+    updateUserHeader(user);
+    try {
+      await syncUserProfile(user);
+    } catch (err) {
+      console.warn("Nao foi possivel sincronizar o perfil do usuario.", err);
+    }
+    await loadCurrentUserRole(user);
+    if (state.currentSection === "config") {
+      renderMain();
+    }
     if (!appInitialized) {
       appInitialized = true;
       await initApp();

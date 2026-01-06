@@ -14,21 +14,42 @@
 </head>
 <body>
     <div id="login-screen" class="login-screen">
-    <div class="login-card">
+    <div class="login-card" id="login-card" data-mode="login">
       <div class="login-brand">
         <img src="axon-projects.jpg" alt="AXON - Projects" class="login-logo">
       </div>
 
       <form id="login-form" class="login-form">
+        <div class="login-header">
+          <h1 class="login-title" id="login-title">Entrar</h1>
+          <p class="login-subtitle">Acesse seu dashboard</p>
+        </div>
+
+        <label class="login-label signup-only" for="login-name">Nome completo</label>
+        <input id="login-name" type="text" class="login-input signup-only" placeholder="Seu nome" autocomplete="name">
+
         <label class="login-label" for="login-email">E-mail</label>
         <input id="login-email" type="email" class="login-input" placeholder="seu@email.com" required autocomplete="username">
 
         <label class="login-label" for="login-password">Senha</label>
         <input id="login-password" type="password" class="login-input" placeholder="Sua senha" required autocomplete="current-password">
 
-        <button class="login-button" type="submit">Entrar</button>
+        <label class="login-label signup-only" for="login-password-confirm">Confirmar senha</label>
+        <input id="login-password-confirm" type="password" class="login-input signup-only" placeholder="Repita sua senha" autocomplete="new-password">
+
+        <button class="login-button" id="login-submit" type="submit">Entrar</button>
+
+        <div class="login-divider">ou</div>
+
+        <button class="login-button google" id="login-google" type="button">Entrar com Google</button>
+
         <p id="login-error" class="login-error hidden"></p>
       </form>
+
+      <div class="login-switch">
+        <span id="login-switch-text">Nao tem conta?</span>
+        <button type="button" class="login-link" id="login-switch-btn">Criar conta</button>
+      </div>
 
       <div class="login-footer">(c) 2025 - AXON - Projects</div>
     </div>
@@ -66,6 +87,7 @@
         </nav>
         <div class="top-actions">
           <button class="btn" data-section="relatorio">Gerar Relatório</button>
+          <button class="btn ghost" id="open-gantt-btn" type="button">Gerar GANTT</button>
           <button class="btn ghost" id="open-employee-modal">Cadastrar Funcionarios</button>
           <button class="btn ghost" id="edit-project-btn">Editar Projeto</button>
           <button class="btn primary" id="open-project-modal">+ Adicionar Projeto</button>
@@ -227,6 +249,35 @@
           <button type="submit" class="btn primary">Salvar Atividade</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div class="modal gantt-modal" id="gantt-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-content gantt-content">
+      <div class="gantt-header">
+        <div>
+          <h2 id="gantt-title">Cronograma do Projeto</h2>
+          <p id="gantt-subtitle">Visualização por Épicos e Dependências</p>
+        </div>
+        <div class="gantt-header-actions">
+          <div class="gantt-legend">
+            <span><span class="dot ok"></span>Concluido</span>
+            <span><span class="dot done"></span>Em andamento</span>
+            <span><span class="dot late"></span>Em atraso</span>
+          </div>
+          <button class="icon-btn" data-close-modal>&times;</button>
+        </div>
+      </div>
+
+      <div class="gantt-body">
+        <div id="gantt-content"></div>
+      </div>
+
+      <div class="gantt-footer">
+        <div id="gantt-footer-left">Dica: as barras seguem as datas de inicio e fim das atividades.</div>
+        <div id="gantt-footer-right"></div>
+      </div>
     </div>
   </div>
 
