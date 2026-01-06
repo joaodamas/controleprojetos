@@ -399,24 +399,49 @@ function isAdminUser(user = auth?.currentUser) {
   return isAdminEmail(user?.email);
 }
 
+function normalizeUserRole(role) {
+  const value = String(role || "").trim().toLowerCase();
+  if (value === "admin" || value === "administrador") return "admin";
+  if (value === "developer" || value === "dev" || value === "desenvolvedor") return "developer";
+  return "user";
+}
+
+function roleLabel(role) {
+  const normalized = normalizeUserRole(role);
+  if (normalized === "admin") return "Administrador";
+  if (normalized === "developer") return "Desenvolvedor";
+  return "Usuario";
+}
+
+function updateRoleNavVisibility() {
+  const devLink = byId("nav-dev-board");
+  if (!devLink) return;
+  const role = normalizeUserRole(state.currentUserRole);
+  const shouldShow = role === "developer" || role === "admin";
+  devLink.classList.toggle("hidden", !shouldShow);
+}
+
 async function loadCurrentUserRole(user = auth?.currentUser) {
-  const fallbackRole = isAdminUser(user) ? "admin" : "user";
+  const fallbackRole = normalizeUserRole(isAdminUser(user) ? "admin" : "user");
   if (!db || !user?.uid) {
     state.currentUserRole = fallbackRole;
     state.currentUserEmail = user?.email || "";
+    updateRoleNavVisibility();
     return fallbackRole;
   }
   try {
     const snapshot = await db.ref(`users/${user.uid}`).once("value");
     const data = snapshot.val() || {};
-    const role = data.role || fallbackRole;
+    const role = normalizeUserRole(data.role || fallbackRole);
     state.currentUserRole = role;
     state.currentUserEmail = user?.email || "";
+    updateRoleNavVisibility();
     return role;
   } catch (err) {
     console.warn("Nao foi possivel carregar o perfil do usuario.", err);
     state.currentUserRole = fallbackRole;
     state.currentUserEmail = user?.email || "";
+    updateRoleNavVisibility();
     return fallbackRole;
   }
 }
@@ -483,7 +508,7 @@ function taskTitle(task) {
 }
 
 function taskOwner(task) {
-  return task?.owner || task?.responsible || task?.assignee || "";
+  return task?.owner || task?.responsible || task?.responsavel || task?.assignee || "";
 }
 
 function taskProgress(task) {
@@ -2960,7 +2985,7 @@ async function syncUserProfile(user) {
   const profileRef = db.ref(`users/${user.uid}`);
   const snapshot = await profileRef.once("value");
   const existing = snapshot.val() || {};
-  const role = isAdminUser(user) ? "admin" : (existing.role || "user");
+  const role = normalizeUserRole(isAdminUser(user) ? "admin" : (existing.role || "user"));
   const payload = {
     uid: user.uid,
     email: user.email || "",
@@ -2982,7 +3007,7 @@ async function loadUsersFromDb() {
     uid,
     email: data?.email || "",
     displayName: data?.displayName || "",
-    role: data?.role || (isAdminEmail(data?.email) ? "admin" : "user"),
+    role: normalizeUserRole(data?.role || (isAdminEmail(data?.email) ? "admin" : "user")),
     createdAt: data?.createdAt || null,
     lastLoginAt: data?.lastLoginAt || null
   }));
@@ -3362,11 +3387,15 @@ function updateTopActions() {
   const openGanttBtn = byId("open-gantt-btn");
   const isHome = state.currentSection === "inicio";
   const isConfig = state.currentSection === "config";
+  const isDevBoard = state.currentSection === "dev-board";
   const isProject = state.currentSection === "meus-projetos";
-  if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome || isConfig);
-  if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome || isConfig);
+  if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome || isConfig || isDevBoard);
+  if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome || isConfig || isDevBoard);
   if (editProjectBtn) editProjectBtn.classList.toggle("hidden", !isProject);
-  if (openGanttBtn) openGanttBtn.disabled = !state.selectedProject;
+  if (openGanttBtn) {
+    openGanttBtn.classList.toggle("hidden", isDevBoard);
+    openGanttBtn.disabled = !state.selectedProject;
+  }
 }
 
 function renderHome(container) {
@@ -3571,6 +3600,354 @@ function renderMonitorActivities(container) {
 
   container.appendChild(header);
   container.appendChild(list);
+}
+
+function normalizePersonKey(value) {
+  if (!value) return "";
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w@.\s-]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function developerIdentityKeys() {
+  const keys = new Set();
+  const user = auth?.currentUser || null;
+  const email = (state.currentUserEmail || user?.email || "").trim();
+  const name = (user?.displayName || "").trim();
+  [name, email].forEach((value) => {
+    const key = normalizePersonKey(value);
+    if (key) keys.add(key);
+  });
+  if (email.includes("@")) {
+    const base = email.split("@")[0].replace(/[._-]+/g, " ");
+    const key = normalizePersonKey(base);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+function devColumnKey(task) {
+  const normalized = normalizeTaskStatus(getTaskStatus(task));
+  if (normalized === "concluido") return "done";
+  if (normalized === "em_validacao") return "review";
+  if (normalized === "em_andamento" || normalized === "parado") return "doing";
+  return "todo";
+}
+
+function collectDeveloperTasks(identityKeys) {
+  const items = [];
+  const unassignedKeys = new Set(["a definir", "nao definido", "sem responsavel"]);
+  state.clients.forEach((client) => {
+    (client.projects || []).forEach((project) => {
+      const projectKey = normalizePersonKey(project?.developer || "");
+      const projectMatch = projectKey && identityKeys.has(projectKey);
+      (project.tasks || []).forEach((task, taskIndex) => {
+        const ownerKey = normalizePersonKey(taskOwner(task));
+        const hasOwner = ownerKey && !unassignedKeys.has(ownerKey);
+        const matches = (hasOwner && identityKeys.has(ownerKey)) || (!hasOwner && projectMatch);
+        if (!matches) return;
+        const dueLabel = formatDateBR(taskDueStr(task) || "");
+        const progress = taskProgressValue(task);
+        const statusInfoData = taskStatusInfo(getTaskStatus(task));
+        items.push({
+          client,
+          project,
+          task,
+          taskIndex,
+          column: devColumnKey(task),
+          dueLabel,
+          progress,
+          statusLabel: statusInfoData.label,
+          statusClass: statusInfoData.className || "planejado"
+        });
+      });
+    });
+  });
+  return items;
+}
+
+function resolveDevTaskRef(dataset) {
+  const clientId = dataset.clientId || "";
+  const clientName = dataset.clientName || "";
+  const projectId = dataset.projectId || "";
+  const projectName = dataset.projectName || "";
+  const taskId = dataset.taskId || "";
+  const taskIndexRaw = dataset.taskIndex;
+  const taskIndex = taskIndexRaw === "" || taskIndexRaw == null ? null : Number(taskIndexRaw);
+  const client =
+    state.clients.find((item) => (clientId && item.id === clientId) || (clientName && item.name === clientName)) || null;
+  if (!client) return null;
+  const project =
+    (client.projects || []).find(
+      (item) => (projectId && item.id === projectId) || (projectName && item.name === projectName)
+    ) || null;
+  if (!project) return null;
+  let task = null;
+  if (Number.isFinite(taskIndex) && project.tasks?.[taskIndex]) {
+    task = project.tasks[taskIndex];
+  } else if (taskId) {
+    task = (project.tasks || []).find((item) => item.id === taskId) || null;
+  }
+  if (!task) return null;
+  return { client, project, task, taskIndex };
+}
+
+function updateDeveloperTaskStatus(dataset, columnKey) {
+  const ref = resolveDevTaskRef(dataset);
+  if (!ref) return;
+  const statusMap = {
+    todo: "planejado",
+    doing: "em_andamento",
+    review: "em_validacao",
+    done: "concluido"
+  };
+  const nextStatus = statusMap[columnKey] || "planejado";
+  if (normalizeTaskStatus(ref.task.status) === normalizeTaskStatus(nextStatus)) {
+    return;
+  }
+  const previousStatus = ref.task.status;
+  applyTaskStatus(ref.task, nextStatus);
+  if (db && ref.client.id && ref.project.id && ref.task.id) {
+    updateTaskStatusOnDb(ref.client.id, ref.project.id, ref.task.id, {
+      status: ref.task.status,
+      dataConclusao: ref.task.dataConclusao || null
+    })
+      .then(() => {
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        ref.task.status = previousStatus;
+        applyTaskStatus(ref.task, previousStatus);
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  renderMain();
+}
+
+function updateDeveloperTaskProgress(dataset, progressValue) {
+  const ref = resolveDevTaskRef(dataset);
+  if (!ref) return;
+  const prevProgress = ref.task.progress;
+  const prevStatus = ref.task.status;
+  const nextProgress = Math.max(0, Math.min(100, Number(progressValue)));
+  ref.task.progress = Number.isFinite(nextProgress) ? nextProgress : 0;
+  if (ref.task.progress >= 100) {
+    applyTaskStatus(ref.task, "concluido");
+  } else if (normalizeTaskStatus(ref.task.status) === "concluido") {
+    applyTaskStatus(ref.task, "em_andamento");
+  }
+  const payload = {
+    progress: ref.task.progress,
+    status: ref.task.status,
+    dataConclusao: ref.task.dataConclusao || null
+  };
+  if (db && ref.client.id && ref.project.id && ref.task.id) {
+    updateTaskOnDb(ref.client.id, ref.project.id, ref.task.id, payload)
+      .then(() => {
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        ref.task.progress = prevProgress;
+        ref.task.status = prevStatus;
+        applyTaskStatus(ref.task, prevStatus);
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  renderMain();
+}
+
+function setupDeveloperBoard() {
+  if (document.body.dataset.devBoardWired) return;
+  document.body.dataset.devBoardWired = "true";
+
+  document.body.addEventListener("dragstart", (e) => {
+    const card = e.target.closest("[data-dev-task]");
+    if (!card) return;
+    const payload = {
+      clientId: card.dataset.clientId || "",
+      clientName: card.dataset.clientName || "",
+      projectId: card.dataset.projectId || "",
+      projectName: card.dataset.projectName || "",
+      taskId: card.dataset.taskId || "",
+      taskIndex: card.dataset.taskIndex || ""
+    };
+    card.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", JSON.stringify(payload));
+  });
+
+  document.body.addEventListener("dragend", (e) => {
+    const card = e.target.closest("[data-dev-task]");
+    if (card) card.classList.remove("dragging");
+  });
+
+  document.body.addEventListener("dragover", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  });
+
+  document.body.addEventListener("dragenter", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (column) column.classList.add("over");
+  });
+
+  document.body.addEventListener("dragleave", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    if (!column.contains(e.relatedTarget)) {
+      column.classList.remove("over");
+    }
+  });
+
+  document.body.addEventListener("drop", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    e.preventDefault();
+    column.classList.remove("over");
+    const payloadRaw = e.dataTransfer.getData("text/plain");
+    if (!payloadRaw) return;
+    let payload = null;
+    try {
+      payload = JSON.parse(payloadRaw);
+    } catch (err) {
+      return;
+    }
+    const columnKey = column.dataset.devColumn || "";
+    if (!columnKey) return;
+    updateDeveloperTaskStatus(payload, columnKey);
+  });
+
+  document.body.addEventListener("input", (e) => {
+    const slider = e.target.closest("[data-progress-input]");
+    if (!slider) return;
+    const wrapper = slider.closest(".dev-progress");
+    const valueEl = wrapper?.querySelector("[data-progress-label]");
+    if (valueEl) valueEl.textContent = `${slider.value}%`;
+  });
+
+  document.body.addEventListener("change", (e) => {
+    const slider = e.target.closest("[data-progress-input]");
+    if (!slider) return;
+    updateDeveloperTaskProgress(slider.dataset, slider.value);
+  });
+}
+
+function renderDeveloperBoard(container) {
+  setCrumbPathText("Painel Desenvolvedor");
+  const role = normalizeUserRole(state.currentUserRole);
+  if (role !== "developer" && role !== "admin") {
+    container.innerHTML = `
+      <div class="empty-state span-all" style="text-align: center; padding: 40px;">
+        <h2>Acesso restrito</h2>
+        <p>Esta tela esta disponivel apenas para usuarios com perfil Desenvolvedor.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const identityKeys = developerIdentityKeys();
+  const tasks = collectDeveloperTasks(identityKeys);
+  if (!tasks.length) {
+    container.innerHTML = `
+      <div class="empty-state span-all" style="text-align: center; padding: 40px;">
+        <h2>Sem atividades</h2>
+        <p>Nenhuma atividade atribuida a voce no momento.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const columns = [
+    { key: "todo", label: "A fazer" },
+    { key: "doing", label: "Em andamento" },
+    { key: "review", label: "Revisao / QA" },
+    { key: "done", label: "Concluido" }
+  ];
+  const grouped = columns.reduce((acc, col) => {
+    acc[col.key] = [];
+    return acc;
+  }, {});
+  tasks.forEach((item) => {
+    const columnKey = grouped[item.column] ? item.column : "todo";
+    grouped[columnKey].push(item);
+  });
+
+  const columnsHtml = columns
+    .map((col) => {
+      const ordered = grouped[col.key].slice().sort((a, b) => taskDueValueSafe(a.task) - taskDueValueSafe(b.task));
+      const cards = ordered
+        .map((item) => {
+          const projectLabel = item.project?.name || "Projeto";
+          const clientLabel = item.client?.name || "Cliente";
+          const taskTitleText = escapeHtml(taskTitle(item.task));
+          const phaseLabel = normalizePhaseLabel(item.task?.phase || "OUTROS");
+          const dueText = item.dueLabel && item.dueLabel !== "-" ? item.dueLabel : "Sem prazo";
+          const progress = Math.max(0, Math.min(100, Math.round(item.progress || 0)));
+          const taskId = item.task?.id || "";
+          const clientId = item.client?.id || "";
+          const projectId = item.project?.id || "";
+          return `
+            <article class="dev-card" draggable="true" data-dev-task data-client-id="${escapeHtml(clientId)}" data-client-name="${escapeHtml(clientLabel)}" data-project-id="${escapeHtml(projectId)}" data-project-name="${escapeHtml(projectLabel)}" data-task-id="${escapeHtml(taskId)}" data-task-index="${item.taskIndex}">
+              <div class="dev-card-meta">
+                <span class="dev-card-project">${escapeHtml(projectLabel)} • ${escapeHtml(clientLabel)}</span>
+                <span class="pill ${item.statusClass}">${item.statusLabel}</span>
+              </div>
+              <div class="dev-card-title">${taskTitleText}</div>
+              <div class="dev-card-sub">Epico: ${escapeHtml(phaseLabel)}</div>
+              <div class="dev-card-sub">Prazo: ${escapeHtml(dueText)}</div>
+              <div class="dev-progress">
+                <div class="dev-progress-label">
+                  <span>Progresso</span>
+                  <span class="dev-progress-value" data-progress-label>${progress}%</span>
+                </div>
+                <input type="range" min="0" max="100" value="${progress}" data-progress-input data-client-id="${escapeHtml(clientId)}" data-client-name="${escapeHtml(clientLabel)}" data-project-id="${escapeHtml(projectId)}" data-project-name="${escapeHtml(projectLabel)}" data-task-id="${escapeHtml(taskId)}" data-task-index="${item.taskIndex}">
+              </div>
+            </article>
+          `;
+        })
+        .join("");
+      return `
+        <section class="dev-column" data-dev-column="${col.key}">
+          <div class="dev-column-header">
+            <div class="dev-column-title">${col.label}</div>
+            <span class="dev-column-count">${grouped[col.key].length}</span>
+          </div>
+          <div class="dev-column-body">
+            ${cards || "<div class=\"dev-empty\">Sem atividades</div>"}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <div class="dev-board span-all">
+      <div class="section-header">
+        <div class="header-row">
+          <h2>Atividades do Desenvolvedor</h2>
+        </div>
+        <div class="muted">Arraste os cards entre colunas e atualize o progresso.</div>
+      </div>
+      <div class="dev-board-grid">
+        ${columnsHtml}
+      </div>
+    </div>
+  `;
+
+  setupDeveloperBoard();
 }
 
 function openGanttModal() {
@@ -3832,7 +4209,9 @@ function renderConfig(container) {
   const user = auth?.currentUser || null;
   const displayName = user?.displayName || "";
   const email = state.currentUserEmail || user?.email || "";
-  const admin = state.currentUserRole === "admin";
+  const role = normalizeUserRole(state.currentUserRole);
+  const admin = role === "admin";
+  const roleName = roleLabel(role);
 
   container.innerHTML = `
     <div class="config-page span-all">
@@ -3890,7 +4269,7 @@ function renderConfig(container) {
             </div>
             <div>
               <div class="config-info-label">Perfil</div>
-              <div class="config-info-value">${admin ? "Administrador" : "Usuario"}</div>
+              <div class="config-info-value">${roleName}</div>
             </div>
           </div>
         </div>
@@ -4033,13 +4412,14 @@ function renderAdminUsers(container, users) {
       const email = escapeHtml(user.email || "");
       const name = escapeHtml(user.displayName || "");
       const isMaster = isAdminEmail(user.email);
-      const role = user.role === "admin" ? "admin" : "user";
+      const role = normalizeUserRole(user.role);
       return `
         <div class="config-admin-row" data-user-id="${escapeHtml(user.uid)}">
           <input class="config-input" type="text" value="${name}" placeholder="Nome" data-user-name>
           <div class="config-user-email">${email || "-"}</div>
           <select class="config-input" data-user-role ${isMaster ? "disabled" : ""}>
             <option value="user"${role === "user" ? " selected" : ""}>Usuario</option>
+            <option value="developer"${role === "developer" ? " selected" : ""}>Desenvolvedor</option>
             <option value="admin"${role === "admin" ? " selected" : ""}>Administrador</option>
           </select>
           <button class="btn sm ghost" type="button" data-user-save ${isMaster ? "disabled" : ""}>Salvar</button>
@@ -4071,7 +4451,7 @@ function renderAdminUsers(container, users) {
       const roleSelect = row.querySelector("[data-user-role]");
       const status = row.querySelector("[data-user-status]");
       const newName = nameInput?.value.trim() || "";
-      const newRole = roleSelect?.value === "admin" ? "admin" : "user";
+      const newRole = normalizeUserRole(roleSelect?.value);
       if (status) {
         status.textContent = "Salvando...";
         status.classList.remove("error");
@@ -4079,6 +4459,10 @@ function renderAdminUsers(container, users) {
       }
       try {
         await updateUserProfileInDb(uid, { displayName: newName, role: newRole });
+        if (auth?.currentUser?.uid === uid) {
+          await loadCurrentUserRole(auth.currentUser);
+          renderMain();
+        }
         if (status) {
           status.textContent = "Salvo.";
           status.classList.add("success");
@@ -4175,6 +4559,12 @@ function renderMain() {
 
   if (state.currentSection === "monitor") {
     renderMonitorActivities(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "dev-board") {
+    renderDeveloperBoard(panels);
     finalizeRender();
     return;
   }
@@ -6279,6 +6669,7 @@ function showLogin() {
   setLoginMode("login");
   state.currentUserEmail = "";
   state.currentUserRole = "user";
+  updateRoleNavVisibility();
   byId("login-screen")?.classList.remove("hidden");
   byId("app-shell")?.classList.add("hidden");
   setLoginError("");
@@ -6405,8 +6796,9 @@ async function init() {
     }
     showApp();
     state.currentUserEmail = user?.email || "";
-    state.currentUserRole = isAdminUser(user) ? "admin" : "user";
+    state.currentUserRole = normalizeUserRole(isAdminUser(user) ? "admin" : "user");
     updateUserHeader(user);
+    updateRoleNavVisibility();
     try {
       await syncUserProfile(user);
     } catch (err) {
