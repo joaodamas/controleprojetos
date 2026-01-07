@@ -1583,7 +1583,15 @@
     }
 
     function getSystemData(){
-      const raw = safeJsonParse(localStorage.getItem("controle_projetos_state_v1"));
+      const baseKey = "controle_projetos_state_v1";
+      const rawUserKey = localStorage.getItem("controle_projetos_state_user") || "";
+      const userKey = rawUserKey.trim().toLowerCase();
+      const keysToTry = userKey ? [`${baseKey}_${userKey}`, baseKey] : [baseKey];
+      let raw = null;
+      for (const key of keysToTry) {
+        raw = safeJsonParse(localStorage.getItem(key));
+        if (raw?.clients) break;
+      }
       const clients = Array.isArray(raw?.clients) ? raw.clients : [];
       if (!clients.length) return null;
 

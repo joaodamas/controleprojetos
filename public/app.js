@@ -238,6 +238,7 @@ const state = {
 };
 
 const LOCAL_STORAGE_KEY = "controle_projetos_state_v1";
+const LOCAL_STORAGE_USER_KEY = "controle_projetos_state_user";
 const ADMIN_EMAILS = new Set(["joaodamasit@gmail.com"]);
 
 const STATUS_OPTIONS = [
@@ -301,6 +302,16 @@ function currentUserKey(user = auth?.currentUser) {
 function localStorageKeyForUser(user = auth?.currentUser) {
   const key = currentUserKey(user);
   return key ? `${LOCAL_STORAGE_KEY}_${key}` : LOCAL_STORAGE_KEY;
+}
+
+function persistActiveUserKey(userKey) {
+  try {
+    if (userKey) {
+      localStorage.setItem(LOCAL_STORAGE_USER_KEY, userKey);
+    }
+  } catch (err) {
+    console.warn("Nao foi possivel salvar a chave do usuario.", err);
+  }
 }
 
 function resetUserState() {
@@ -7206,6 +7217,7 @@ async function init() {
       resetUserState();
     }
     state.currentUserKey = userKey;
+    persistActiveUserKey(userKey);
     state.dbAccessDenied = false;
     state.currentUserEmail = user?.email || "";
     state.currentUserRole = normalizeUserRole(isAdminUser(user) ? "admin" : "user");
