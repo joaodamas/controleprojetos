@@ -467,11 +467,30 @@ function roleLabel(role) {
 }
 
 function updateRoleNavVisibility() {
-  const devLink = byId("nav-dev-board");
-  if (!devLink) return;
   const role = normalizeUserRole(state.currentUserRole);
-  const shouldShow = role === "developer" || role === "admin";
-  devLink.classList.toggle("hidden", !shouldShow);
+  const isDev = role === "developer";
+  const devLink = byId("nav-dev-board");
+  const navGroup = document.querySelector(".nav-group");
+  const navSections = ["inicio", "dashboard", "monitor", "config"];
+  const topButtons = [
+    document.querySelector('[data-section="relatorio"]'),
+    byId("open-gantt-btn"),
+    byId("open-employee-modal"),
+    byId("edit-project-btn"),
+    byId("open-project-modal")
+  ];
+
+  if (devLink) {
+    devLink.classList.toggle("hidden", !(role === "developer" || role === "admin"));
+  }
+  navSections.forEach((section) => {
+    const link = document.querySelector(`.nav-link[data-section="${section}"]`);
+    if (link) link.classList.toggle("hidden", isDev);
+  });
+  if (navGroup) navGroup.classList.toggle("hidden", isDev);
+  topButtons.forEach((btn) => {
+    if (btn) btn.classList.toggle("hidden", isDev);
+  });
 }
 
 async function loadCurrentUserRole(user = auth?.currentUser) {
@@ -3173,6 +3192,12 @@ async function updateUserProfileInDb(uid, payload) {
   });
 }
 
+async function sendPasswordReset(email) {
+  if (!auth) throw new Error("Auth indisponivel.");
+  if (!email) throw new Error("E-mail invalido.");
+  await auth.sendPasswordResetEmail(email);
+}
+
 async function createGroupInDb(name) {
   if (!db) return null;
   const groupRef = db.ref("groups").push();
@@ -4512,7 +4537,7 @@ function renderConfig(container) {
         </div>
         <div class="config-card" id="admin-users-section">
           <div id="admin-users-list" class="config-admin-table">Carregando usuarios...</div>
-          <div class="config-hint">Para trocar e-mail ou senha, o usuario deve atualizar na propria conta.</div>
+          <div class="config-hint">Use "Resetar senha" para enviar o e-mail de redefinicao ao usuario.</div>
         </div>
 
         <div class="section-header">
@@ -4696,8 +4721,9 @@ function renderAdminUsers(container, users) {
       const name = escapeHtml(user.displayName || "");
       const isMaster = isAdminEmail(user.email);
       const role = normalizeUserRole(user.role);
+      const canReset = Boolean(user.email);
       return `
-        <div class="config-admin-row" data-user-id="${escapeHtml(user.uid)}">
+        <div class="config-admin-row" data-user-id="${escapeHtml(user.uid)}" data-user-email="${email}">
           <input class="config-input" type="text" value="${name}" placeholder="Nome" data-user-name>
           <div class="config-user-email">${email || "-"}</div>
           <select class="config-input" data-user-role ${isMaster ? "disabled" : ""}>
@@ -4706,6 +4732,7 @@ function renderAdminUsers(container, users) {
             <option value="admin"${role === "admin" ? " selected" : ""}>Administrador</option>
           </select>
           <button class="btn sm ghost" type="button" data-user-save ${isMaster ? "disabled" : ""}>Salvar</button>
+          <button class="btn sm ghost" type="button" data-user-reset ${!canReset ? "disabled" : ""}>Resetar senha</button>
           <div class="config-admin-status" data-user-status></div>
         </div>
       `;
@@ -4717,7 +4744,8 @@ function renderAdminUsers(container, users) {
       <div>Nome</div>
       <div>E-mail</div>
       <div>Perfil</div>
-      <div>Acoes</div>
+      <div>Salvar</div>
+      <div>Reset senha</div>
       <div></div>
     </div>
     ${rows || "<div class=\"muted\">Nenhum usuario cadastrado.</div>"}
@@ -4725,14 +4753,49 @@ function renderAdminUsers(container, users) {
 
   if (!container.dataset.wired) {
     container.addEventListener("click", async (e) => {
-      const button = e.target.closest("[data-user-save]");
-      if (!button) return;
-      const row = button.closest("[data-user-id]");
+      const saveBtn = e.target.closest("[data-user-save]");
+      const resetBtn = e.target.closest("[data-user-reset]");
+      if (!saveBtn && !resetBtn) return;
+      const row = (saveBtn || resetBtn).closest("[data-user-id]");
       if (!row) return;
+      const status = row.querySelector("[data-user-status]");
+
+      if (resetBtn) {
+        const email = row.dataset.userEmail || "";
+        if (!email) {
+          if (status) {
+            status.textContent = "E-mail indisponivel.";
+            status.classList.remove("success");
+            status.classList.add("error");
+          }
+          return;
+        }
+        const confirmed = window.confirm(`Enviar redefinicao de senha para ${email}?`);
+        if (!confirmed) return;
+        if (status) {
+          status.textContent = "Enviando...";
+          status.classList.remove("error");
+          status.classList.remove("success");
+        }
+        try {
+          await sendPasswordReset(email);
+          if (status) {
+            status.textContent = "E-mail enviado.";
+            status.classList.add("success");
+          }
+        } catch (err) {
+          console.error(err);
+          if (status) {
+            status.textContent = "Erro ao enviar.";
+            status.classList.add("error");
+          }
+        }
+        return;
+      }
+
       const uid = row.dataset.userId;
       const nameInput = row.querySelector("[data-user-name]");
       const roleSelect = row.querySelector("[data-user-role]");
-      const status = row.querySelector("[data-user-status]");
       const newName = nameInput?.value.trim() || "";
       const newRole = normalizeUserRole(roleSelect?.value);
       if (status) {
@@ -4908,6 +4971,10 @@ function restoreScrollPositions(positions) {
 
 function renderMain() {
   removeRelatorioStyles(); 
+
+  if (normalizeUserRole(state.currentUserRole) === "developer" && state.currentSection !== "dev-board") {
+    state.currentSection = "dev-board";
+  }
 
   const prevContext = state.lastRenderContext || null;
   const nextContext = {
@@ -5297,6 +5364,14 @@ function wireNav() {
       logout();
       return;
     }
+
+    if (normalizeUserRole(state.currentUserRole) === "developer" && section !== "dev-board") {
+      state.currentSection = "dev-board";
+      setActiveNav(state.currentSection);
+      renderMain();
+      return;
+    }
+
     if (section === "meus-projetos") {
       navBtn.classList.toggle("open");
       return;

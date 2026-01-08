@@ -6,174 +6,164 @@
   <title>AXON - Projects | Landing</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="landing.css">
 </head>
 <body>
-  <div class="page">
-    <header class="topbar">
-      <div class="brand">
-        <img class="brand-logo" src="axon-projects.jpg" alt="AXON - Projects">
-        <div class="brand-text">
-          <span>AXON -</span>
-          <strong>Projects</strong>
+  <div class="landing-page">
+    <nav class="landing-nav">
+      <div class="landing-brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M4 12c5 0 4-8 10-8 0 3 6 3 6 8s-6 5-6 8c-6 0-5-8-10-8Z" fill="currentColor" />
+          </svg>
         </div>
+        <span class="brand-name">AXON Projects</span>
       </div>
-      <nav class="nav">
-        <a href="#features">Funcionalidades</a>
-        <a href="#process">Como funciona</a>
-        <a href="#about">Sobre</a>
-      </nav>
-      <a class="btn primary" href="/index.html">Acessar sistema</a>
-    </header>
+      <div class="landing-links">
+        <a href="#">Solucoes</a>
+        <a href="#">Produto</a>
+        <a href="#">Empresa</a>
+        <a href="#">Insights</a>
+      </div>
+      <div class="landing-actions">
+        <button class="ghost-button" type="button">Login</button>
+        <button class="soft-button" type="button">Criar conta</button>
+      </div>
+    </nav>
 
-    <main>
-      <section class="hero">
-        <div class="hero-copy">
-          <span class="eyebrow">Gestao e Report</span>
-          <h1>Visao clara para projetos complexos.</h1>
+    <main class="landing-hero">
+      <section class="hero-copy">
+        <div>
+          <h1>
+            Projetos sob controle
+            <br>
+            com precisao.
+          </h1>
           <p>
-            Consolide prazos, riscos e progresso em um dashboard que elimina ruido e
-            ajuda sua equipe a agir com velocidade.
+            Acompanhe prazos, riscos e progresso em um painel claro para decidir
+            mais rapido e manter sua equipe alinhada.
           </p>
-          <div class="hero-actions">
-            <a class="btn primary" href="/index.html">Acessar sistema</a>
-            <a class="btn ghost" href="#features">Ver funcionalidades</a>
+        </div>
+
+        <div class="hero-cta">
+          <a class="soft-button" href="/index.html">Acessar sistema
+            <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M7 17L17 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M9 7h8v8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </a>
+        </div>
+
+        <div class="hero-stats">
+          <div class="stat">
+            <div class="stat-value">140+</div>
+            <div class="stat-label">Projetos monitorados</div>
           </div>
-          <div class="hero-meta">
-            <div>
-              <strong>30s</strong>
-              <span>para entender o status</span>
-            </div>
-            <div>
-              <strong>1 click</strong>
-              <span>para gerar report</span>
-            </div>
-            <div>
-              <strong>100%</strong>
-              <span>foco em execucao</span>
-            </div>
+          <div class="stat">
+            <div class="stat-value">1.2k</div>
+            <div class="stat-label">Relatorios gerados</div>
           </div>
         </div>
 
-        <div class="hero-visual">
-          <div class="window">
-            <div class="window-bar">
-              <span></span><span></span><span></span>
-              <em>dashboard.controleprojetos.app</em>
-            </div>
-            <div class="window-body">
-              <div class="card">
-                <h3>Resumo Executivo</h3>
-                <p>3 projetos em andamento, 1 em risco.</p>
-                <div class="bar"><i style="width: 68%"></i></div>
-              </div>
-              <div class="grid">
-                <div class="mini">
-                  <span>Prazo</span>
-                  <strong>Em dia</strong>
-                </div>
-                <div class="mini">
-                  <span>Risco</span>
-                  <strong>Moderado</strong>
-                </div>
-                <div class="mini">
-                  <span>Entrega</span>
-                  <strong>+18 dias</strong>
-                </div>
-              </div>
-              <div class="list">
-                <div>
-                  <strong>Projeto EPAYS</strong>
-                  <span>72% concluido</span>
-                </div>
-                <div>
-                  <strong>Monitoramento NFSe</strong>
-                  <span>48% concluido</span>
-                </div>
-                <div>
-                  <strong>BBP WS360</strong>
-                  <span>Em validacao</span>
-                </div>
-              </div>
-            </div>
+        <div class="hero-trust">
+          <span>CONFIADO POR TIMES EXIGENTES</span>
+          <div class="trust-logos">
+            <span>KPMG</span>
+            <span>JEQUITI</span>
+            <span>ASCENTY</span>
           </div>
         </div>
       </section>
 
-      <section id="features" class="section">
-        <div class="section-title">
-          <h2>Funcionalidades que organizam o caos</h2>
-          <p>Da diretoria ao time tecnico, todos enxergam o mesmo status.</p>
-        </div>
-        <div class="feature-grid">
-          <article>
-            <h3>OnePage Report</h3>
-            <p>KPIs, riscos e marcos em um resumo visual que cabe em uma pagina.</p>
-          </article>
-          <article>
-            <h3>Gestao de atividades</h3>
-            <p>Fases, pacotes e responsaveis com alertas de prazo integrados.</p>
-          </article>
-          <article>
-            <h3>Exportacao executiva</h3>
-            <p>PDF e PPTX prontos para apresentar o status em segundos.</p>
-          </article>
-        </div>
-      </section>
-
-      <section id="process" class="section soft">
-        <div class="process">
-          <div>
-            <h2>Como funciona no dia a dia</h2>
-            <p>
-              Atualize atividades, acompanhe progresso real vs planejado e
-              compartilhe o report com stakeholders sem arquivos pesados.
+      <section class="hero-grid">
+        <article class="hero-card hero-card-secure">
+          <div class="card-glow" aria-hidden="true"></div>
+          <div class="card-ornament" aria-hidden="true">
+            <svg class="card-rings" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <radialGradient id="ringGlow" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stop-color="#22d3aa" stop-opacity="0.35" />
+                  <stop offset="100%" stop-color="transparent" />
+                </radialGradient>
+              </defs>
+              <rect width="400" height="400" fill="url(#ringGlow)" />
+              <circle cx="200" cy="200" r="20" fill="none" stroke="currentColor" stroke-opacity="0.12" />
+              <circle cx="200" cy="200" r="34" fill="none" stroke="currentColor" stroke-opacity="0.12" />
+              <circle cx="200" cy="200" r="48" fill="none" stroke="currentColor" stroke-opacity="0.12" />
+              <circle cx="200" cy="200" r="62" fill="none" stroke="currentColor" stroke-opacity="0.12" />
+              <circle cx="200" cy="200" r="76" fill="none" stroke="currentColor" stroke-opacity="0.12" />
+              <circle cx="200" cy="200" r="90" fill="none" stroke="currentColor" stroke-opacity="0.12" />
+              <circle cx="200" cy="200" r="104" fill="none" stroke="currentColor" stroke-opacity="0.12" />
+            </svg>
+          </div>
+          <div class="card-content">
+            <div class="card-tag">
+              <span class="card-icon">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 3l7 4v5c0 5-4 8-7 9-3-1-7-4-7-9V7l7-4Z" stroke="currentColor" stroke-width="1.6" />
+                  <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </span>
+              <span class="card-tag-text">Controle seguro</span>
+            </div>
+            <p class="card-title">
+              Indicadores e alertas
+              <br>
+              mantem tudo sob controle
             </p>
           </div>
-          <div class="steps">
-            <div>
-              <span>01</span>
-              <strong>Centralize</strong>
-              <p>Cadastre projetos e fases com detalhes completos.</p>
-            </div>
-            <div>
-              <span>02</span>
-              <strong>Acompanhe</strong>
-              <p>Monitore prazos, riscos e progresso consolidado.</p>
-            </div>
-            <div>
-              <span>03</span>
-              <strong>Reporte</strong>
-              <p>Gere a visao executiva em um clique.</p>
-            </div>
-          </div>
-        </div>
-      </section>
+        </article>
 
-      <section id="about" class="section">
-        <div class="about">
-          <div>
-            <h2>Sobre o sistema</h2>
-            <p>
-              Criamos o AXON - Projects para transformar dados dispersos em
-              uma narrativa clara. A plataforma organiza o fluxo de atividades e
-              traduz indicadores criticos em decisao rapida.
+        <article class="hero-card hero-card-globe">
+          <div class="planet-wrap" aria-hidden="true">
+            <svg width="220" height="220" viewBox="0 0 220 220" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="planetGrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stop-color="#34d399" />
+                  <stop offset="100%" stop-color="#06b6d4" />
+                </linearGradient>
+              </defs>
+              <circle cx="110" cy="110" r="56" fill="url(#planetGrad)" opacity="0.95" />
+              <circle cx="94" cy="98" r="10" fill="white" opacity="0.45" />
+              <circle cx="132" cy="126" r="8" fill="white" opacity="0.35" />
+              <ellipse class="planet-orbit" cx="110" cy="110" rx="100" ry="34" stroke="white" stroke-opacity="0.6" fill="none" stroke-dasharray="200 200" />
+              <circle class="planet-spark" cx="210" cy="110" r="4" fill="white" />
+            </svg>
+          </div>
+          <div class="card-content">
+            <span class="card-eyebrow">Multicliente</span>
+            <p class="card-title">
+              Projetos e times
+              <br>
+              em uma unica visao
             </p>
           </div>
-          <div class="about-card">
-            <strong>Foco em clareza</strong>
-            <p>Menos planilhas, mais visualizacao objetiva.</p>
-            <strong>Transparencia real</strong>
-            <p>Stakeholders acompanham o status sem ruido.</p>
+        </article>
+
+        <article class="hero-card hero-card-growth">
+          <div class="card-content">
+            <span class="card-eyebrow">Avanco medio</span>
+            <div class="card-metric">
+              73%
+              <span>meta</span>
+            </div>
+            <div class="card-delta">+4.2% este mes</div>
+            <div class="mini-bars">
+              <div class="mini-bar" style="--bar-height: 18px; --delay: 0.5s;"></div>
+              <div class="mini-bar" style="--bar-height: 48px; --delay: 0.65s;"></div>
+              <div class="mini-bar" style="--bar-height: 72px; --delay: 0.8s;"></div>
+              <div class="mini-bar" style="--bar-height: 96px; --delay: 0.95s;"></div>
+            </div>
           </div>
-        </div>
+        </article>
+
+        <div class="hero-card-spacer" aria-hidden="true"></div>
       </section>
     </main>
 
-    <footer class="footer">
-      <div>AXON - Projects</div>
-      <a class="btn ghost" href="/index.html">Acessar sistema</a>
+    <footer class="landing-footer">
+      (c) 2025 AXON Projects. Todos os direitos reservados.
     </footer>
   </div>
 </body>
