@@ -220,6 +220,13 @@ const state = {
   dashboard: {
     sort: { key: null, direction: "asc" },
     filters: {}
+  },
+  monitor: {
+    filters: {
+      client: "",
+      project: "",
+      responsible: ""
+    }
   }
 };
 
@@ -318,6 +325,7 @@ const DEFAULT_EPICS = ["LEVANTAMENTO", "DESENVOLVIMENTO", "TESTES", "DEPLOY"];
 const PACKAGE_PHASES = ["DESENVOLVIMENTO", "TESTES"];
 
 const PHASE_ORDER = ["LEVANTAMENTO", "DESENVOLVIMENTO", "TESTES", "DEPLOY", "GESTAO", "OUTROS"];
+const CLIENT_COLOR_PALETTE = ["#0f766e", "#1d4ed8", "#b45309", "#0f7660", "#be123c", "#334155"];
 
 const MOTIVATIONAL_QUOTES = [
   "Projetos bem gerenciados nao atrasam, eles se adaptam.",
@@ -661,6 +669,11 @@ function renderMain() {
     return;
   }
 
+  if (state.currentSection === "monitor") {
+    renderMonitor(panels);
+    return;
+  }
+
   if (!selectedClient || !selectedProject) return;
 
   byId("crumb-path").textContent = `${selectedClient.name} / ${selectedProject.name}`;
@@ -730,7 +743,7 @@ function renderMain() {
     ? selectedProject.epics
     : DEFAULT_EPICS;
   const tasksCard = document.createElement("div");
-  tasksCard.className = "card scroll-card span-all";
+  tasksCard.className = "card span-all";
   tasksCard.innerHTML = `
     <div class="card-head">
       <h3>Atividades</h3>
@@ -1455,6 +1468,32 @@ function setupStatusPopover() {
   });
 
   select.addEventListener("change", () => {
+    const context = popover.dataset.context || "project";
+    if (context === "monitor") {
+      const resolved = resolveMonitorTaskFromDataset(popover.dataset);
+      if (!resolved) return;
+      applyTaskStatus(resolved.task, select.value);
+      const statusPayload = {
+        status: resolved.task.status,
+        dataConclusao: resolved.task.dataConclusao ?? null
+      };
+      if (db && resolved.project?.id && resolved.project?.clientId && resolved.task?.id) {
+        updateTaskStatusOnDb(resolved.project.clientId, resolved.project.id, resolved.task.id, statusPayload)
+          .then(() => {
+            hideStatusPopover();
+            renderMain();
+          })
+          .catch((err) => {
+            console.error(err);
+            alert("Erro ao atualizar status no Firebase.");
+          });
+        return;
+      }
+      saveLocalState();
+      hideStatusPopover();
+      renderMain();
+      return;
+    }
     const idx = Number(popover.dataset.taskIndex);
     if (Number.isNaN(idx) || !state.selectedProject) return;
     const task = state.selectedProject.tasks[idx];
@@ -1535,9 +1574,26 @@ function openStatusPopover(target) {
   const popover = byId("status-popover");
   const select = byId("status-select");
   const idx = target.dataset.taskIndex;
-  popover.dataset.taskIndex = idx;
-  const currentStatus = state.selectedProject?.tasks[Number(idx)]?.status;
-  if (currentStatus) select.value = normalizeTaskStatus(currentStatus);
+  const context = target.dataset.context || "project";
+  popover.dataset.context = context;
+  if (context === "monitor") {
+    popover.dataset.clientIndex = target.dataset.clientIndex || "";
+    popover.dataset.projectIndex = target.dataset.projectIndex || "";
+    popover.dataset.taskIndex = idx || "";
+    popover.dataset.clientId = target.dataset.clientId || "";
+    popover.dataset.projectId = target.dataset.projectId || "";
+    popover.dataset.taskId = target.dataset.taskId || "";
+    const resolved = resolveMonitorTaskFromDataset(target.dataset);
+    const currentStatus = resolved?.task?.status;
+    if (currentStatus) select.value = normalizeTaskStatus(currentStatus);
+  } else {
+    popover.dataset.taskIndex = idx;
+    popover.dataset.clientIndex = "";
+    popover.dataset.projectIndex = "";
+    popover.dataset.taskId = "";
+    const currentStatus = state.selectedProject?.tasks[Number(idx)]?.status;
+    if (currentStatus) select.value = normalizeTaskStatus(currentStatus);
+  }
   const rect = target.getBoundingClientRect();
   popover.style.top = `${rect.bottom + window.scrollY + 6}px`;
   popover.style.left = `${rect.left + window.scrollX}px`;
@@ -2097,6 +2153,175 @@ function latestDate(tasks) {
   return tasks.reduce((acc, t) => Math.max(acc, dateValue(t.due)), 0);
 }
 
+function ensureMonitorState() {
+  if (!state.monitor) {
+    state.monitor = {
+      filters: { client: "", project: "", responsible: "" }
+    };
+    return;
+  }
+  if (!state.monitor.filters) {
+    state.monitor.filters = { client: "", project: "", responsible: "" };
+    return;
+  }
+  if (state.monitor.filters.client === undefined) state.monitor.filters.client = "";
+  if (state.monitor.filters.project === undefined) state.monitor.filters.project = "";
+  if (state.monitor.filters.responsible === undefined) state.monitor.filters.responsible = "";
+}
+
+function clientColor(name) {
+  const value = String(name || "");
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) % 997;
+  }
+  return CLIENT_COLOR_PALETTE[hash % CLIENT_COLOR_PALETTE.length];
+}
+
+function collectMonitorTasks() {
+  const items = [];
+  state.clients.forEach((client, clientIndex) => {
+    (client.projects || []).forEach((project, projectIndex) => {
+      const responsible = project.developer || "A definir";
+      (project.tasks || []).forEach((task, taskIndex) => {
+        items.push({
+          client,
+          project,
+          task,
+          responsible,
+          clientIndex,
+          projectIndex,
+          taskIndex,
+          dueMs: parseDateValue(task.due)
+        });
+      });
+    });
+  });
+  return items;
+}
+
+function applyMonitorFilters(items) {
+  ensureMonitorState();
+  const { client, project, responsible } = state.monitor.filters;
+  return items.filter((item) => {
+    if (client && item.client?.name !== client) return false;
+    if (project && item.project?.name !== project) return false;
+    if (responsible && item.responsible !== responsible) return false;
+    return true;
+  });
+}
+
+function monitorDaysFromToday(targetMs, now = new Date()) {
+  if (!Number.isFinite(targetMs)) return null;
+  const today = startOfDay(now).getTime();
+  const target = startOfDay(new Date(targetMs)).getTime();
+  return Math.round((target - today) / (24 * 60 * 60 * 1000));
+}
+
+function monitorDueInfo(item, now = new Date()) {
+  const dueMs = Number.isFinite(item.dueMs) ? item.dueMs : parseDateValue(item.task?.due);
+  const diff = monitorDaysFromToday(dueMs, now);
+  if (diff === null) {
+    return { diff: null, isToday: false, isSoon: false, isOverdue: false };
+  }
+  return {
+    diff,
+    isToday: diff === 0,
+    isSoon: diff >= 0 && diff <= 7,
+    isOverdue: diff < 0
+  };
+}
+
+function monitorCompletionMs(task) {
+  const raw = task?.dataConclusao || task?.due;
+  const parsed = parseDateValue(raw);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function monitorBadgeData(item, dueInfo) {
+  const status = normalizeTaskStatus(item.task?.status);
+  if (status !== "concluido") {
+    if (dueInfo.isOverdue) return { label: "Atrasado", className: "atrasado" };
+    if (dueInfo.isSoon) return { label: "Proximo", className: "proximo" };
+  }
+  const info = statusInfo(status);
+  return { label: info.label, className: info.className };
+}
+
+function resolveMonitorTaskFromDataset(dataset) {
+  const clientIndex = Number(dataset.clientIndex);
+  const projectIndex = Number(dataset.projectIndex);
+  const taskIndex = Number(dataset.taskIndex);
+  const client = Number.isNaN(clientIndex) ? null : state.clients[clientIndex];
+  const project = client?.projects?.[projectIndex] || null;
+  const task = project?.tasks?.[taskIndex] || null;
+  if (task) return { client, project, task };
+  const taskId = dataset.taskId;
+  if (!taskId) return null;
+  for (const fallbackClient of state.clients) {
+    const matchProject = (fallbackClient.projects || []).find((p) =>
+      (p.tasks || []).some((t) => t.id === taskId)
+    );
+    if (matchProject) {
+      const matchTask = matchProject.tasks.find((t) => t.id === taskId);
+      return { client: fallbackClient, project: matchProject, task: matchTask };
+    }
+  }
+  return null;
+}
+
+function renderMonitorTaskList(container, items, options = {}) {
+  const limit = Number.isFinite(options.limit) ? options.limit : items.length;
+  const slice = items.slice(0, limit);
+  container.innerHTML = "";
+  if (!slice.length) {
+    const empty = document.createElement("div");
+    empty.className = "monitor-empty";
+    empty.textContent = options.emptyText || "Sem atividades.";
+    container.appendChild(empty);
+    return;
+  }
+  slice.forEach((item) => {
+    const dueInfo = monitorDueInfo(item);
+    const badge = monitorBadgeData(item, dueInfo);
+    const row = document.createElement("div");
+    row.className = "monitor-item";
+    if (options.compact) row.classList.add("compact");
+    row.style.setProperty("--client-color", clientColor(item.client?.name));
+    const dueLabel =
+      options.dateType === "done"
+        ? item.task?.dataConclusao || item.task?.due || "-"
+        : item.task?.due || "-";
+    row.innerHTML = `
+      <div class="monitor-item-main">
+        <div class="monitor-item-title">${item.task?.title || "Atividade sem titulo"}</div>
+        <div class="monitor-item-meta">
+          <span class="client-dot"></span>
+          <span>${item.client?.name || "-"}</span>
+          <span class="meta-sep">|</span>
+          <span>${item.project?.name || "-"}</span>
+          <span class="meta-sep">|</span>
+          <span>${item.responsible || "A definir"}</span>
+        </div>
+      </div>
+      <div class="monitor-item-due">${dueLabel}</div>
+      <button
+        class="status-badge ${badge.className} status-btn"
+        type="button"
+        data-context="monitor"
+        data-client-index="${item.clientIndex}"
+        data-project-index="${item.projectIndex}"
+        data-task-index="${item.taskIndex}"
+        data-client-id="${item.client?.id || ""}"
+        data-project-id="${item.project?.id || ""}"
+        data-task-id="${item.task?.id || ""}">
+        ${badge.label}
+      </button>
+    `;
+    container.appendChild(row);
+  });
+}
+
 function ensureDashboardState() {
   if (!state.dashboard) {
     state.dashboard = { sort: { key: null, direction: "asc" }, filters: {} };
@@ -2219,6 +2444,314 @@ function sortProjectsForDashboard(a, b) {
   if (aDate !== null) return -1;
   if (bDate !== null) return 1;
   return a.name.localeCompare(b.name);
+}
+
+function renderMonitor(container) {
+  byId("crumb-path").textContent = "Monitor de Atividades";
+  ensureMonitorState();
+
+  const allItems = collectMonitorTasks();
+  const filteredItems = applyMonitorFilters(allItems);
+  const now = new Date();
+
+  const activeItems = filteredItems.filter(
+    (item) => normalizeTaskStatus(item.task?.status) !== "concluido"
+  );
+  const criticalItems = activeItems
+    .filter((item) => {
+      const info = monitorDueInfo(item, now);
+      return info.isOverdue || info.isSoon;
+    })
+    .sort((a, b) => (a.dueMs || Number.POSITIVE_INFINITY) - (b.dueMs || Number.POSITIVE_INFINITY));
+  const todayItems = activeItems
+    .filter((item) => monitorDueInfo(item, now).isToday)
+    .sort((a, b) => (a.dueMs || Number.POSITIVE_INFINITY) - (b.dueMs || Number.POSITIVE_INFINITY));
+  const upcomingItems = activeItems
+    .filter((item) => {
+      const info = monitorDueInfo(item, now);
+      return info.diff !== null && info.diff > 0 && info.diff <= 7;
+    })
+    .sort((a, b) => (a.dueMs || Number.POSITIVE_INFINITY) - (b.dueMs || Number.POSITIVE_INFINITY));
+  const bottleneckItems = activeItems
+    .filter((item) => {
+      const info = monitorDueInfo(item, now);
+      return info.isOverdue && info.diff !== null && info.diff <= -3;
+    })
+    .sort((a, b) => (a.dueMs || Number.POSITIVE_INFINITY) - (b.dueMs || Number.POSITIVE_INFINITY));
+  const recentDone = filteredItems
+    .filter((item) => normalizeTaskStatus(item.task?.status) === "concluido")
+    .filter((item) => {
+      const doneMs = monitorCompletionMs(item.task);
+      const diff = monitorDaysFromToday(doneMs, now);
+      return diff !== null && diff <= 0 && diff >= -7;
+    })
+    .sort((a, b) => (monitorCompletionMs(b.task) || 0) - (monitorCompletionMs(a.task) || 0));
+
+  const totalCount = filteredItems.length;
+  const doneCount = filteredItems.filter(
+    (item) => normalizeTaskStatus(item.task?.status) === "concluido"
+  ).length;
+  const efficiency = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
+
+  const teamMap = new Map();
+  activeItems.forEach((item) => {
+    const key = item.responsible || "A definir";
+    if (!teamMap.has(key)) teamMap.set(key, { total: 0, overdue: 0 });
+    const entry = teamMap.get(key);
+    entry.total += 1;
+    if (monitorDueInfo(item, now).isOverdue) entry.overdue += 1;
+  });
+  const teamMetrics = Array.from(teamMap.entries())
+    .map(([name, data]) => ({ name, ...data }))
+    .sort((a, b) => b.total - a.total || b.overdue - a.overdue || a.name.localeCompare(b.name))
+    .slice(0, 6);
+
+  const board = document.createElement("div");
+  board.className = "monitor-board span-all";
+
+  const header = document.createElement("div");
+  header.className = "monitor-head";
+  header.innerHTML = `
+    <div class="monitor-title-row">
+      <div>
+        <h2>Monitor de Atividades</h2>
+        <div class="muted">Visao centralizada da execucao e saude da operacao.</div>
+      </div>
+    </div>
+    <div class="monitor-filters">
+      <div class="monitor-filter">
+        <label>Cliente</label>
+        <select data-monitor-filter="client"></select>
+      </div>
+      <div class="monitor-filter">
+        <label>Projeto</label>
+        <select data-monitor-filter="project"></select>
+      </div>
+      <div class="monitor-filter">
+        <label>Responsavel</label>
+        <select data-monitor-filter="responsible"></select>
+      </div>
+    </div>
+    <div class="monitor-kpi-grid">
+      <div class="kpi-card">
+        <div class="label">Total de criticas</div>
+        <div class="value">${criticalItems.length}</div>
+        <div class="muted">Atrasos e proximos 7 dias</div>
+      </div>
+      <div class="kpi-card">
+        <div class="label">Atividades hoje</div>
+        <div class="value">${todayItems.length}</div>
+        <div class="muted">Vencem ate hoje</div>
+      </div>
+      <div class="kpi-card">
+        <div class="label">Concluidas na semana</div>
+        <div class="value">${recentDone.length}</div>
+        <div class="muted">Ultimos 7 dias</div>
+      </div>
+      <div class="kpi-card">
+        <div class="label">Eficiencia do time</div>
+        <div class="value">${efficiency}%</div>
+        <div class="muted">${doneCount} de ${totalCount} entregas</div>
+      </div>
+    </div>
+  `;
+
+  const columns = document.createElement("div");
+  columns.className = "monitor-columns";
+
+  const mainCol = document.createElement("div");
+  mainCol.className = "monitor-main";
+
+  const sideCol = document.createElement("div");
+  const sideGrid = document.createElement("div");
+  sideGrid.className = "monitor-side-grid";
+  sideCol.appendChild(sideGrid);
+
+  const criticalCard = document.createElement("div");
+  criticalCard.className = "card monitor-card";
+  criticalCard.innerHTML = `
+    <div class="card-head">
+      <div>
+        <h3>Acoes criticas</h3>
+        <div class="muted">Intervencao imediata</div>
+      </div>
+      <span class="status-badge atrasado">${criticalItems.length} itens</span>
+    </div>
+  `;
+  const criticalList = document.createElement("div");
+  criticalList.className = "monitor-list monitor-scroll";
+  renderMonitorTaskList(criticalList, criticalItems, {
+    emptyText: "Nenhuma criticidade no momento."
+  });
+  criticalCard.appendChild(criticalList);
+
+  const todayCard = document.createElement("div");
+  todayCard.className = "card monitor-card";
+  todayCard.innerHTML = `
+    <div class="card-head">
+      <div>
+        <h3>Cronograma do dia</h3>
+        <div class="muted">Foco no que vence hoje</div>
+      </div>
+      <span class="status-badge proximo">${todayItems.length} itens</span>
+    </div>
+  `;
+  const todayList = document.createElement("div");
+  todayList.className = "monitor-list";
+  renderMonitorTaskList(todayList, todayItems, {
+    emptyText: "Nenhuma atividade prevista para hoje."
+  });
+  todayCard.appendChild(todayList);
+
+  const doneCard = document.createElement("div");
+  doneCard.className = "card monitor-card";
+  doneCard.innerHTML = `
+    <div class="card-head">
+      <div>
+        <h3>Concluidos recentemente</h3>
+        <div class="muted">Ultimos 7 dias</div>
+      </div>
+      <span class="status-badge concluido">${recentDone.length} itens</span>
+    </div>
+  `;
+  const doneList = document.createElement("div");
+  doneList.className = "monitor-list";
+  renderMonitorTaskList(doneList, recentDone, {
+    emptyText: "Nenhuma entrega recente.",
+    dateType: "done",
+    limit: 8
+  });
+  doneCard.appendChild(doneList);
+
+  const upcomingCard = document.createElement("div");
+  upcomingCard.className = "card monitor-card";
+  upcomingCard.innerHTML = `
+    <div class="card-head">
+      <div>
+        <h3>Proximos 7 dias</h3>
+        <div class="muted">Planejamento imediato</div>
+      </div>
+      <span class="status-badge proximo">${upcomingItems.length} itens</span>
+    </div>
+  `;
+  const upcomingList = document.createElement("div");
+  upcomingList.className = "monitor-list";
+  renderMonitorTaskList(upcomingList, upcomingItems, {
+    emptyText: "Sem entregas na proxima semana.",
+    limit: 8,
+    compact: true
+  });
+  upcomingCard.appendChild(upcomingList);
+
+  const teamCard = document.createElement("div");
+  teamCard.className = "card monitor-card";
+  teamCard.innerHTML = `
+    <div class="card-head">
+      <div>
+        <h3>Metricas de time</h3>
+        <div class="muted">Carga por responsavel</div>
+      </div>
+    </div>
+  `;
+  const teamList = document.createElement("div");
+  teamList.className = "monitor-metrics";
+  if (!teamMetrics.length) {
+    const empty = document.createElement("div");
+    empty.className = "monitor-empty";
+    empty.textContent = "Sem atividades abertas.";
+    teamList.appendChild(empty);
+  } else {
+    teamMetrics.forEach((entry) => {
+      const row = document.createElement("div");
+      row.className = "monitor-metric-row";
+      row.innerHTML = `
+        <div class="monitor-metric-name">${entry.name}</div>
+        <div class="monitor-metric-values">
+          <span>${entry.total} itens</span>
+          <span>${entry.overdue} atrasos</span>
+        </div>
+      `;
+      teamList.appendChild(row);
+    });
+  }
+  teamCard.appendChild(teamList);
+
+  const bottleneckCard = document.createElement("div");
+  bottleneckCard.className = "card monitor-card";
+  bottleneckCard.innerHTML = `
+    <div class="card-head">
+      <div>
+        <h3>Gargalos criticos</h3>
+        <div class="muted">Atrasos acima de 3 dias</div>
+      </div>
+      <span class="status-badge atrasado">${bottleneckItems.length} itens</span>
+    </div>
+  `;
+  const bottleneckList = document.createElement("div");
+  bottleneckList.className = "monitor-list";
+  renderMonitorTaskList(bottleneckList, bottleneckItems, {
+    emptyText: "Nenhum gargalo critico identificado.",
+    limit: 6,
+    compact: true
+  });
+  bottleneckCard.appendChild(bottleneckList);
+
+  mainCol.appendChild(criticalCard);
+  mainCol.appendChild(todayCard);
+  mainCol.appendChild(doneCard);
+
+  sideGrid.appendChild(upcomingCard);
+  sideGrid.appendChild(teamCard);
+  sideGrid.appendChild(bottleneckCard);
+
+  columns.appendChild(mainCol);
+  columns.appendChild(sideCol);
+
+  board.appendChild(header);
+  board.appendChild(columns);
+  container.appendChild(board);
+
+  const clientFilterValue = state.monitor.filters.client;
+  const projectFilterValue = state.monitor.filters.project;
+  const projectSource = clientFilterValue
+    ? allItems.filter((item) => item.client?.name === clientFilterValue)
+    : allItems;
+  const responsibleSource = allItems.filter((item) => {
+    if (clientFilterValue && item.client?.name !== clientFilterValue) return false;
+    if (projectFilterValue && item.project?.name !== projectFilterValue) return false;
+    return true;
+  });
+
+  const uniqueValues = (source, getter) => {
+    const values = new Set();
+    source.forEach((item) => {
+      const value = getter(item);
+      if (value) values.add(value);
+    });
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  };
+
+  const filterOptions = {
+    client: uniqueValues(allItems, (item) => item.client?.name),
+    project: uniqueValues(projectSource, (item) => item.project?.name),
+    responsible: uniqueValues(responsibleSource, (item) => item.responsible)
+  };
+
+  header.querySelectorAll("[data-monitor-filter]").forEach((select) => {
+    const key = select.dataset.monitorFilter;
+    const options = filterOptions[key] || [];
+    if (state.monitor.filters[key] && !options.includes(state.monitor.filters[key])) {
+      state.monitor.filters[key] = "";
+    }
+    select.innerHTML = `<option value="">Todos</option>${options
+      .map((value) => `<option value="${value}">${value}</option>`)
+      .join("")}`;
+    select.value = state.monitor.filters[key] || "";
+    select.addEventListener("change", () => {
+      state.monitor.filters[key] = select.value;
+      renderMain();
+    });
+  });
 }
 
 function renderDashboard(container) {

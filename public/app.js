@@ -4310,62 +4310,66 @@ function renderMonitorActivities(container) {
   };
 
   const cardsHtml = `
-    <div class="monitor-bento-card monitor-bento-card--critical monitor-bento-card--xl">
-      <div class="monitor-bento-head">
-        <div>
-          <div class="monitor-bento-title">Acoes Criticas</div>
-          <div class="monitor-bento-sub">Intervencao imediata</div>
+    <div class="monitor-bento-col monitor-bento-col--primary">
+      <div class="monitor-bento-card monitor-bento-card--critical monitor-bento-card--xl">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Acoes Criticas</div>
+            <div class="monitor-bento-sub">Intervencao imediata</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--critical">${iconSvg("alert")}</div>
         </div>
-        <div class="monitor-bento-icon monitor-bento-icon--critical">${iconSvg("alert")}</div>
+        <div class="monitor-bento-count">${overdueItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(overdueItems)}</div>
       </div>
-      <div class="monitor-bento-count">${overdueItems.length} atividades</div>
-      <div class="monitor-bento-list">${renderMiniList(overdueItems)}</div>
     </div>
 
-    <div class="monitor-bento-card monitor-bento-card--today monitor-bento-card--wide">
-      <div class="monitor-bento-head">
-        <div>
-          <div class="monitor-bento-title">Cronograma do Dia</div>
-          <div class="monitor-bento-sub">Entrega e follow-up</div>
+    <div class="monitor-bento-col monitor-bento-col--secondary">
+      <div class="monitor-bento-card monitor-bento-card--today monitor-bento-card--wide">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Cronograma do Dia</div>
+            <div class="monitor-bento-sub">Entrega e follow-up</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--today">${iconSvg("calendarCheck")}</div>
         </div>
-        <div class="monitor-bento-icon monitor-bento-icon--today">${iconSvg("calendarCheck")}</div>
+        <div class="monitor-bento-count">${todayItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(todayItems)}</div>
       </div>
-      <div class="monitor-bento-count">${todayItems.length} atividades</div>
-      <div class="monitor-bento-list">${renderMiniList(todayItems)}</div>
-    </div>
 
-    <div class="monitor-bento-card monitor-bento-card--upcoming">
-      <div class="monitor-bento-head">
-        <div>
-          <div class="monitor-bento-title">Proximos 7 dias</div>
-          <div class="monitor-bento-sub">Planejamento</div>
+      <div class="monitor-bento-card monitor-bento-card--team">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Metricas de Time</div>
+            <div class="monitor-bento-sub">Carga por responsavel</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--team">${iconSvg("users")}</div>
         </div>
-        <div class="monitor-bento-icon monitor-bento-icon--upcoming">${iconSvg("calendar")}</div>
+        <div class="monitor-bento-list">${renderTeamList()}</div>
       </div>
-      <div class="monitor-bento-count">${upcomingItems.length} atividades</div>
-      <div class="monitor-bento-list">${renderMiniList(upcomingItems)}</div>
-    </div>
 
-    <div class="monitor-bento-card monitor-bento-card--team">
-      <div class="monitor-bento-head">
-        <div>
-          <div class="monitor-bento-title">Metricas de Time</div>
-          <div class="monitor-bento-sub">Carga por responsavel</div>
+      <div class="monitor-bento-card monitor-bento-card--upcoming">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Proximos 7 dias</div>
+            <div class="monitor-bento-sub">Planejamento</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--upcoming">${iconSvg("calendar")}</div>
         </div>
-        <div class="monitor-bento-icon monitor-bento-icon--team">${iconSvg("users")}</div>
+        <div class="monitor-bento-count">${upcomingItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(upcomingItems)}</div>
       </div>
-      <div class="monitor-bento-list">${renderTeamList()}</div>
-    </div>
 
-    <div class="monitor-bento-card monitor-bento-card--bottleneck">
-      <div class="monitor-bento-head">
-        <div>
-          <div class="monitor-bento-title">Gargalos</div>
-          <div class="monitor-bento-sub">Projetos com atraso</div>
+      <div class="monitor-bento-card monitor-bento-card--bottleneck">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Gargalos</div>
+            <div class="monitor-bento-sub">Projetos com atraso</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--risk">${iconSvg("trend")}</div>
         </div>
-        <div class="monitor-bento-icon monitor-bento-icon--risk">${iconSvg("trend")}</div>
+        <div class="monitor-bento-list">${renderBottleneckList()}</div>
       </div>
-      <div class="monitor-bento-list">${renderBottleneckList()}</div>
     </div>
   `;
 
@@ -6118,62 +6122,66 @@ function renderMonitorActivities(container) {
   };
 
   const cardsHtml = `
-    <div class="monitor-bento-card monitor-bento-card--critical monitor-bento-card--xl">
-      <div class="monitor-bento-head">
-        <div>
-          <div class="monitor-bento-title">Acoes Criticas</div>
-          <div class="monitor-bento-sub">Intervencao imediata</div>
+    <div class="monitor-bento-col monitor-bento-col--primary">
+      <div class="monitor-bento-card monitor-bento-card--critical monitor-bento-card--xl">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Acoes Criticas</div>
+            <div class="monitor-bento-sub">Intervencao imediata</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--critical">${iconSvg("alert")}</div>
         </div>
-        <div class="monitor-bento-icon monitor-bento-icon--critical">${iconSvg("alert")}</div>
+        <div class="monitor-bento-count">${overdueItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(overdueItems)}</div>
       </div>
-      <div class="monitor-bento-count">${overdueItems.length} atividades</div>
-      <div class="monitor-bento-list">${renderMiniList(overdueItems)}</div>
     </div>
 
-    <div class="monitor-bento-card monitor-bento-card--today monitor-bento-card--wide">
-      <div class="monitor-bento-head">
-        <div>
-          <div class="monitor-bento-title">Cronograma do Dia</div>
-          <div class="monitor-bento-sub">Entrega e follow-up</div>
+    <div class="monitor-bento-col monitor-bento-col--secondary">
+      <div class="monitor-bento-card monitor-bento-card--today monitor-bento-card--wide">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Cronograma do Dia</div>
+            <div class="monitor-bento-sub">Entrega e follow-up</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--today">${iconSvg("calendarCheck")}</div>
         </div>
-        <div class="monitor-bento-icon monitor-bento-icon--today">${iconSvg("calendarCheck")}</div>
+        <div class="monitor-bento-count">${todayItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(todayItems)}</div>
       </div>
-      <div class="monitor-bento-count">${todayItems.length} atividades</div>
-      <div class="monitor-bento-list">${renderMiniList(todayItems)}</div>
-    </div>
 
-    <div class="monitor-bento-card monitor-bento-card--upcoming">
-      <div class="monitor-bento-head">
-        <div>
-          <div class="monitor-bento-title">Proximos 7 dias</div>
-          <div class="monitor-bento-sub">Planejamento</div>
+      <div class="monitor-bento-card monitor-bento-card--team">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Metricas de Time</div>
+            <div class="monitor-bento-sub">Carga por responsavel</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--team">${iconSvg("users")}</div>
         </div>
-        <div class="monitor-bento-icon monitor-bento-icon--upcoming">${iconSvg("calendar")}</div>
+        <div class="monitor-bento-list">${renderTeamList()}</div>
       </div>
-      <div class="monitor-bento-count">${upcomingItems.length} atividades</div>
-      <div class="monitor-bento-list">${renderMiniList(upcomingItems)}</div>
-    </div>
 
-    <div class="monitor-bento-card monitor-bento-card--team">
-      <div class="monitor-bento-head">
-        <div>
-          <div class="monitor-bento-title">Metricas de Time</div>
-          <div class="monitor-bento-sub">Carga por responsavel</div>
+      <div class="monitor-bento-card monitor-bento-card--upcoming">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Proximos 7 dias</div>
+            <div class="monitor-bento-sub">Planejamento</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--upcoming">${iconSvg("calendar")}</div>
         </div>
-        <div class="monitor-bento-icon monitor-bento-icon--team">${iconSvg("users")}</div>
+        <div class="monitor-bento-count">${upcomingItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(upcomingItems)}</div>
       </div>
-      <div class="monitor-bento-list">${renderTeamList()}</div>
-    </div>
 
-    <div class="monitor-bento-card monitor-bento-card--bottleneck">
-      <div class="monitor-bento-head">
-        <div>
-          <div class="monitor-bento-title">Gargalos</div>
-          <div class="monitor-bento-sub">Projetos com atraso</div>
+      <div class="monitor-bento-card monitor-bento-card--bottleneck">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Gargalos</div>
+            <div class="monitor-bento-sub">Projetos com atraso</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--risk">${iconSvg("trend")}</div>
         </div>
-        <div class="monitor-bento-icon monitor-bento-icon--risk">${iconSvg("trend")}</div>
+        <div class="monitor-bento-list">${renderBottleneckList()}</div>
       </div>
-      <div class="monitor-bento-list">${renderBottleneckList()}</div>
     </div>
   `;
 
