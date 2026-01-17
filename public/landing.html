@@ -1,170 +1,386 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AXON - Projects | Landing</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="landing.css">
-</head>
-<body>
-  <div class="landing-page">
-    <nav class="landing-nav">
-      <div class="landing-brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M4 12c5 0 4-8 10-8 0 3 6 3 6 8s-6 5-6 8c-6 0-5-8-10-8Z" fill="currentColor" />
-          </svg>
-        </div>
-        <span class="brand-name">AXON Projects</span>
-      </div>
-      <div class="landing-links">
-        <a href="#">Solucoes</a>
-        <a href="#">Produto</a>
-        <a href="#">Empresa</a>
-        <a href="#">Insights</a>
-      </div>
-      <div class="landing-actions">
-        <button class="ghost-button" type="button">Login</button>
-        <button class="soft-button" type="button">Criar conta</button>
-      </div>
-    </nav>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AXON Projects | Landing</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100;300;400;500;700;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      :root { color-scheme: dark; }
+      body { font-family: "Outfit", system-ui, -apple-system, sans-serif; }
+      .orb {
+        position: absolute;
+        border-radius: 999px;
+        filter: blur(140px);
+        opacity: 0.5;
+      }
+      .reveal {
+        animation: fadeUp 0.9s ease forwards;
+        opacity: 0;
+        transform: translateY(18px);
+      }
+      .reveal.delay-1 { animation-delay: 0.1s; }
+      .reveal.delay-2 { animation-delay: 0.2s; }
+      .reveal.delay-3 { animation-delay: 0.3s; }
+      @keyframes fadeUp {
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .mock-shell {
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 32px;
+        box-shadow: 0 28px 70px rgba(2, 6, 23, 0.6);
+      }
+      .mock-tile {
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 20px;
+      }
+      .mock-light {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 28px;
+        box-shadow: 0 28px 70px rgba(15, 23, 42, 0.12);
+      }
+      .cycle-pill {
+        border: 1px solid #e2e8f0;
+        padding: 8px 16px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        color: #94a3b8;
+        background: transparent;
+        transition: all 0.2s ease;
+      }
+      .cycle-pill:hover {
+        border-color: #0f172a;
+        color: #0f172a;
+      }
+      .cycle-pill[data-active="true"] {
+        background: #0f172a;
+        border-color: #0f172a;
+        color: #ffffff;
+      }
+    </style>
+  </head>
+  <body class="min-h-screen bg-[#0B0F1A] text-white">
+    <div class="relative overflow-hidden">
+      <div class="orb left-[-10%] top-[-20%] h-96 w-96 bg-emerald-500/40"></div>
+      <div class="orb right-[-10%] top-[20%] h-[420px] w-[420px] bg-slate-700/40"></div>
 
-    <main class="landing-hero">
-      <section class="hero-copy">
-        <div>
-          <h1>
-            Projetos sob controle
-            <br>
-            com precisao.
-          </h1>
-          <p>
-            Acompanhe prazos, riscos e progresso em um painel claro para decidir
-            mais rapido e manter sua equipe alinhada.
+      <nav class="relative z-10">
+        <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-8">
+          <div class="flex flex-col leading-none">
+            <div class="flex items-center gap-1">
+              <span class="text-xl font-[900] tracking-tighter uppercase italic text-white">Axon</span>
+              <span class="text-xl font-[400] tracking-tighter uppercase italic text-slate-500">Projects</span>
+            </div>
+            <span class="text-[8px] font-[700] uppercase tracking-[0.3em] text-emerald-400">Inteligencia em Gestao</span>
+          </div>
+          <button class="rounded-full bg-black px-6 py-3 text-[11px] font-[900] uppercase tracking-[0.3em] text-white shadow-[0_20px_40px_rgba(0,0,0,0.6)]">
+            Testar agora
+          </button>
+        </div>
+      </nav>
+
+      <section class="relative z-10 py-32">
+        <div class="mx-auto grid max-w-6xl items-center gap-16 px-6 lg:grid-cols-[1.05fr_0.95fr]">
+          <div class="reveal">
+            <h1 class="text-4xl font-[900] uppercase italic tracking-tighter md:text-6xl lg:text-7xl">
+              Gestao de Projetos<br>para a elite corporativa.
+            </h1>
+            <p class="mt-6 max-w-xl text-base font-[100] text-slate-300 md:text-lg">
+              Monitore Curva S e GAPs com a precisao que sua governanca exige.
+            </p>
+            <div class="mt-10 flex items-center gap-6">
+              <button class="rounded-2xl bg-black px-8 py-4 text-xs font-[900] uppercase tracking-[0.3em] text-white shadow-[0_16px_40px_rgba(0,0,0,0.55)]">
+                Testar agora
+              </button>
+              <span class="text-[11px] font-[100] uppercase tracking-[0.3em] text-slate-500">
+                Demo guiada em 15 min
+              </span>
+            </div>
+          </div>
+
+          <div class="reveal delay-1 relative">
+            <div class="mock-shell p-8">
+              <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+                <span class="text-sm font-[900] uppercase italic tracking-tight text-white">Global Tech Corp</span>
+                <div class="flex gap-1">
+                  <span class="h-2 w-2 rounded-full bg-red-500"></span>
+                  <span class="h-2 w-2 rounded-full bg-amber-400"></span>
+                  <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+                </div>
+              </div>
+              <div class="mt-6 grid gap-4 md:grid-cols-2">
+                <div class="mock-tile p-5">
+                  <p class="text-[10px] font-[700] uppercase tracking-[0.3em] text-slate-500">Completo</p>
+                  <p class="mt-3 text-3xl font-[900] italic text-white">87%</p>
+                  <div class="mt-4 h-1.5 w-full rounded-full bg-slate-800">
+                    <div class="h-1.5 w-[87%] rounded-full bg-emerald-400 shadow-[0_0_16px_rgba(16,185,129,0.5)]"></div>
+                  </div>
+                </div>
+                <div class="mock-tile p-5">
+                  <p class="text-[10px] font-[700] uppercase tracking-[0.3em] text-slate-500">GAP</p>
+                  <p class="mt-3 text-3xl font-[900] italic text-emerald-300">+4d</p>
+                  <p class="mt-3 text-[10px] font-[100] uppercase tracking-[0.3em] text-slate-500">
+                    Estavel
+                  </p>
+                </div>
+              </div>
+              <div class="mt-4 grid grid-cols-3 gap-3">
+                <div class="mock-tile flex items-center justify-between px-3 py-2 text-[10px] font-[700] uppercase tracking-[0.2em] text-slate-400">
+                  Curva S
+                  <span class="text-emerald-300">Live</span>
+                </div>
+                <div class="mock-tile flex items-center justify-between px-3 py-2 text-[10px] font-[700] uppercase tracking-[0.2em] text-slate-400">
+                  Monitor
+                  <span class="text-emerald-300">24/7</span>
+                </div>
+                <div class="mock-tile flex items-center justify-between px-3 py-2 text-[10px] font-[700] uppercase tracking-[0.2em] text-slate-400">
+                  Gantt
+                  <span class="text-emerald-300">Pro</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="absolute -bottom-10 -left-6 hidden md:block">
+              <div class="mock-shell px-6 py-4">
+                <p class="text-[10px] font-[700] uppercase tracking-[0.3em] text-slate-500">GAP Global</p>
+                <p class="mt-2 text-2xl font-[900] italic text-emerald-300">+15%</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="bg-white py-32 text-slate-900">
+        <div class="mx-auto max-w-6xl px-6">
+          <div class="text-center">
+            <p class="text-[10px] font-[700] uppercase tracking-[0.4em] text-slate-400">The Product</p>
+            <h2 class="mt-5 text-4xl font-[900] uppercase italic tracking-tighter md:text-5xl">
+              Um unico painel, tres decisoes criticas.
+            </h2>
+            <p class="mt-4 text-base font-[100] text-slate-500">
+              Menos explicacao, mais demonstracao. Mockups com dados ficticios.
+            </p>
+          </div>
+
+          <div class="mt-16 grid gap-16">
+            <div class="grid items-center gap-12 lg:grid-cols-2">
+              <div>
+                <p class="text-[10px] font-[700] uppercase tracking-[0.3em] text-emerald-500">Curva S</p>
+                <h3 class="mt-4 text-3xl font-[900] uppercase italic tracking-tight">Global Tech Corp</h3>
+                <p class="mt-4 text-sm font-[100] text-slate-500">
+                  Linha planejada e realizado com leitura instantanea de desempenho.
+                </p>
+              </div>
+              <div class="mock-light p-6">
+                <div class="flex items-center justify-between border-b border-slate-200 pb-4">
+                  <span class="text-sm font-[900] uppercase italic">Global Tech</span>
+                  <span class="text-[10px] font-[700] uppercase tracking-[0.3em] text-emerald-500">Curva S</span>
+                </div>
+                <div class="mt-6 h-40 rounded-2xl bg-slate-50 p-4">
+                  <div class="h-full w-full rounded-2xl bg-[linear-gradient(180deg,#e2e8f0_1px,transparent_1px)] [background-size:100%_24px]">
+                    <div class="h-full w-full">
+                      <div class="relative h-full">
+                        <div class="absolute left-0 top-[30%] h-1 w-full rounded-full bg-slate-300"></div>
+                        <div class="absolute left-0 top-[45%] h-1 w-[75%] rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.3)]"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="mt-4 flex justify-between text-[10px] font-[700] uppercase tracking-[0.3em] text-slate-400">
+                  <span>Planejado</span>
+                  <span class="text-emerald-500">Realizado</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid items-center gap-12 lg:grid-cols-2">
+              <div class="order-2 lg:order-1">
+                <div class="mock-light p-6">
+                  <div class="flex items-center justify-between border-b border-slate-200 pb-4">
+                    <span class="text-sm font-[900] uppercase italic">Nexus Solutions</span>
+                    <span class="text-[10px] font-[700] uppercase tracking-[0.3em] text-slate-400">Monitor</span>
+                  </div>
+                  <div class="mt-6 space-y-3">
+                    <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p class="text-sm font-[700]">Expansao Data Center</p>
+                      <p class="text-[10px] uppercase tracking-[0.3em] text-slate-400">Hoje 12h</p>
+                    </div>
+                    <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p class="text-sm font-[700]">Cadeia de fornecedores</p>
+                      <p class="text-[10px] uppercase tracking-[0.3em] text-slate-400">Atrasado +2d</p>
+                    </div>
+                    <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p class="text-sm font-[700]">Governanca de dados</p>
+                      <p class="text-[10px] uppercase tracking-[0.3em] text-slate-400">Proximos 7 dias</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="order-1 lg:order-2">
+                <p class="text-[10px] font-[700] uppercase tracking-[0.3em] text-emerald-500">Monitor de Atividades</p>
+                <h3 class="mt-4 text-3xl font-[900] uppercase italic tracking-tight">Nexus Solutions</h3>
+                <p class="mt-4 text-sm font-[100] text-slate-500">
+                  Lista ultra clean com foco no que vence hoje e no que ja passou.
+                </p>
+              </div>
+            </div>
+
+            <div class="grid items-center gap-12 lg:grid-cols-2">
+              <div>
+                <p class="text-[10px] font-[700] uppercase tracking-[0.3em] text-emerald-500">GAP Intelligence</p>
+                <h3 class="mt-4 text-3xl font-[900] uppercase italic tracking-tight">Prime Logistica</h3>
+                <p class="mt-4 text-sm font-[100] text-slate-500">
+                  Um unico indicador para a diretoria tomar decisao de correcao.
+                </p>
+              </div>
+              <div class="mock-light p-8">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="text-[10px] font-[700] uppercase tracking-[0.3em] text-slate-400">GAP Atual</p>
+                    <p class="mt-4 text-5xl font-[900] italic text-emerald-500">+15%</p>
+                  </div>
+                  <div class="rounded-full bg-emerald-500/10 px-4 py-2 text-[10px] font-[700] uppercase tracking-[0.3em] text-emerald-500">
+                    Estavel
+                  </div>
+                </div>
+                <div class="mt-8 h-2 w-full rounded-full bg-slate-100">
+                  <div class="h-2 w-[65%] rounded-full bg-emerald-500"></div>
+                </div>
+                <p class="mt-4 text-[10px] font-[700] uppercase tracking-[0.3em] text-slate-400">
+                  Prime Logistica
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="pricing" class="py-32">
+        <div class="mx-auto max-w-6xl px-6">
+          <div class="text-center">
+            <p class="text-[10px] font-[700] uppercase tracking-[0.4em] text-slate-500">Planos</p>
+            <h2 class="mt-5 text-4xl font-[900] uppercase italic tracking-tighter">Investimento inteligente.</h2>
+            <p class="mt-4 text-base font-[100] text-slate-400">
+              Tres opcoes. Um unico padrao de precisao.
+            </p>
+          </div>
+
+          <div class="mt-10 flex flex-wrap items-center justify-center gap-3">
+            <button type="button" class="cycle-pill" data-period="monthly" data-active="true" aria-selected="true">Mensal</button>
+            <button type="button" class="cycle-pill" data-period="quarterly" data-active="false" aria-selected="false">Trimestral</button>
+            <button type="button" class="cycle-pill" data-period="semiannual" data-active="false" aria-selected="false">Semestral</button>
+            <button type="button" class="cycle-pill" data-period="yearly" data-active="false" aria-selected="false">Anual</button>
+          </div>
+
+          <div class="mt-16 grid gap-10 lg:grid-cols-3">
+            <div class="rounded-[36px] border border-slate-800 bg-slate-900/60 p-10 text-center">
+              <p class="text-[11px] font-[700] uppercase tracking-[0.3em] text-slate-500">Starter</p>
+              <p class="mt-6 text-5xl font-[900] tabular-nums text-white" data-price data-monthly="129.90" data-quarterly="116.91" data-semiannual="103.92" data-yearly="90.93">
+                R$ 129,90
+              </p>
+              <p class="mt-3 text-[10px] font-[700] uppercase tracking-[0.3em] text-slate-500" data-billing-label>Faturado mensalmente</p>
+              <button class="mt-10 w-full rounded-2xl bg-white py-4 text-xs font-[900] uppercase tracking-[0.3em] text-slate-950">
+                Selecionar
+              </button>
+            </div>
+
+            <div class="rounded-[36px] border border-emerald-400/60 bg-emerald-500/10 p-10 text-center shadow-[0_0_40px_rgba(16,185,129,0.2)]">
+              <p class="text-[11px] font-[700] uppercase tracking-[0.3em] text-emerald-200">Pro</p>
+              <p class="mt-6 text-5xl font-[900] tabular-nums text-white" data-price data-monthly="259.90" data-quarterly="233.91" data-semiannual="207.92" data-yearly="181.93">
+                R$ 259,90
+              </p>
+              <p class="mt-3 text-[10px] font-[700] uppercase tracking-[0.3em] text-emerald-200" data-billing-label>Faturado mensalmente</p>
+              <button class="mt-10 w-full rounded-2xl bg-emerald-400 py-4 text-xs font-[900] uppercase tracking-[0.3em] text-slate-950">
+                Selecionar
+              </button>
+            </div>
+
+            <div class="rounded-[36px] border border-slate-800 bg-slate-900/60 p-10 text-center">
+              <p class="text-[11px] font-[700] uppercase tracking-[0.3em] text-slate-500">Business</p>
+              <p class="mt-6 text-5xl font-[900] tabular-nums text-white" data-price data-monthly="499.90" data-quarterly="449.91" data-semiannual="399.92" data-yearly="349.93">
+                R$ 499,90
+              </p>
+              <p class="mt-3 text-[10px] font-[700] uppercase tracking-[0.3em] text-slate-500" data-billing-label>Faturado mensalmente</p>
+              <button class="mt-10 w-full rounded-2xl bg-white py-4 text-xs font-[900] uppercase tracking-[0.3em] text-slate-950">
+                Selecionar
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="border-t border-slate-800/60 py-16">
+        <div class="mx-auto flex max-w-6xl flex-col items-center gap-4 px-6 text-center">
+          <div class="flex items-center gap-1 text-white/70">
+            <span class="text-lg font-[900] uppercase italic tracking-tighter">Axon</span>
+            <span class="text-lg font-[400] uppercase italic tracking-tighter text-slate-500">Projects</span>
+          </div>
+          <p class="text-[10px] font-[700] uppercase tracking-[0.3em] text-slate-600">
+            (c) 2026 AXON Projects. Todos os direitos reservados.
           </p>
         </div>
+      </footer>
+    </div>
 
-        <div class="hero-cta">
-          <a class="soft-button" href="/index.html">Acessar sistema
-            <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M7 17L17 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M9 7h8v8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </a>
-        </div>
+    <script>
+      const periodButtons = document.querySelectorAll("[data-period]");
+      const prices = document.querySelectorAll("[data-price]");
+      const labels = document.querySelectorAll("[data-billing-label]");
+      const periodLabels = {
+        monthly: "Faturado mensalmente",
+        quarterly: "Faturado a cada 3 meses",
+        semiannual: "Faturado a cada 6 meses",
+        yearly: "Faturado a cada 12 meses"
+      };
+      const formatter = new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: "BRL",
+        minimumFractionDigits: 2
+      });
 
-        <div class="hero-stats">
-          <div class="stat">
-            <div class="stat-value">140+</div>
-            <div class="stat-label">Projetos monitorados</div>
-          </div>
-          <div class="stat">
-            <div class="stat-value">1.2k</div>
-            <div class="stat-label">Relatorios gerados</div>
-          </div>
-        </div>
+      function setActivePeriod(period) {
+        periodButtons.forEach((button) => {
+          const isActive = button.dataset.period === period;
+          button.dataset.active = isActive ? "true" : "false";
+          button.setAttribute("aria-selected", isActive ? "true" : "false");
+        });
+      }
 
-        <div class="hero-trust">
-          <span>CONFIADO POR TIMES EXIGENTES</span>
-          <div class="trust-logos">
-            <span>KPMG</span>
-            <span>JEQUITI</span>
-            <span>ASCENTY</span>
-          </div>
-        </div>
-      </section>
+      function updatePrices(period) {
+        prices.forEach((priceEl) => {
+          const rawValue = priceEl.dataset[period];
+          const value = Number(rawValue);
+          if (!Number.isFinite(value)) {
+            return;
+          }
+          priceEl.textContent = formatter.format(value);
+        });
+        labels.forEach((label) => {
+          label.textContent = periodLabels[period] || label.textContent;
+        });
+        setActivePeriod(period);
+      }
 
-      <section class="hero-grid">
-        <article class="hero-card hero-card-secure">
-          <div class="card-glow" aria-hidden="true"></div>
-          <div class="card-ornament" aria-hidden="true">
-            <svg class="card-rings" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <radialGradient id="ringGlow" cx="50%" cy="50%" r="50%">
-                  <stop offset="0%" stop-color="#22d3aa" stop-opacity="0.35" />
-                  <stop offset="100%" stop-color="transparent" />
-                </radialGradient>
-              </defs>
-              <rect width="400" height="400" fill="url(#ringGlow)" />
-              <circle cx="200" cy="200" r="20" fill="none" stroke="currentColor" stroke-opacity="0.12" />
-              <circle cx="200" cy="200" r="34" fill="none" stroke="currentColor" stroke-opacity="0.12" />
-              <circle cx="200" cy="200" r="48" fill="none" stroke="currentColor" stroke-opacity="0.12" />
-              <circle cx="200" cy="200" r="62" fill="none" stroke="currentColor" stroke-opacity="0.12" />
-              <circle cx="200" cy="200" r="76" fill="none" stroke="currentColor" stroke-opacity="0.12" />
-              <circle cx="200" cy="200" r="90" fill="none" stroke="currentColor" stroke-opacity="0.12" />
-              <circle cx="200" cy="200" r="104" fill="none" stroke="currentColor" stroke-opacity="0.12" />
-            </svg>
-          </div>
-          <div class="card-content">
-            <div class="card-tag">
-              <span class="card-icon">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M12 3l7 4v5c0 5-4 8-7 9-3-1-7-4-7-9V7l7-4Z" stroke="currentColor" stroke-width="1.6" />
-                  <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </span>
-              <span class="card-tag-text">Controle seguro</span>
-            </div>
-            <p class="card-title">
-              Indicadores e alertas
-              <br>
-              mantem tudo sob controle
-            </p>
-          </div>
-        </article>
+      periodButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const period = button.dataset.period;
+          if (!period) {
+            return;
+          }
+          updatePrices(period);
+        });
+      });
 
-        <article class="hero-card hero-card-globe">
-          <div class="planet-wrap" aria-hidden="true">
-            <svg width="220" height="220" viewBox="0 0 220 220" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="planetGrad" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stop-color="#34d399" />
-                  <stop offset="100%" stop-color="#06b6d4" />
-                </linearGradient>
-              </defs>
-              <circle cx="110" cy="110" r="56" fill="url(#planetGrad)" opacity="0.95" />
-              <circle cx="94" cy="98" r="10" fill="white" opacity="0.45" />
-              <circle cx="132" cy="126" r="8" fill="white" opacity="0.35" />
-              <ellipse class="planet-orbit" cx="110" cy="110" rx="100" ry="34" stroke="white" stroke-opacity="0.6" fill="none" stroke-dasharray="200 200" />
-              <circle class="planet-spark" cx="210" cy="110" r="4" fill="white" />
-            </svg>
-          </div>
-          <div class="card-content">
-            <span class="card-eyebrow">Multicliente</span>
-            <p class="card-title">
-              Projetos e times
-              <br>
-              em uma unica visao
-            </p>
-          </div>
-        </article>
-
-        <article class="hero-card hero-card-growth">
-          <div class="card-content">
-            <span class="card-eyebrow">Avanco medio</span>
-            <div class="card-metric">
-              73%
-              <span>meta</span>
-            </div>
-            <div class="card-delta">+4.2% este mes</div>
-            <div class="mini-bars">
-              <div class="mini-bar" style="--bar-height: 18px; --delay: 0.5s;"></div>
-              <div class="mini-bar" style="--bar-height: 48px; --delay: 0.65s;"></div>
-              <div class="mini-bar" style="--bar-height: 72px; --delay: 0.8s;"></div>
-              <div class="mini-bar" style="--bar-height: 96px; --delay: 0.95s;"></div>
-            </div>
-          </div>
-        </article>
-
-        <div class="hero-card-spacer" aria-hidden="true"></div>
-      </section>
-    </main>
-
-    <footer class="landing-footer">
-      (c) 2025 AXON Projects. Todos os direitos reservados.
-    </footer>
-  </div>
-</body>
+      updatePrices("monthly");
+    </script>
+  </body>
 </html>

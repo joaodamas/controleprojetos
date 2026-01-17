@@ -6,76 +6,161 @@
   <title>AXON - Projects</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
   <link rel="stylesheet" href="styles.css?v=20260101-1">
 </head>
 <body>
-    <div id="login-screen" class="login-screen">
-    <div class="login-card" id="login-card" data-mode="login">
-      <div class="login-brand">
-        <img src="logo_modal.png" alt="AXON - Projects" class="login-logo">
-      </div>
+  <div id="login-screen" class="login-screen">
+    <div class="login-shell">
+      <aside class="login-visual">
+        <div class="login-visual-inner">
+          <div class="logo-type logo-type--lg logo-type--light">
+            <div class="logo-type-title">
+              <span class="logo-type-axon">Axon</span>
+              <span class="logo-type-projects">Projects</span>
+            </div>
+            <span class="logo-type-tagline">Inteligencia em Gestao</span>
+          </div>
+          <p class="login-visual-title">Gestao enterprise para portfolios exigentes.</p>
+          <p class="login-visual-sub">GAP analysis, Curva S e GANTT em um unico painel.</p>
+          <ul class="login-visual-list">
+            <li>Alertas e SLA em tempo real</li>
+            <li>Monitor de atividades com prioridades</li>
+            <li>Seguranca e LGPD</li>
+          </ul>
+        </div>
+      </aside>
 
-      <form id="login-form" class="login-form">
-        <div class="login-header">
-          <h1 class="login-title" id="login-title">Entrar</h1>
-          <p class="login-subtitle">Acesse seu dashboard</p>
+      <div class="login-card" id="login-card" data-mode="login">
+        <div class="login-brand">
+          <div class="logo-type logo-type--md">
+            <div class="logo-type-title">
+              <span class="logo-type-axon">Axon</span>
+              <span class="logo-type-projects">Projects</span>
+            </div>
+            <span class="logo-type-tagline">Inteligencia em Gestao</span>
+          </div>
         </div>
 
-        <label class="login-label signup-only" for="login-name">Nome completo</label>
-        <input id="login-name" type="text" class="login-input signup-only" placeholder="Seu nome" autocomplete="name">
+        <form id="login-form" class="login-form">
+          <div class="login-header">
+            <h1 class="login-title" id="login-title">Entrar</h1>
+            <p class="login-subtitle">Acesse seu dashboard</p>
+          </div>
 
-        <label class="login-label" for="login-email">E-mail</label>
-        <input id="login-email" type="email" class="login-input" placeholder="seu@email.com" required autocomplete="username">
+          <label class="login-label signup-only" for="login-name">Nome completo</label>
+          <input id="login-name" type="text" class="login-input signup-only" placeholder="Seu nome" autocomplete="name">
 
-        <label class="login-label" for="login-password">Senha</label>
-        <input id="login-password" type="password" class="login-input" placeholder="Sua senha" required autocomplete="current-password">
+          <label class="login-label" for="login-email">E-mail</label>
+          <input id="login-email" type="email" class="login-input" placeholder="seu@email.com" required autocomplete="username">
 
-        <label class="login-label signup-only" for="login-password-confirm">Confirmar senha</label>
-        <input id="login-password-confirm" type="password" class="login-input signup-only" placeholder="Repita sua senha" autocomplete="new-password">
+          <label class="login-label" for="login-password">Senha</label>
+          <input id="login-password" type="password" class="login-input" placeholder="Sua senha" required autocomplete="current-password">
 
-        <button class="login-button" id="login-submit" type="submit">Entrar</button>
+          <label class="login-label signup-only" for="login-password-confirm">Confirmar senha</label>
+          <input id="login-password-confirm" type="password" class="login-input signup-only" placeholder="Repita sua senha" autocomplete="new-password">
 
-        <div class="login-divider">ou</div>
+          <button class="login-button" id="login-submit" type="submit">Entrar</button>
 
-        <button class="login-button google" id="login-google" type="button">Entrar com Google</button>
+          <div class="login-divider">ou</div>
 
-        <p id="login-error" class="login-error hidden"></p>
-      </form>
+          <button class="login-button google" id="login-google" type="button">Entrar com Google</button>
 
-      <div class="login-switch">
-        <span id="login-switch-text">Nao tem conta?</span>
-        <button type="button" class="login-link" id="login-switch-btn">Criar conta</button>
+          <p id="login-error" class="login-error hidden"></p>
+        </form>
+
+        <div class="login-switch">
+          <span id="login-switch-text">Nao tem conta?</span>
+          <button type="button" class="login-link" id="login-switch-btn">Criar conta</button>
+        </div>
+
+        <div class="login-footer">(c) 2025 - AXON - Projects</div>
       </div>
-
-      <div class="login-footer">(c) 2025 - AXON - Projects</div>
     </div>
   </div>
 
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar">
       <div class="brand">
-        <img class="brand-logo" src="axon-projects.jpg" alt="AXON - Projects">
+        <div class="logo-type logo-type--md logo-type--sidebar">
+          <div class="logo-type-title">
+            <span class="logo-type-axon logo-italic">Axon</span>
+            <span class="logo-type-projects logo-italic">Projects</span>
+          </div>
+          <span class="logo-type-tagline">Inteligencia em Gestao</span>
+        </div>
       </div>
       <nav class="nav">
-        <button class="nav-link active" data-section="inicio">Inicio</button>
-        <button class="nav-link" data-section="dashboard">Dashboard Projetos</button>
-        <button class="nav-link" data-section="monitor">Monitor de Atividades</button>
-        <button class="nav-link hidden" data-section="dev-board" id="nav-dev-board">Painel Desenvolvedor</button>
+        <button class="nav-link active" data-section="inicio">
+          <span class="nav-link-content">
+            <i data-lucide="home" class="nav-icon"></i>
+            <span>Inicio</span>
+          </span>
+        </button>
+        <button class="nav-link" data-section="dashboard">
+          <span class="nav-link-content">
+            <i data-lucide="layout-dashboard" class="nav-icon"></i>
+            <span>Dashboard Projetos</span>
+          </span>
+        </button>
+        <button class="nav-link" data-section="monitor">
+          <span class="nav-link-content">
+            <i data-lucide="activity" class="nav-icon"></i>
+            <span>Monitor de Atividades</span>
+          </span>
+        </button>
+        <button class="nav-link hidden" data-section="dev-board" id="nav-dev-board">
+          <span class="nav-link-content">
+            <i data-lucide="code-2" class="nav-icon"></i>
+            <span>Painel Desenvolvedor</span>
+          </span>
+        </button>
         <div class="nav-group">
           <button class="nav-link with-caret" data-section="meus-projetos">
-            Meus Projetos
-            <span class="caret">›</span>
+            <span class="nav-link-content">
+              <i data-lucide="folder-kanban" class="nav-icon"></i>
+              <span>Meus Projetos</span>
+            </span>
+            <span class="caret">></span>
           </button>
           <div class="nav-sub" id="client-list"></div>
         </div>
       </nav>
-      <div class="footer-links">
-        <button class="nav-link ghost" data-section="config">Configuracoes</button>
-        <button class="nav-link ghost" data-section="sair" id="nav-logout">Encerrar</button>
+      <div class="sidebar-footer">
+        <button class="theme-toggle" type="button" data-theme-toggle aria-pressed="false">
+          <span class="theme-toggle-label">
+            <i data-lucide="moon" class="theme-icon theme-icon--dark"></i>
+            <i data-lucide="sun" class="theme-icon theme-icon--light"></i>
+            <span class="theme-toggle-text" data-theme-text>Dark mode</span>
+          </span>
+          <span class="theme-toggle-switch">
+            <span class="theme-toggle-knob"></span>
+          </span>
+        </button>
+
+        <div class="sidebar-user">
+          <div class="sidebar-user-avatar" data-sidebar-avatar>AX</div>
+          <div class="sidebar-user-info">
+            <div class="sidebar-user-name" data-sidebar-name>Administrador</div>
+            <div class="sidebar-user-role" data-sidebar-role>Administrator</div>
+          </div>
+          <button class="sidebar-user-logout" type="button" data-section="sair" aria-label="Encerrar sessao">
+            <i data-lucide="log-out" class="nav-icon"></i>
+          </button>
+        </div>
+
+        <div class="footer-links">
+          <button class="nav-link ghost" data-section="config">
+            <span class="nav-link-content">
+              <i data-lucide="settings" class="nav-icon"></i>
+              <span>Configuracoes</span>
+            </span>
+          </button>
+        </div>
       </div>
     </aside>
 
@@ -332,5 +417,12 @@
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
   <script src="./app.js?v=20260101-2" defer></script>
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      if (window.lucide) {
+        window.lucide.createIcons();
+      }
+    });
+  </script>
 </body>
 </html>

@@ -13,6 +13,8 @@ let db = null;
 let auth = null;
 let appInitialized = false;
 
+const THEME_STORAGE_KEY = "axon-theme";
+
 const state = {
   clients: [
     {
@@ -466,6 +468,29 @@ function roleLabel(role) {
   return "Usuario";
 }
 
+function usesTenantData() {
+  return normalizeUserRole(state.currentUserRole) === "user";
+}
+
+function clientDataRootPath(user = auth?.currentUser) {
+  if (usesTenantData()) {
+    const uid = user?.uid;
+    return uid ? `tenants/${uid}/clients` : null;
+  }
+  return "clients";
+}
+
+function clientDataRootRef(user = auth?.currentUser) {
+  if (!db) return null;
+  const path = clientDataRootPath(user);
+  return path ? db.ref(path) : null;
+}
+
+function clientDocRef(clientId, user = auth?.currentUser) {
+  const root = clientDataRootRef(user);
+  return root && clientId ? root.child(clientId) : null;
+}
+
 function updateRoleNavVisibility() {
   const role = normalizeUserRole(state.currentUserRole);
   const isDev = role === "developer";
@@ -526,13 +551,61 @@ function initialsFromName(name) {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
+function applyTheme(theme) {
+  const isDark = theme === "dark";
+  document.body.classList.toggle("theme-dark", isDark);
+  document.body.dataset.theme = isDark ? "dark" : "light";
+  const themeText = document.querySelector("[data-theme-text]");
+  if (themeText) themeText.textContent = isDark ? "Dark mode" : "Light mode";
+  const toggle = document.querySelector("[data-theme-toggle]");
+  if (toggle) toggle.setAttribute("aria-pressed", isDark ? "true" : "false");
+}
+
+function getStoredTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY);
+  } catch (err) {
+    return null;
+  }
+}
+
+function storeTheme(theme) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch (err) {
+    // ignore storage errors
+  }
+}
+
+function setupThemeToggle() {
+  const toggle = document.querySelector("[data-theme-toggle]");
+  if (!toggle) return;
+  const stored = getStoredTheme();
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const initial = stored || (prefersDark ? "dark" : "light");
+  applyTheme(initial);
+  toggle.addEventListener("click", () => {
+    const next = document.body.classList.contains("theme-dark") ? "light" : "dark";
+    applyTheme(next);
+    storeTheme(next);
+  });
+}
+
 function updateUserHeader(user) {
   const nameEl = document.querySelector(".user-name");
   const avatarEl = document.querySelector(".user-avatar");
-  if (!nameEl && !avatarEl) return;
+  const sidebarName = document.querySelector("[data-sidebar-name]");
+  const sidebarAvatar = document.querySelector("[data-sidebar-avatar]");
+  const sidebarRole = document.querySelector("[data-sidebar-role]");
+  if (!nameEl && !avatarEl && !sidebarName && !sidebarAvatar && !sidebarRole) return;
   const label = user?.displayName || user?.email || "Usuario";
+  const initials = initialsFromName(label);
+  const roleLabel = state.currentUserRole === "admin" ? "Administrator" : "Usuario";
   if (nameEl) nameEl.textContent = label;
-  if (avatarEl) avatarEl.textContent = initialsFromName(label);
+  if (avatarEl) avatarEl.textContent = initials;
+  if (sidebarName) sidebarName.textContent = label;
+  if (sidebarAvatar) sidebarAvatar.textContent = initials;
+  if (sidebarRole) sidebarRole.textContent = roleLabel;
 }
 
 function normStatus(value) {
@@ -1363,11 +1436,26 @@ function renderSCurveSvgDaily(sc, opts = {}) {
   const H = opts.height ?? 240;
   const footerPad = 18;
   const svgH = H + footerPad;
-  const c = opts.colors ?? getSystemColors();
 
-  const pad = { l: 100, r: 18, t: 18, b: 46 };
+  const pad = { l: 96, r: 24, t: 18, b: 40 };
   const innerW = W - pad.l - pad.r;
   const innerH = H - pad.t - pad.b;
+
+  const basePalette = {
+    planned: "#cbd5e1",
+    actual: "#10b981",
+    axis: "#e2e8f0",
+    muted: "#94a3b8",
+    text: "#0f172a"
+  };
+  const colors = opts.colors || {};
+  const palette = {
+    planned: colors.planned || basePalette.planned,
+    actual: colors.actual || basePalette.actual,
+    axis: colors.grid || colors.axis || basePalette.axis,
+    muted: colors.muted || basePalette.muted,
+    text: colors.text || basePalette.text
+  };
 
   const fmtBR = (d) => {
     if (!d) return "";
@@ -1411,127 +1499,48 @@ function renderSCurveSvgDaily(sc, opts = {}) {
   const realValues = sc.realized.slice(0, realEndIndex + 1);
   const realPath = pathFromStep(realValues, realDates);
 
-  const points = sc.dates.map((d, i) => ({
-    x: xAtDate(d),
-    base: sc.baseline[i],
-    real: sc.realized[i]
+  const xNow = xAtDate(sc.report);
+  const yBaseNow = yAt(sc.baselineNow ?? 0);
+  const yRealNow = yAt(sc.realizedNow ?? 0);
+
+  const yTicks = [0, 0.5, 1].map((p) => ({
+    value: Math.round(p * 100),
+    y: yAt(p)
   }));
-  const gapAreas = [];
-  let gapArea = null;
-  const addAreaPoint = (pt) => {
-    gapArea.base.push({ x: pt.x, y: yAt(pt.base) });
-    gapArea.real.push({ x: pt.x, y: yAt(pt.real) });
-  };
-  const addIntersection = (p0, p1) => {
-    const g0 = p0.base - p0.real;
-    const g1 = p1.base - p1.real;
-    const denom = g1 - g0;
-    const t = Math.abs(denom) < 1e-6 ? 0 : -g0 / denom;
-    const clamped = Math.max(0, Math.min(1, t));
-    const x = p0.x + (p1.x - p0.x) * clamped;
-    const base = p0.base + (p1.base - p0.base) * clamped;
-    const real = p0.real + (p1.real - p0.real) * clamped;
-    const y = yAt(base);
-    gapArea.base.push({ x, y });
-    gapArea.real.push({ x, y });
-  };
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const p0 = points[i];
-    const p1 = points[i + 1];
-    const g0 = p0.base - p0.real;
-    const g1 = p1.base - p1.real;
-    const gap0 = g0 > 0.0001;
-    const gap1 = g1 > 0.0001;
-
-    if (gap0 && gap1) {
-      if (!gapArea) {
-        gapArea = { base: [], real: [] };
-        addAreaPoint(p0);
-      }
-      addAreaPoint(p1);
-      continue;
-    }
-    if (gap0 && !gap1) {
-      if (!gapArea) {
-        gapArea = { base: [], real: [] };
-        addAreaPoint(p0);
-      }
-      addIntersection(p0, p1);
-      gapAreas.push(gapArea);
-      gapArea = null;
-      continue;
-    }
-    if (!gap0 && gap1) {
-      gapArea = { base: [], real: [] };
-      addIntersection(p0, p1);
-      addAreaPoint(p1);
-    }
-  }
-  if (gapArea) gapAreas.push(gapArea);
-
-  const gapPaths = gapAreas
-    .filter((area) => area.base.length > 1 && area.real.length > 1)
-    .map((area) => {
-      const baseSegment = area.base
-        .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x.toFixed(2)} ${pt.y.toFixed(2)}`)
-        .join(" ");
-      const realSegment = area.real
-        .slice()
-        .reverse()
-        .map((pt) => `L ${pt.x.toFixed(2)} ${pt.y.toFixed(2)}`)
-        .join(" ");
-      return `${baseSegment} ${realSegment} Z`;
-    });
-
-  const xToday = xAtDate(sc.report);
-  const yBaseNow = yAt(sc.baselineNow);
-  const yRealNow = yAt(sc.realizedNow);
-
-  const basePct = Math.round(sc.baselineNow * 100);
-  const realPct = Math.round(sc.realizedNow * 100);
-  const gapPP = round1((sc.baselineNow - sc.realizedNow) * 100);
-  const gapLabel = `${gapPP > 0 ? "+" : ""}${gapPP}pp`;
-  const baselinePct = round1(sc.baselineNow * 100);
-  const realizedPct = round1(sc.realizedNow * 100);
-  const gapStatus = gapStatusInfo(gapPP, baselinePct, realizedPct);
-  const gapColor = gapStatus.color;
-  const labelText = `GAP ${gapLabel}`;
-  const labelWidth = Math.max(52, labelText.length * 6.4);
-  const labelHeight = 18;
-  const gapLabelX = Math.max(pad.l + labelWidth / 2, Math.min(W - pad.r - labelWidth / 2, xToday));
-  const gapLabelY = Math.max(pad.t + 14, Math.min(yBaseNow, yRealNow) - 18);
-  const labelX = xToday;
 
   return `
     <svg width="${W}" height="${svgH}" viewBox="0 0 ${W} ${svgH}" xmlns="http://www.w3.org/2000/svg">
-      <rect x="0" y="0" width="${W}" height="${H}" rx="14" fill="${c.bg}" stroke="${c.grid}"/>
-      ${[0, 0.5, 1]
-        .map((p) => {
-          const yy = yAt(p);
-          return `<line x1="${pad.l}" y1="${yy}" x2="${W - pad.r}" y2="${yy}" stroke="${c.grid}" stroke-width="1"/>`;
-        })
+      <defs>
+        <filter id="realGlow" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="rgba(16, 185, 129, 0.35)"/>
+        </filter>
+      </defs>
+
+      <line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${H - pad.b}" stroke="${palette.axis}" stroke-width="1"/>
+      <line x1="${pad.l}" y1="${H - pad.b}" x2="${W - pad.r}" y2="${H - pad.b}" stroke="${palette.axis}" stroke-width="1"/>
+
+      ${yTicks
+        .map(
+          (tick) => `
+        <line x1="${pad.l - 6}" y1="${tick.y}" x2="${pad.l}" y2="${tick.y}" stroke="${palette.axis}" stroke-width="1"/>
+        <text x="${pad.l - 10}" y="${tick.y + 4}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${tick.value}%</text>
+      `
+        )
         .join("")}
-      <text x="${pad.l}" y="${pad.t - 6}" font-size="10" fill="${c.muted}" font-family="Arial">Progresso (%)</text>
 
-      ${gapPaths.map((path) => `<path d="${path}" fill="${c.danger}" fill-opacity="0.12" stroke="none"/>`).join("")}
+      <line x1="${xNow}" y1="${pad.t}" x2="${xNow}" y2="${H - pad.b}" stroke="${palette.muted}" stroke-width="1" stroke-dasharray="4 6" opacity="0.7"/>
 
-      <path d="${basePath}" fill="none" stroke="${c.planned}" stroke-width="3" stroke-dasharray="6 4"/>
-      <path d="${realPath}" fill="none" stroke="${c.actual}" stroke-width="4"/>
+      <path d="${basePath}" fill="none" stroke="${palette.planned}" stroke-width="2"/>
+      <path id="curve-real-path" d="${realPath}" fill="none" stroke="${palette.actual}" stroke-width="4" filter="url(#realGlow)"/>
+      <path id="curve-real-hit" d="${realPath}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"/>
 
-      <line x1="${xToday}" y1="${pad.t}" x2="${xToday}" y2="${H - pad.b}" stroke="${c.danger}" stroke-width="2" opacity="0.85"/>
+      <circle cx="${xNow}" cy="${yBaseNow}" r="3" fill="${palette.planned}"/>
+      <circle cx="${xNow}" cy="${yRealNow}" r="4" fill="${palette.actual}"/>
 
-      <circle cx="${xToday}" cy="${yRealNow}" r="4" fill="${gapColor}" stroke="${c.bg}" stroke-width="2"/>
-      <rect x="${(gapLabelX - labelWidth / 2).toFixed(2)}" y="${(gapLabelY - labelHeight).toFixed(2)}" width="${labelWidth.toFixed(2)}" height="${labelHeight}" rx="9" fill="${gapColor}" opacity="0.16" stroke="${gapColor}"/>
-      <text x="${gapLabelX.toFixed(2)}" y="${(gapLabelY - 6).toFixed(2)}" text-anchor="middle" font-size="10" fill="${gapColor}" font-family="Arial" font-weight="700">${labelText}</text>
-
-      <text x="${labelX}" y="${yBaseNow - 10}" text-anchor="middle" font-size="11" fill="${c.planned}" font-family="Arial" font-weight="700">${basePct}%</text>
-      <text x="${labelX}" y="${yRealNow + 18}" text-anchor="middle" font-size="11" fill="${c.actual}" font-family="Arial" font-weight="700">${realPct}%</text>
-
-      <text x="${pad.l}" y="${H - 26}" font-size="10" fill="${c.muted}" font-family="Arial">${fmtBR(sc.start)}</text>
-      <text x="${W - pad.r}" y="${H - 26}" text-anchor="end" font-size="10" fill="${c.muted}" font-family="Arial">${fmtBR(sc.end)}</text>
-      <text x="${pad.l}" y="${svgH - 4}" font-size="10" fill="${c.muted}" font-family="Arial">Início: ${fmtBR(sc.start)}</text>
-      <text x="${W - pad.r}" y="${svgH - 4}" text-anchor="end" font-size="10" fill="${c.muted}" font-family="Arial">Go-Live: ${fmtBR(sc.end)}</text>
-
+      <text x="${pad.l}" y="${H - 18}" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${H - 18}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${fmtBR(sc.end)}</text>
+      <text x="${pad.l}" y="${svgH - 4}" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">Inicio: ${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${svgH - 4}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">Go-Live: ${fmtBR(sc.end)}</text>
     </svg>
   `;
 }
@@ -1542,11 +1551,18 @@ function renderSCurveSvg(sc, opts = {}) {
   const H = opts.height ?? 240;
   const footerPad = 18;
   const svgH = H + footerPad;
-  const c = opts.colors ?? getSystemColors();
 
-  const pad = { l: 110, r: 24, t: 22, b: 44 };
+  const pad = { l: 96, r: 24, t: 18, b: 40 };
   const innerW = W - pad.l - pad.r;
   const innerH = H - pad.t - pad.b;
+
+  const palette = {
+    planned: "#cbd5e1",
+    actual: "#10b981",
+    axis: "#e2e8f0",
+    muted: "#94a3b8",
+    text: "#0f172a"
+  };
 
   const fmtBR = (d) => {
     if (!d) return "";
@@ -1565,7 +1581,6 @@ function renderSCurveSvg(sc, opts = {}) {
   };
 
   const yAt = (p) => pad.t + innerH * (1 - clamp01(p));
-  const x = (i) => xAtDate(sc.buckets[i]);
 
   const pathFrom = (arr, buckets = sc.buckets) =>
     (arr || [])
@@ -1594,67 +1609,46 @@ function renderSCurveSvg(sc, opts = {}) {
   const actualBuckets = sc.buckets.slice(0, reportIndex + 1);
   const actualPath = pathFromStep(sc.actual.slice(0, reportIndex + 1), actualBuckets);
 
-  const xToday = xAtDate(reportDate);
-  const plannedNow = clamp01(sc.plannedNow ?? 0);
-  const actualNow = clamp01(sc.actualNow ?? 0);
-  const yPlanNow = yAt(plannedNow);
-  const yRealNow = yAt(actualNow);
-  const gapPP = Math.round((plannedNow - actualNow) * 100);
-  const endLabel = Math.round(1 * 100) + "%";
-  const planPct = Math.round(plannedNow * 100);
-  const realPct = Math.round(actualNow * 100);
-  const labelX = xToday;
-  const plannedLabelY = Math.max(pad.t + 10, yPlanNow - 8);
-  const actualLabelY = Math.min(H - pad.b - 6, yRealNow + 14);
-  const gapLabel = `Gap ${gapPP > 0 ? `+${gapPP}` : `${gapPP}`}pp`;
+  const xNow = xAtDate(reportDate);
+  const yPlanNow = yAt(sc.plannedNow ?? 0);
+  const yRealNow = yAt(sc.actualNow ?? 0);
 
-  const gridH = [0, 0.5, 1]
-    .map((p) => {
-      const yy = yAt(p);
-      const lab = Math.round(p * 100) + "%";
-      return `
-        <line x1="${pad.l}" y1="${yy}" x2="${W - pad.r}" y2="${yy}" stroke="${c.grid}" stroke-width="1" />
-        <text x="${pad.l - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="${c.muted}" font-family="Arial">
-          ${lab}
-        </text>
-      `;
-    })
-    .join("");
+  const yTicks = [0, 0.5, 1].map((p) => ({
+    value: Math.round(p * 100),
+    y: yAt(p)
+  }));
 
   return `
     <svg width="${W}" height="${svgH}" viewBox="0 0 ${W} ${svgH}" xmlns="http://www.w3.org/2000/svg">
-      <rect x="0" y="0" width="${W}" height="${H}" fill="${c.bg}" stroke="${c.grid}" />
-      ${gridH}
+      <defs>
+        <filter id="realGlow" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="rgba(16, 185, 129, 0.35)"/>
+        </filter>
+      </defs>
 
-      <line x1="${xToday}" y1="${pad.t}" x2="${xToday}" y2="${H - pad.b}" stroke="${c.danger}" stroke-width="2" />
+      <line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${H - pad.b}" stroke="${palette.axis}" stroke-width="1"/>
+      <line x1="${pad.l}" y1="${H - pad.b}" x2="${W - pad.r}" y2="${H - pad.b}" stroke="${palette.axis}" stroke-width="1"/>
 
-      <path d="${plannedPath}" fill="none" stroke="${c.planned}" stroke-width="3" stroke-dasharray="6 4" />
-      <path d="${actualPath}" fill="none" stroke="${c.actual}" stroke-width="4" />
+      ${yTicks
+        .map(
+          (tick) => `
+        <line x1="${pad.l - 6}" y1="${tick.y}" x2="${pad.l}" y2="${tick.y}" stroke="${palette.axis}" stroke-width="1"/>
+        <text x="${pad.l - 10}" y="${tick.y + 4}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${tick.value}%</text>
+      `
+        )
+        .join("")}
 
-      <circle cx="${xToday}" cy="${yPlanNow}" r="6" fill="${c.planned}" />
-      <circle cx="${xToday}" cy="${yRealNow}" r="6" fill="${c.actual}" />
+      <path d="${plannedPath}" fill="none" stroke="${palette.planned}" stroke-width="2"/>
+      <path id="curve-real-path" d="${actualPath}" fill="none" stroke="${palette.actual}" stroke-width="4" filter="url(#realGlow)"/>
+      <path id="curve-real-hit" d="${actualPath}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"/>
 
-      <text x="${labelX}" y="${plannedLabelY}" text-anchor="middle" font-size="11" fill="${c.planned}" font-family="Arial" font-weight="700">
-        ${planPct}%
-      </text>
-      <text x="${labelX}" y="${actualLabelY}" text-anchor="middle" font-size="11" fill="${c.actual}" font-family="Arial" font-weight="700">
-        ${realPct}%
-      </text>
+      <circle cx="${xNow}" cy="${yPlanNow}" r="3" fill="${palette.planned}"/>
+      <circle cx="${xNow}" cy="${yRealNow}" r="4" fill="${palette.actual}"/>
 
-      <text x="${xAtDate(sc.end)}" y="${yAt(1) - 8}" text-anchor="end" font-size="11" fill="${c.muted}" font-family="Arial">
-        ${endLabel}
-      </text>
-      <text x="${pad.l}" y="${H - 18}" font-size="11" fill="${c.muted}" font-family="Arial">${fmtBR(sc.start)}</text>
-      <text x="${W - pad.r}" y="${H - 18}" text-anchor="end" font-size="11" fill="${c.muted}" font-family="Arial">${fmtBR(sc.end)}</text>
-      <text x="${pad.l}" y="${svgH - 4}" font-size="10" fill="${c.muted}" font-family="Arial">Início: ${fmtBR(sc.start)}</text>
-      <text x="${W - pad.r}" y="${svgH - 4}" text-anchor="end" font-size="10" fill="${c.muted}" font-family="Arial">Go-Live: ${fmtBR(sc.end)}</text>
-
-      <text x="${W / 2}" y="${H - 6}" text-anchor="middle" font-size="11" fill="${c.muted}" font-family="Arial">
-        ${gapLabel}
-      </text>
-      <text x="40" y="${H / 2}" transform="rotate(-90 40 ${H / 2})" font-size="11" fill="${c.muted}" font-family="Arial">
-        Progresso acumulado (%)
-      </text>
+      <text x="${pad.l}" y="${H - 18}" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${H - 18}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${fmtBR(sc.end)}</text>
+      <text x="${pad.l}" y="${svgH - 4}" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">Inicio: ${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${svgH - 4}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">Go-Live: ${fmtBR(sc.end)}</text>
     </svg>
   `;
 }
@@ -1665,7 +1659,7 @@ function renderOnePageSCurve({ root, project, metrics }) {
   mount.innerHTML = "";
   const progressPct = clampPct(project?.progress ?? metrics?.progress ?? 0);
   const series = computeSCurveDailyBaseline(project, project?.activities || null, progressPct);
-  const height = 240;
+  const height = 260;
   mount.style.height = `${height}px`;
   mount.style.overflow = "hidden";
   const colors = getSystemColors(root || document.documentElement);
@@ -1687,6 +1681,61 @@ function latestCompletedTasks(tasks = [], limit = 5) {
       if (aTs !== bTs) return bTs - aTs;
       return (a.title || "").localeCompare(b.title || "");
     })
+    .slice(0, limit);
+}
+
+function buildSparklineSeries(endValue, points = 6) {
+  const end = clampPct(endValue);
+  const start = Math.max(0, end - 24);
+  const step = (end - start) / Math.max(1, points - 1);
+  const series = [];
+  for (let i = 0; i < points; i += 1) {
+    const jitter = i % 2 === 0 ? 0 : step * 0.18;
+    series.push(clampPct(start + step * i + jitter));
+  }
+  return series;
+}
+
+function renderSparklineSvg(points, opts = {}) {
+  if (!Array.isArray(points) || points.length < 2) return "";
+  const width = opts.width ?? 120;
+  const height = opts.height ?? 34;
+  const stroke = opts.stroke ?? "var(--accent)";
+  const fill = opts.fill ?? "rgba(16, 185, 129, 0.12)";
+  const pad = 4;
+  const max = 100;
+  const min = 0;
+  const scaleX = (width - pad * 2) / Math.max(1, points.length - 1);
+  const scaleY = (height - pad * 2) / Math.max(1, max - min);
+  const coords = points.map((p, i) => {
+    const x = pad + i * scaleX;
+    const y = height - pad - (p - min) * scaleY;
+    return { x, y };
+  });
+  const linePath = coords
+    .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x.toFixed(2)} ${pt.y.toFixed(2)}`)
+    .join(" ");
+  const fillPath = `${linePath} L ${coords[coords.length - 1].x.toFixed(2)} ${height - pad} L ${coords[0].x.toFixed(
+    2
+  )} ${height - pad} Z`;
+  return `
+    <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="${fillPath}" fill="${fill}"></path>
+      <path d="${linePath}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+    </svg>
+  `;
+}
+
+function upcomingMilestones(tasks = [], limit = 4) {
+  const today = startOfDay(new Date());
+  return (tasks || [])
+    .filter((task) => normalizeTaskStatus(getTaskStatus(task)) !== "concluido")
+    .map((task) => {
+      const due = parseDateSafe(taskDueStr(task));
+      return { task, due };
+    })
+    .filter((entry) => entry.due && entry.due >= today)
+    .sort((a, b) => a.due - b.due)
     .slice(0, limit);
 }
 
@@ -2066,12 +2115,147 @@ function buildProjectReportStyles() {
       align-items: stretch;
     }
 
+    .report-page .curve-card {
+      border-radius: 32px;
+      border: 1px solid #eef2f6;
+      padding: 24px;
+    }
+
+    .report-page .curve-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    .report-page .curve-kicker {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: #94a3b8;
+    }
+
+    .report-page .curve-title {
+      margin: 6px 0 0;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: #0f172a;
+    }
+
+    .report-page .curve-dot {
+      color: #10b981;
+    }
+
+    .report-page .curve-head-stats {
+      display: flex;
+      gap: 16px;
+      align-items: flex-end;
+    }
+
+    .report-page .curve-stat {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .report-page .curve-stat-label {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: #94a3b8;
+    }
+
+    .report-page .curve-stat-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .report-page .curve-stat-gap {
+      padding: 8px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      background: rgba(239, 68, 68, 0.1);
+      color: #ef4444;
+    }
+
+    .report-page .curve-stat-gap.gap-ok {
+      background: rgba(16, 185, 129, 0.12);
+      border-color: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+    }
+
+    .report-page .curve-stat-gap.gap-low {
+      background: rgba(100, 116, 139, 0.12);
+      border-color: rgba(100, 116, 139, 0.25);
+      color: #64748b;
+    }
+
+    .report-page .curve-stat-gap.gap-risk {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.2);
+      color: #b45309;
+    }
+
+    .report-page .curve-stat-gap.gap-delayed,
+    .report-page .curve-stat-gap.gap-critical {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.24);
+      color: #ef4444;
+    }
+
+    .report-page .curve-stat-gap .curve-stat-label,
+    .report-page .curve-stat-gap .curve-stat-value {
+      color: inherit;
+    }
+
+    .report-page .curve-legend {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .report-page .legend-card {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid #e2e8f0;
+      background: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: #64748b;
+      white-space: nowrap;
+    }
+
+    .report-page .legend-line {
+      width: 18px;
+      height: 4px;
+      border-radius: 999px;
+      background: #cbd5e1;
+    }
+
+    .report-page .legend-line.actual {
+      background: #10b981;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+    }
+
     .report-page .svgBox {
       width: 100%;
-      height: 240px;
-      border-radius: 12px;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      background: linear-gradient(180deg, rgba(15, 23, 42, 0.02), transparent);
+      height: 260px;
+      border-radius: 20px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
       overflow: hidden;
     }
 
@@ -2128,12 +2312,12 @@ function buildOnePageContent({ project, client, metrics, exportMode = false }) {
   const scheduleLabel = schedule.overdue > 0 ? "Em atraso" : schedule.dueSoon > 0 ? "Em risco" : "Em dia";
   const phaseLabel = project?.phaseLabel || project?.phase || statusBadge.label || "Em execucao";
   const sCurveSvg = sCurveSeries
-    ? renderSCurveSvgDaily(sCurveSeries, { width: 1760, height: 240, colors: getSystemColors() })
+    ? renderSCurveSvgDaily(sCurveSeries, { width: 1760, height: 260, colors: getSystemColors() })
     : `<div class="empty">Curva S: defina Data Inicio e Go Live.</div>`;
-  const baselinePct = sCurveSeries ? Math.round(sCurveSeries.baselineNow * 100) : 0;
-  const realizedPct = sCurveSeries ? Math.round(sCurveSeries.realizedNow * 100) : 0;
-  const baselineLabel = sCurveSeries ? `${baselinePct}%` : "--";
-  const realizedLabel = sCurveSeries ? `${realizedPct}%` : "--";
+  const baselinePct = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : 0;
+  const realizedPct = sCurveSeries ? round1(sCurveSeries.realizedNow * 100) : 0;
+  const baselineLabel = sCurveSeries ? `${baselinePct.toFixed(1)}%` : "--";
+  const realizedLabel = sCurveSeries ? `${realizedPct.toFixed(1)}%` : "--";
   const gapPP = sCurveSeries ? round1(baselinePct - realizedPct) : 0;
   const gapLabel = sCurveSeries ? `${formatSignedMetric(gapPP)}pp` : "--";
   const gapStatus = sCurveSeries
@@ -2251,18 +2435,34 @@ function buildOnePageContent({ project, client, metrics, exportMode = false }) {
       </div>
 
       <div class="mid">
-        <div class="card">
-          <div class="cardHeader">
-            <h2>Curva S - Avanço fisico acumulado</h2>
-            <div class="curveMeta">
-              <span class="miniStat"><i class="legendDot baseline"></i> Baseline <b>${baselineLabel}</b></span>
-              <span class="miniStat"><i class="legendDot real"></i> Realizado <b>${realizedLabel}</b></span>
-              <span class="miniStat gap ${gapTone}"><b>GAP ${gapLabel}</b></span>
+        <div class="card curve-card">
+          <div class="curve-head">
+            <div>
+              <span class="curve-kicker">Desempenho fisico</span>
+              <h2 class="curve-title">Curva S <span class="curve-dot">.</span></h2>
+            </div>
+            <div class="curve-head-stats">
+              <div class="curve-stat">
+                <span class="curve-stat-label">Realizado</span>
+                <span class="curve-stat-value">${realizedLabel}</span>
+              </div>
+              <div class="curve-stat curve-stat-gap ${gapTone}">
+                <span class="curve-stat-label">GAP</span>
+                <span class="curve-stat-value">${gapLabel}</span>
+              </div>
             </div>
           </div>
-          <div class="cardBody">
-            <div id="sCurveMount" class="svgBox">${sCurveSvg}</div>
+          <div class="curve-legend">
+            <div class="legend-card">
+              <span class="legend-line planned"></span>
+              Planejado
+            </div>
+            <div class="legend-card">
+              <span class="legend-line actual"></span>
+              Realizado
+            </div>
           </div>
+          <div id="sCurveMount" class="svgBox curve-canvas">${sCurveSvg}</div>
         </div>
 
         <div class="card">
@@ -2807,28 +3007,52 @@ function computeHomeMacroStats(clients) {
     allProjects.length === 0
       ? 0
       : Math.round(
-          allProjects.reduce((acc, { project }) => acc + clampPct(project.progress || 0), 0) / allProjects.length
-        );
+          (allProjects.reduce((acc, { project }) => acc + clampPct(project.progress || 0), 0) / allProjects.length) * 10
+        ) / 10;
 
+  const today = startOfDay(new Date());
   const clientsCards = (clients || [])
     .filter((c) => (c.projects || []).length > 0)
     .map((c) => {
       const projs = c.projects || [];
       const avg = projs.length
-        ? Math.round(projs.reduce((a, p) => a + clampPct(p.progress || 0), 0) / projs.length)
+        ? Math.round((projs.reduce((a, p) => a + clampPct(p.progress || 0), 0) / projs.length) * 10) / 10
         : 0;
 
       const counters = { "Nao iniciado": 0, "Em andamento": 0, Atrasado: 0, Concluido: 0 };
+      let overdueCount = 0;
+      let worstOverdueDays = 0;
+      let worstTaskTitle = "";
+      let worstTaskProject = "";
       projs.forEach((p) => {
         const st = getProjectStatus(p);
         counters[st] = (counters[st] || 0) + 1;
+        const tasks = flattenProjectTasks(p);
+        tasks.forEach((task) => {
+          if (!task || isDoneTask(task)) return;
+          const dueValue = taskDueValueSafe(task);
+          if (!Number.isFinite(dueValue) || dueValue === Number.POSITIVE_INFINITY) return;
+          const dueDay = new Date(dueValue);
+          if (dueDay >= today) return;
+          overdueCount += 1;
+          const overdueDays = Math.abs(daysDiff(dueDay, today));
+          if (overdueDays > worstOverdueDays) {
+            worstOverdueDays = overdueDays;
+            worstTaskTitle = taskTitle(task);
+            worstTaskProject = p?.name || "";
+          }
+        });
       });
 
       return {
         name: c.name || c.id || "Cliente",
         projectsCount: projs.length,
         avgProgress: avg,
-        counters
+        counters,
+        overdueCount,
+        worstOverdueDays,
+        worstTaskTitle,
+        worstTaskProject
       };
     });
 
@@ -2838,33 +3062,157 @@ function computeHomeMacroStats(clients) {
 function renderHomeMacroSummary() {
   const { activeClients, projectsActive, tasksNext7, avgProgress, clientsCards } = computeHomeMacroStats(state.clients);
 
-  const cardsHtml = clientsCards
-    .map((card) => {
+  function resolveClientHealth(card) {
+    const delayed = card.counters.Atrasado || 0;
+    if (delayed > 0) {
+      return { label: "Em risco", className: "risk" };
+    }
+    if (card.avgProgress >= 85) {
+      return { label: "Estavel", className: "ok" };
+    }
+    if (card.avgProgress >= 60) {
+      return { label: "Atencao", className: "warn" };
+    }
+    return { label: "Em risco", className: "risk" };
+  }
+
+  function priorityScore(card) {
+    const delayed = card.counters.Atrasado || 0;
+    const progress = Number.isFinite(card.avgProgress) ? card.avgProgress : 0;
+    return delayed * 120 + (100 - progress);
+  }
+
+  function buildCriticalReason(card) {
+    const overdueCount = card.overdueCount || 0;
+    const progressValue = Number.isFinite(card.avgProgress) ? card.avgProgress : 0;
+    if (overdueCount > 0) {
+      if (card.worstOverdueDays > 0 && card.worstTaskTitle) {
+        const projectLabel = card.worstTaskProject ? ` - ${card.worstTaskProject}` : "";
+        return `Maior atraso: ${card.worstOverdueDays}d - ${card.worstTaskTitle}${projectLabel}`;
+      }
+      return `${overdueCount} tarefas atrasadas`;
+    }
+    if (progressValue < 60) {
+      return `Progresso abaixo de ${progressValue.toFixed(1)}%`;
+    }
+    return "Atencao sem atrasos mapeados";
+  }
+
+  function buildBentoCard(card, variant) {
+    const safeName = escapeHtml(card.name || "Cliente");
+    const initials = escapeHtml(initialsFromName(card.name || "C"));
+    const health = resolveClientHealth(card);
+    const progressValue = Number.isFinite(card.avgProgress) ? card.avgProgress : 0;
+    const isCompleted = progressValue >= 100;
+    const statusTone = isCompleted ? "done" : (card.counters.Atrasado || 0) > 0 ? "risk" : "live";
+    const statusLabel = isCompleted ? "CONCLUIDO" : statusTone === "risk" ? "RISCO" : "LIVE";
+    const progressLabel = `${progressValue.toFixed(1)}%`;
+    const progressWidth = Math.max(0, Math.min(100, progressValue));
+    const criticalReason = variant === "featured" ? escapeHtml(buildCriticalReason(card)) : "";
+    const classes = ["bento-card"];
+
+    if (variant === "featured") classes.push("bento-card--featured");
+    if (variant === "wide") classes.push("bento-card--wide");
+    if (variant === "metric") classes.push("bento-card--metric");
+    if (isCompleted) classes.push("bento-card--done");
+    const progressBarClass = isCompleted ? "bento-progress-bar bento-progress-bar--done" : "bento-progress-bar";
+
+    if (variant === "metric") {
       return `
-        <div class="home-client-card">
-          <div class="home-client-title">${card.name}</div>
-
-          <div class="home-client-top">
-            <div class="mini-box">
-              <div class="mini-label">Projetos:</div>
-              <div class="mini-value">${card.projectsCount}</div>
-            </div>
-            <div class="mini-box">
-              <div class="mini-label">Progresso medio:</div>
-              <div class="mini-value">${card.avgProgress}%</div>
-            </div>
+        <div class="${classes.join(" ")}">
+          <div class="bento-card-head">
+            <div class="bento-avatar bento-avatar--solid">${initials}</div>
+            <span class="bento-pill bento-pill--${statusTone}">${statusLabel}</span>
           </div>
-
-          <div class="chips">
-            <div class="chip planned">Nao iniciado: ${card.counters["Nao iniciado"] || 0}</div>
-            <div class="chip progress">Em andamento: ${card.counters["Em andamento"] || 0}</div>
-            <div class="chip late">Atrasado: ${card.counters.Atrasado || 0}</div>
-            <div class="chip done">Concluido: ${card.counters.Concluido || 0}</div>
+          <div class="bento-metric-only">
+            <div class="bento-metric-value bento-mono">${progressLabel}</div>
+            <div class="bento-metric-label">${safeName}</div>
+            <div class="bento-metric-sub">Saude ${health.label}</div>
           </div>
         </div>
       `;
-    })
-    .join("");
+    }
+
+    const kicker =
+      variant === "featured" ? (statusTone === "risk" ? "Cliente critico" : "Cliente destaque") : "Cliente";
+    const nameClass = variant === "featured" ? "bento-name bento-name--xl" : "bento-name";
+    const metaClass = variant === "featured" ? "bento-meta bento-meta--grid" : "bento-meta";
+    const showProjects = variant === "featured" || variant === "wide";
+
+    return `
+      <div class="${classes.join(" ")}">
+        <div class="bento-card-head">
+          <div class="bento-title">
+            <div class="bento-kicker">${kicker}</div>
+            <div class="${nameClass}">${safeName}</div>
+          </div>
+          <div class="bento-avatar">${initials}</div>
+        </div>
+
+        <div class="${metaClass}">
+          <div class="bento-meta-block">
+            <div class="bento-label">Saude</div>
+            <div class="bento-value">
+              <span class="bento-dot bento-dot--${health.className}"></span>
+              ${health.label}
+            </div>
+          </div>
+          <div class="bento-meta-block">
+            <div class="bento-label">Progresso</div>
+            <div class="bento-value bento-mono">${progressLabel}</div>
+          </div>
+          ${
+            showProjects
+              ? `
+            <div class="bento-meta-block">
+              <div class="bento-label">Projetos</div>
+              <div class="bento-value">${card.projectsCount}</div>
+            </div>
+          `
+              : ""
+          }
+        </div>
+
+        ${
+          variant === "featured"
+            ? `
+          <div class="bento-reason">
+            <div class="bento-reason-label">Motivo</div>
+            <div class="bento-reason-text">${criticalReason}</div>
+          </div>
+        `
+            : ""
+        }
+
+        <div class="bento-footer">
+          <span class="bento-pill bento-pill--${statusTone}">${statusLabel}</span>
+          <div class="bento-progress">
+            <span class="${progressBarClass}" style="width:${progressWidth}%"></span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  const rankedCards = [...clientsCards].sort((a, b) => priorityScore(b) - priorityScore(a));
+  const featuredCard = rankedCards.shift();
+  const metricSlots = rankedCards.length >= 4 ? 2 : rankedCards.length >= 3 ? 1 : 0;
+  const metricStart = rankedCards.length - metricSlots;
+  const cardsHtml = [];
+
+  if (featuredCard) {
+    cardsHtml.push(buildBentoCard(featuredCard, "featured"));
+  }
+
+  rankedCards.forEach((card, index) => {
+    let variant = "standard";
+    if (metricSlots > 0 && index >= metricStart) {
+      variant = "metric";
+    } else if (index === 0 && rankedCards.length >= 2) {
+      variant = "wide";
+    }
+    cardsHtml.push(buildBentoCard(card, variant));
+  });
 
   return `
     <div class="home-macro">
@@ -2886,12 +3234,12 @@ function renderHomeMacroSummary() {
 
         <div class="home-stat-card">
           <div class="home-stat-label">Progresso medio</div>
-          <div class="home-stat-value">${avgProgress}%</div>
+          <div class="home-stat-value">${avgProgress.toFixed(1)}%</div>
         </div>
       </div>
 
       <div class="home-client-grid">
-        ${cardsHtml}
+        ${cardsHtml.join("")}
       </div>
     </div>
   `;
@@ -2995,18 +3343,46 @@ async function initFirebase() {
   }
 }
 
-async function loadStateFromDb(keepSelection = null) {
-  if (!db) return false;
-  const role = normalizeUserRole(state.currentUserRole);
-  let snapshot = null;
-  try {
-    if (role === "admin") {
-      snapshot = await db.ref("clients").once("value");
-    } else {
-      snapshot = null;
-    }
-  } catch (err) {
-    const message = String(err?.message || "");
+function mapClientData(clientId, clientData) {
+  const projectsData = clientData.projects || {};
+  const projects = Object.entries(projectsData).map(([projectId, projData]) => {
+    const tasksData = projData.tasks || {};
+    const tasks = Object.entries(tasksData).map(([taskId, taskData]) => ({
+      id: taskId,
+      ...taskData
+    }));
+    const progress = computeProgress(tasks);
+    const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
+    const packages = Array.isArray(projData.packages) ? projData.packages : [];
+    return {
+      id: projectId,
+      clientId,
+      ...projData,
+      progress,
+      epics,
+      packages,
+      tasks
+    };
+  });
+  return { id: clientId, ...clientData, projects };
+}
+
+  async function loadStateFromDb(keepSelection = null) {
+    if (!db) return false;
+    const role = normalizeUserRole(state.currentUserRole);
+    let snapshot = null;
+    try {
+      if (role === "admin") {
+        snapshot = await db.ref("clients").once("value");
+      } else if (role === "user") {
+        const tenantPath = clientDataRootPath();
+        if (!tenantPath) return false;
+        snapshot = await db.ref(tenantPath).once("value");
+      } else {
+        snapshot = null;
+      }
+    } catch (err) {
+      const message = String(err?.message || "");
     const code = String(err?.code || "");
     const denied = code === "PERMISSION_DENIED" || /permission/i.test(message);
     console.error(err);
@@ -3021,72 +3397,35 @@ async function loadStateFromDb(keepSelection = null) {
     }
     throw err;
   }
-  let clients = [];
-  if (role === "admin") {
-    const clientsData = snapshot ? snapshot.val() || {} : {};
-    clients = Object.entries(clientsData).map(([clientId, clientData]) => {
-      const projectsData = clientData.projects || {};
-      const projects = Object.entries(projectsData).map(([projectId, projData]) => {
-        const tasksData = projData.tasks || {};
-        const tasks = Object.entries(tasksData).map(([taskId, taskData]) => ({
-          id: taskId,
-          ...taskData
-        }));
-        const progress = computeProgress(tasks);
-        const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
-        const packages = Array.isArray(projData.packages) ? projData.packages : [];
-        return {
-          id: projectId,
-          clientId,
-          ...projData,
-          progress,
-          epics,
-          packages,
-          tasks
-        };
-      });
-      return { id: clientId, ...clientData, projects };
-    });
-    state.dbAccessDenied = false;
-  } else {
-    const groups = await loadGroupsFromDb();
-    state.groups = groups.slice();
-    const uid = auth?.currentUser?.uid;
-    const allowedGroups = uid ? groups.filter((group) => group.members?.[uid]) : [];
+    let clients = [];
+    if (role === "admin") {
+      const clientsData = snapshot ? snapshot.val() || {} : {};
+      clients = Object.entries(clientsData).map(([clientId, clientData]) => mapClientData(clientId, clientData));
+      state.dbAccessDenied = false;
+    } else if (role === "user") {
+      const clientsData = snapshot ? snapshot.val() || {} : {};
+      clients = Object.entries(clientsData).map(([clientId, clientData]) => mapClientData(clientId, clientData));
+      state.dbAccessDenied = false;
+      state.groups = [];
+    } else {
+      const groups = await loadGroupsFromDb();
+      state.groups = groups.slice();
+      const uid = auth?.currentUser?.uid;
+      const allowedGroups = uid ? groups.filter((group) => group.members?.[uid]) : [];
     const clientIds = new Set();
     allowedGroups.forEach((group) => {
       Object.keys(group.clients || {}).forEach((clientId) => clientIds.add(clientId));
     });
-    const clientPromises = Array.from(clientIds).map(async (clientId) => {
-      try {
-        const snap = await db.ref(`clients/${clientId}`).once("value");
-        const clientData = snap.val();
-        if (!clientData) return null;
-        const projectsData = clientData.projects || {};
-        const projects = Object.entries(projectsData).map(([projectId, projData]) => {
-          const tasksData = projData.tasks || {};
-          const tasks = Object.entries(tasksData).map(([taskId, taskData]) => ({
-            id: taskId,
-            ...taskData
-          }));
-          const progress = computeProgress(tasks);
-          const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
-          const packages = Array.isArray(projData.packages) ? projData.packages : [];
-          return {
-            id: projectId,
-            clientId,
-            ...projData,
-            progress,
-            epics,
-            packages,
-            tasks
-          };
-        });
-        return { id: clientId, ...clientData, projects };
-      } catch (err) {
-        console.error(err);
-        return null;
-      }
+      const clientPromises = Array.from(clientIds).map(async (clientId) => {
+        try {
+          const snap = await db.ref(`clients/${clientId}`).once("value");
+          const clientData = snap.val();
+          if (!clientData) return null;
+          return mapClientData(clientId, clientData);
+        } catch (err) {
+          console.error(err);
+          return null;
+        }
     });
     const resolved = await Promise.all(clientPromises);
     clients = resolved.filter(Boolean);
@@ -3756,13 +4095,11 @@ function renderMonitorActivities(container) {
     <div class="monitor-header">
       <h2>Monitor de Atividades</h2>
       <div class="monitor-filter">
-        <button class="btn-filtro" type="button" data-monitor-filter-btn>
-          <span>🔍</span> Filtrar: ${monitorFilterLabel(filter)}
-        </button>
-        <div class="monitor-filter-menu" id="monitor-filter-popover">
+        <div class="monitor-chip-bar" role="tablist" aria-label="Filtros do monitor">
           ${MONITOR_FILTERS.map((option) => {
             const active = option.key === filter ? "active" : "";
-            return `<button type="button" class="${active}" data-monitor-filter="${option.key}">${option.label}</button>`;
+            const selected = option.key === filter ? "true" : "false";
+            return `<button type="button" class="monitor-chip ${active}" data-monitor-filter="${option.key}" aria-selected="${selected}">${option.label}</button>`;
           }).join("")}
         </div>
       </div>
@@ -3792,65 +4129,247 @@ function renderMonitorActivities(container) {
     </div>
   `;
 
-  const groups = new Map();
+  const list = document.createElement("div");
+  list.className = "monitor-container span-all monitor-bento-grid";
+
+  const today = startOfDay(new Date());
+  const overdueItems = [];
+  const todayItems = [];
+  const upcomingItems = [];
+
   filtered.forEach((item) => {
-    if (!groups.has(item.clientName)) groups.set(item.clientName, []);
-    groups.get(item.clientName).push(item);
+    const diff = daysDiff(item.dueDay, today);
+    if (diff < 0 || item.status === "atrasado") {
+      overdueItems.push(item);
+    } else if (diff === 0) {
+      todayItems.push(item);
+    } else {
+      upcomingItems.push(item);
+    }
   });
 
-  const list = document.createElement("div");
-  list.className = "monitor-container span-all";
-  if (!filtered.length) {
-    const empty = document.createElement("div");
-    empty.className = "card";
-    empty.textContent = "Nenhuma atividade encontrada para o filtro selecionado.";
-    list.appendChild(empty);
-  } else {
-    const today = startOfDay(new Date());
-    Array.from(groups.entries()).forEach(([clientName, groupItems]) => {
-      const group = document.createElement("div");
-      group.className = "cliente-grupo";
-      const title = document.createElement("div");
-      title.className = "cliente-secao-titulo";
-      title.textContent = `Cliente: ${clientName}`;
-      group.appendChild(title);
+  const sortByDue = (a, b) => a.dueDay.getTime() - b.dueDay.getTime();
+  overdueItems.sort(sortByDue);
+  todayItems.sort(sortByDue);
+  upcomingItems.sort(sortByDue);
 
-      const orderedItems = groupItems.slice().sort((a, b) => {
-        const proj = a.projectName.localeCompare(b.projectName);
-        if (proj !== 0) return proj;
-        const due = a.dueDay.getTime() - b.dueDay.getTime();
-        if (due !== 0) return due;
-        return a.taskTitle.localeCompare(b.taskTitle);
-      });
+  const iconSvg = (name) => {
+    const icons = {
+      alert: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`,
+      calendarCheck: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><polyline points="9 16 11 18 15 14"></polyline></svg>`,
+      calendar: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`,
+      users: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`,
+      trend: `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>`,
+      code: `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
+      review: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9 12l2 2 4-4"></path></svg>`,
+      meeting: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="5" width="15" height="14" rx="2"></rect><polygon points="23 7 16 12 23 17 23 7"></polygon></svg>`
+    };
+    return icons[name] || icons.code;
+  };
 
-      orderedItems.forEach((item) => {
-        const statusClass = item.status === "atrasado" ? "status-atrasado" : "status-proximo";
-        const labelBase = formatMonitorDateLabel(item.dueDay, today);
-        const badgeLabel = item.status === "atrasado" ? `${labelBase} (ATRASADO)` : labelBase;
-        const badgeClass = item.status === "atrasado" ? "badge-atrasado" : "badge-proximo";
-        const responsible = item.responsible || "A definir";
-        const card = document.createElement("div");
-        card.className = `atividade-card ${statusClass}`;
-        card.dataset.monitorCard = "true";
-        card.dataset.clientIndex = String(item.clientIndex);
-        card.dataset.projectIndex = String(item.projectIndex);
-        card.dataset.taskIndex = String(item.taskIndex);
-        card.innerHTML = `
-          <div class="info-principal">
-            <h4>${escapeHtml(item.taskTitle)}</h4>
-            <p>Projeto: <strong>${escapeHtml(item.projectName)}</strong> • Resp: <span class="responsavel-nome">${escapeHtml(responsible)}</span></p>
+  const pickMonitorIcon = (item) => {
+    const rawTitle = String(item.taskTitle || "").toLowerCase();
+    const normalized = rawTitle.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (normalized.includes("revis") || normalized.includes("review") || normalized.includes("valid")) {
+      return "review";
+    }
+    if (
+      normalized.includes("reun") ||
+      normalized.includes("meeting") ||
+      normalized.includes("call") ||
+      normalized.includes("reuniao")
+    ) {
+      return "meeting";
+    }
+    return "code";
+  };
+
+  const renderTaskMiniCard = (item) => {
+    const diff = daysDiff(item.dueDay, today);
+    const tone = diff < 0 ? "overdue" : diff === 0 ? "today" : "upcoming";
+    const labelBase = formatMonitorDateLabel(item.dueDay, today);
+    const badgeLabel = diff < 0 ? "ATRASADO" : diff === 0 ? "HOJE" : "PROXIMO";
+    const deltaLabel =
+      diff < 0 ? `Atraso: ${Math.abs(diff)}d` : diff === 0 ? "Vence hoje" : `Em ${diff}d`;
+    const responsible = item.responsible || "A definir";
+    const icon = pickMonitorIcon(item);
+    return `
+      <div class="monitor-mini-card monitor-mini-card--${tone}" data-monitor-card="true" data-client-index="${item.clientIndex}" data-project-index="${item.projectIndex}" data-task-index="${item.taskIndex}">
+        <div class="monitor-mini-left">
+          <label class="monitor-mini-check" data-monitor-toggle="true" title="Concluir">
+            <input type="checkbox" aria-label="Concluir atividade">
+          </label>
+          <div class="monitor-mini-icon">${iconSvg(icon)}</div>
+          <div class="monitor-mini-info">
+            <div class="monitor-mini-title">${escapeHtml(item.taskTitle)}</div>
+            <div class="monitor-mini-meta">
+              <span class="monitor-mini-client">${escapeHtml(item.clientName)}</span>
+              <span class="monitor-mini-sep">|</span>
+              <span>${escapeHtml(item.projectName)}</span>
+              <span class="monitor-mini-sep">|</span>
+              <span>${escapeHtml(responsible)}</span>
+            </div>
           </div>
-          <div class="info-data">
-            <span class="badge-data ${badgeClass}">${badgeLabel}</span>
+        </div>
+        <div class="monitor-mini-right">
+          <div class="monitor-mini-date">${labelBase}</div>
+          <div class="monitor-mini-status monitor-mini-status--${tone}">${badgeLabel}</div>
+          <div class="monitor-mini-gap">${deltaLabel}</div>
+        </div>
+      </div>
+    `;
+  };
+
+  const renderMiniList = (items) => {
+    if (!items.length) {
+      return `<div class="monitor-mini-empty">Sem atividades.</div>`;
+    }
+    const limit = 12;
+    const sliced = items.slice(0, limit);
+    const extra = items.length - sliced.length;
+    return `${sliced.map(renderTaskMiniCard).join("")}${
+      extra > 0 ? `<div class="monitor-mini-more">+${extra} restantes</div>` : ""
+    }`;
+  };
+
+  const teamMap = new Map();
+  filtered.forEach((item) => {
+    const name = item.responsible || "A definir";
+    const entry = teamMap.get(name) || { name, total: 0, overdue: 0 };
+    entry.total += 1;
+    if (daysDiff(item.dueDay, today) < 0) entry.overdue += 1;
+    teamMap.set(name, entry);
+  });
+  const teamItems = Array.from(teamMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 4);
+
+  const bottleneckMap = new Map();
+  overdueItems.forEach((item) => {
+    const key = item.projectName || "Projeto";
+    const entry = bottleneckMap.get(key) || { project: key, client: item.clientName || "", total: 0 };
+    entry.total += 1;
+    bottleneckMap.set(key, entry);
+  });
+  const bottlenecks = Array.from(bottleneckMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 4);
+
+  const renderTeamList = () => {
+    if (!teamItems.length) {
+      return `<div class="monitor-mini-empty">Sem dados de time.</div>`;
+    }
+    return teamItems
+      .map((member) => {
+        const initials = escapeHtml(initialsFromName(member.name || "T"));
+        const name = escapeHtml(member.name || "A definir");
+        return `
+          <div class="monitor-mini-card monitor-mini-card--neutral">
+            <div class="monitor-mini-left">
+              <div class="monitor-mini-avatar">${initials}</div>
+              <div class="monitor-mini-info">
+                <div class="monitor-mini-title">${name}</div>
+                <div class="monitor-mini-meta">
+                  <span>${member.total} atividades</span>
+                </div>
+              </div>
+            </div>
+            <div class="monitor-mini-right">
+              <div class="monitor-mini-gap monitor-mini-gap--warn">${member.overdue} atrasadas</div>
+            </div>
           </div>
         `;
-        group.appendChild(card);
-      });
+      })
+      .join("");
+  };
 
-      list.appendChild(group);
-    });
-  }
+  const renderBottleneckList = () => {
+    if (!bottlenecks.length) {
+      return `<div class="monitor-mini-empty">Sem gargalos.</div>`;
+    }
+    return bottlenecks
+      .map((entry) => {
+        const project = escapeHtml(entry.project || "Projeto");
+        const client = escapeHtml(entry.client || "");
+        return `
+          <div class="monitor-mini-card monitor-mini-card--risk">
+            <div class="monitor-mini-left">
+              <div class="monitor-mini-icon">${iconSvg("trend")}</div>
+              <div class="monitor-mini-info">
+                <div class="monitor-mini-title">${project}</div>
+                <div class="monitor-mini-meta">${client ? `${client}` : "Sem cliente"}</div>
+              </div>
+            </div>
+            <div class="monitor-mini-right">
+              <div class="monitor-mini-gap monitor-mini-gap--danger">${entry.total} atrasos</div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+  };
 
+  const cardsHtml = `
+    <div class="monitor-bento-card monitor-bento-card--critical monitor-bento-card--xl">
+      <div class="monitor-bento-head">
+        <div>
+          <div class="monitor-bento-title">Acoes Criticas</div>
+          <div class="monitor-bento-sub">Intervencao imediata</div>
+        </div>
+        <div class="monitor-bento-icon monitor-bento-icon--critical">${iconSvg("alert")}</div>
+      </div>
+      <div class="monitor-bento-count">${overdueItems.length} atividades</div>
+      <div class="monitor-bento-list">${renderMiniList(overdueItems)}</div>
+    </div>
+
+    <div class="monitor-bento-card monitor-bento-card--today monitor-bento-card--wide">
+      <div class="monitor-bento-head">
+        <div>
+          <div class="monitor-bento-title">Cronograma do Dia</div>
+          <div class="monitor-bento-sub">Entrega e follow-up</div>
+        </div>
+        <div class="monitor-bento-icon monitor-bento-icon--today">${iconSvg("calendarCheck")}</div>
+      </div>
+      <div class="monitor-bento-count">${todayItems.length} atividades</div>
+      <div class="monitor-bento-list">${renderMiniList(todayItems)}</div>
+    </div>
+
+    <div class="monitor-bento-card monitor-bento-card--upcoming">
+      <div class="monitor-bento-head">
+        <div>
+          <div class="monitor-bento-title">Proximos 7 dias</div>
+          <div class="monitor-bento-sub">Planejamento</div>
+        </div>
+        <div class="monitor-bento-icon monitor-bento-icon--upcoming">${iconSvg("calendar")}</div>
+      </div>
+      <div class="monitor-bento-count">${upcomingItems.length} atividades</div>
+      <div class="monitor-bento-list">${renderMiniList(upcomingItems)}</div>
+    </div>
+
+    <div class="monitor-bento-card monitor-bento-card--team">
+      <div class="monitor-bento-head">
+        <div>
+          <div class="monitor-bento-title">Metricas de Time</div>
+          <div class="monitor-bento-sub">Carga por responsavel</div>
+        </div>
+        <div class="monitor-bento-icon monitor-bento-icon--team">${iconSvg("users")}</div>
+      </div>
+      <div class="monitor-bento-list">${renderTeamList()}</div>
+    </div>
+
+    <div class="monitor-bento-card monitor-bento-card--bottleneck">
+      <div class="monitor-bento-head">
+        <div>
+          <div class="monitor-bento-title">Gargalos</div>
+          <div class="monitor-bento-sub">Projetos com atraso</div>
+        </div>
+        <div class="monitor-bento-icon monitor-bento-icon--risk">${iconSvg("trend")}</div>
+      </div>
+      <div class="monitor-bento-list">${renderBottleneckList()}</div>
+    </div>
+  `;
+
+  list.innerHTML = cardsHtml;
   container.appendChild(header);
   container.appendChild(list);
 }
@@ -5086,6 +5605,77 @@ function renderMain() {
     .join(" ");
   const baselineLabel = formatMetric(baselinePct);
   const gapLabel = formatSignedMetric(gap);
+  const tasks = selectedProject.tasks || [];
+  const sparkRealized = renderSparklineSvg(buildSparklineSeries(progressPct), {
+    stroke: "var(--accent)",
+    fill: "var(--accent-soft)"
+  });
+  const sparkBaseline = renderSparklineSvg(buildSparklineSeries(baselinePct), {
+    stroke: "var(--muted)",
+    fill: "rgba(148, 163, 184, 0.14)"
+  });
+  const gapSparkPalette = {
+    "gap-ok": { stroke: "#16a34a", fill: "rgba(22, 163, 74, 0.12)" },
+    "gap-low": { stroke: "#64748b", fill: "rgba(100, 116, 139, 0.12)" },
+    "gap-risk": { stroke: "#b06013", fill: "rgba(199, 107, 26, 0.14)" },
+    "gap-delayed": { stroke: "#9c4f0f", fill: "rgba(199, 107, 26, 0.16)" },
+    "gap-critical": { stroke: "#9b1c23", fill: "rgba(155, 28, 35, 0.14)" }
+  };
+  const gapSparkTone = gapSparkPalette[gapStatus.className] || gapSparkPalette["gap-risk"];
+  const gapSparkBase = 100 - Math.min(Math.abs(gap) * 2, 60);
+  const sparkGap = renderSparklineSvg(buildSparklineSeries(gapSparkBase), gapSparkTone);
+  const curveColors = getSystemColors();
+  const curveSvg = sCurveSeries
+    ? renderSCurveSvgDaily(sCurveSeries, {
+        width: 960,
+        height: 190,
+        colors: {
+          planned: curveColors.planned,
+          actual: curveColors.actual,
+          axis: curveColors.grid,
+          muted: curveColors.muted,
+          text: curveColors.text
+        }
+      })
+    : "";
+  const emptyIllustration = `
+    <svg class="empty-illustration" viewBox="0 0 64 40" role="img" aria-hidden="true">
+      <rect x="4" y="8" width="56" height="24" rx="6" fill="none" stroke="currentColor" stroke-width="2"></rect>
+      <line x1="16" y1="18" x2="48" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+      <line x1="16" y1="26" x2="38" y2="26" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+    </svg>
+  `;
+  const renderSideEmpty = (label) => `
+    <div class="side-empty">
+      ${emptyIllustration}
+      <span>${label}</span>
+    </div>
+  `;
+  const milestoneItems = upcomingMilestones(tasks, 4);
+  const milestoneList = milestoneItems.length
+    ? `<ul class="side-list">
+        ${milestoneItems
+          .map(({ task, due }) => {
+            const title = escapeHtml(task?.title || "Atividade");
+            const phase = normalizePhaseLabel(task?.phase || "");
+            const dueLabel = due ? formatDateBR(due) : "-";
+            return `<li><span class="side-item-title">${title}</span><span class="side-item-meta">${phase} | ${dueLabel}</span></li>`;
+          })
+          .join("")}
+      </ul>`
+    : renderSideEmpty("Sem marcos proximos.");
+  const logItems = latestCompletedTasks(tasks, 4);
+  const logList = logItems.length
+    ? `<ul class="side-list">
+        ${logItems
+          .map((task) => {
+            const title = escapeHtml(task?.title || "Atividade");
+            const doneLabel = formatDateBR(activityDoneDate(task) || taskDueStr(task)) || "-";
+            return `<li><span class="side-item-title">${title}</span><span class="side-item-meta">Concluido | ${doneLabel}</span></li>`;
+          })
+          .join("")}
+      </ul>`
+    : renderSideEmpty("Sem logs recentes.");
 
   const headerCard = document.createElement("div");
   headerCard.className = "card project-header span-all";
@@ -5101,73 +5691,1880 @@ function renderMain() {
         <button class="btn sm ghost" type="button" data-export-project>Exportar</button>
       </div>
     </div>
-    <div class="project-meta-grid">
-      <div class="meta-item card--meta">
-        <div class="label">Cliente</div>
-        <div class="value">${selectedClient.name}</div>
+    <div class="project-meta-row">
+      <div class="project-meta-item">
+        <span class="label">Cliente</span>
+        <span class="value">${selectedClient.name}</span>
       </div>
-      <div class="meta-item card--meta">
-        <div class="label">Responsavel</div>
-        <div class="value">${selectedProject.developer || "A definir"}</div>
+      <div class="project-meta-item">
+        <span class="label">Responsavel</span>
+        <span class="value">${selectedProject.developer || "A definir"}</span>
       </div>
-      <div class="meta-item card--meta">
-        <div class="label">Data inicio</div>
-        <div class="value is-editable" data-edit-project-date="start" tabindex="0" role="button" aria-label="Editar data inicio">
+      <div class="project-meta-item">
+        <span class="label">Inicio</span>
+        <span class="value is-editable" data-edit-project-date="start" tabindex="0" role="button" aria-label="Editar data inicio">
           ${formatDateBR(selectedProject.start) || "-"}
-        </div>
+        </span>
       </div>
-      <div class="meta-item card--meta">
-        <div class="label">Go Live previsto</div>
-        <div class="value is-editable" data-edit-project-date="end" tabindex="0" role="button" aria-label="Editar data fim">
+      <div class="project-meta-item">
+        <span class="label">Go Live</span>
+        <span class="value is-editable" data-edit-project-date="end" tabindex="0" role="button" aria-label="Editar data fim">
           ${formatDateBR(selectedProject.end) || "-"}
-        </div>
+        </span>
       </div>
     </div>
   `;
 
   const performanceGrid = document.createElement("div");
-  performanceGrid.className = "metrics-grid performance-grid project-performance-grid span-all";
+  performanceGrid.className = "metrics-grid performance-grid project-performance-grid";
   performanceGrid.innerHTML = `
     <div class="metric-card card--kpi performance-card realizado">
       <div class="label">Realizado (%)</div>
       <div class="value">${progressPct}%</div>
       <div class="sub">Atividades concluidas</div>
+      <div class="kpi-sparkline">${sparkRealized}</div>
     </div>
     <div class="metric-card card--kpi performance-card previsto">
       <div class="label">Previsto (Baseline)</div>
       <div class="value">${baselineLabel}%</div>
       <div class="sub">Meta para hoje</div>
+      <div class="kpi-sparkline">${sparkBaseline}</div>
     </div>
     <div class="metric-card card--kpi performance-card gap ${gapStatus.className}">
       <div class="label">GAP (Desvio)</div>
       <div class="value">${gapLabel}pp</div>
       <div class="sub">${gapStatus.label}</div>
+      <div class="kpi-sparkline">${sparkGap}</div>
     </div>
   `;
 
   const progressCompare = document.createElement("div");
-  progressCompare.className = "card progress-compare card--progress span-all";
+  progressCompare.className = "card progress-compare card--progress";
   progressCompare.innerHTML = `
     <div class="progress-head">
-      <div class="progress-title">Avanço vs meta</div>
+      <div class="progress-title">Avanco vs meta</div>
       <div class="progress-legend">
         <span class="leg"><b>Realizado</b> <span>${progressPct}%</span></span>
-        <span class="dot">•</span>
+        <span class="dot">|</span>
         <span class="leg"><b>Previsto</b> <span>${baselineLabel}%</span></span>
       </div>
       <div class="delta-badge ${gapStatus.className}">${gapLabel}pp</div>
     </div>
-    <div class="${progressTrackClass}" style="--realized: ${realizedPct}%; --baseline: ${baselinePct}%; --gapStart: ${gapStart}%; --gapW: ${gapWidth}%;">
-      <div class="progress-baseline"></div>
-      <div class="progress-gap" aria-hidden="true"></div>
-      <div class="progress-realized ${gapStatus.className}"></div>
-      <div class="progress-marker"></div>
-      <div class="progress-knob ${gapStatus.className}" aria-hidden="true"></div>
+    <div class="progress-curve">
+      ${curveSvg || `<div class="side-empty">Curva S: defina Data Inicio e Go Live.</div>`}
+    </div>
+  `;
+}
+
+function setActiveNav(section) {
+  document.querySelectorAll(".nav-link").forEach((el) => el.classList.remove("active"));
+  const active = document.querySelector(`.nav-link[data-section="${section}"]`);
+  if (active) active.classList.add("active");
+  if (section === "meus-projetos") {
+    ensureProjectsNavOpen();
+  }
+}
+
+function ensureProjectsNavOpen() {
+  const link = document.querySelector('.nav-link[data-section="meus-projetos"]');
+  if (link) link.classList.add("open");
+}
+
+function openProject(client, project) {
+  state.selectedClient = client;
+  state.selectedProject = project;
+  state.clientVisibility[client.name] = true;
+  state.currentSection = "meus-projetos";
+  highlightActiveProject(project.name);
+  setActiveNav("meus-projetos");
+  renderMain();
+}
+
+function updateTopActions() {
+  const openProjectBtn = byId("open-project-modal");
+  const editProjectBtn = byId("edit-project-btn");
+  const openEmployeeBtn = byId("open-employee-modal");
+  const openGanttBtn = byId("open-gantt-btn");
+  const isHome = state.currentSection === "inicio";
+  const isConfig = state.currentSection === "config";
+  const isDevBoard = state.currentSection === "dev-board";
+  const isProject = state.currentSection === "meus-projetos";
+  if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome || isConfig || isDevBoard);
+  if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome || isConfig || isDevBoard);
+  if (editProjectBtn) editProjectBtn.classList.toggle("hidden", !isProject);
+  if (openGanttBtn) {
+    openGanttBtn.classList.toggle("hidden", isDevBoard);
+    openGanttBtn.disabled = !state.selectedProject;
+  }
+}
+
+function renderHome(container) {
+  setCrumbPathText("Inicio");
+  container.innerHTML = renderHomeMacroSummary();
+}
+
+function removeRelatorioStyles() {
+  const priorStyles = document.getElementById("onepage-styles");
+  if (priorStyles) {
+    priorStyles.remove();
+  }
+}
+
+function buildOnePageQuery(project, client) {
+  const params = new URLSearchParams();
+  if (client?.id) {
+    params.set("clientId", client.id);
+  } else if (client?.name) {
+    params.set("client", client.name);
+  }
+  if (project?.id) {
+    params.set("projectId", project.id);
+  } else if (project?.name) {
+    params.set("project", project.name);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function renderRelatorioSection() {
+  const contentArea = byId("dashboard-panels");
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+
+  setCrumbPathText("Relatório do Projeto");
+
+  if (!project || !client) {
+    contentArea.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;">
+      <h2>Nenhum projeto selecionado</h2>
+      <p>Por favor, selecione um projeto na barra lateral ou no dashboard para gerar um relatório.</p>
+    </div>`;
+    return;
+  }
+
+  const reportWrapper = document.createElement("div");
+  reportWrapper.className = "span-all report-embed";
+
+  saveLocalState();
+
+  const reportFrame = document.createElement("iframe");
+  reportFrame.className = "onepage-frame";
+  reportFrame.title = "Relatorio do Projeto";
+  reportFrame.loading = "lazy";
+  reportFrame.src = `onepage.html${buildOnePageQuery(project, client)}`;
+  reportWrapper.appendChild(reportFrame);
+
+  contentArea.innerHTML = "";
+  contentArea.appendChild(reportWrapper);
+}
+
+function renderMonitorActivities(container) {
+  setCrumbPathText("Monitor de Atividades");
+  const filter = state.monitor?.filter || "all";
+  const clientFilter = state.monitor?.client || "";
+  const projectFilter = state.monitor?.project || "";
+  const responsibleFilter = state.monitor?.responsible || "";
+  const items = buildMonitorItems();
+  const statusFiltered = items.filter((item) => {
+    if (filter === "atrasado") return item.status === "atrasado";
+    if (filter === "proximo") return item.status === "proximo";
+    return true;
+  });
+  const clientOptions = Array.from(new Set(statusFiltered.map((item) => item.clientName))).sort();
+  if (clientFilter && !clientOptions.includes(clientFilter)) {
+    state.monitor.client = "";
+  }
+  const projectPool = (state.monitor.client || clientFilter)
+    ? statusFiltered.filter((item) => item.clientName === (state.monitor.client || clientFilter))
+    : statusFiltered;
+  const projectOptions = Array.from(new Set(projectPool.map((item) => item.projectName))).sort();
+  if (projectFilter && !projectOptions.includes(projectFilter)) {
+    state.monitor.project = "";
+  }
+  const responsiblePool = statusFiltered.filter((item) => {
+    if (state.monitor.client && item.clientName !== state.monitor.client) return false;
+    if (state.monitor.project && item.projectName !== state.monitor.project) return false;
+    return true;
+  });
+  const responsibleOptions = Array.from(new Set(responsiblePool.map((item) => item.responsible))).sort();
+  if (responsibleFilter && !responsibleOptions.includes(responsibleFilter)) {
+    state.monitor.responsible = "";
+  }
+
+  const filtered = statusFiltered.filter((item) => {
+    if (state.monitor.client && item.clientName !== state.monitor.client) return false;
+    if (state.monitor.project && item.projectName !== state.monitor.project) return false;
+    if (state.monitor.responsible && item.responsible !== state.monitor.responsible) return false;
+    return true;
+  });
+
+  const header = document.createElement("div");
+  header.className = "monitor-container span-all";
+  header.innerHTML = `
+    <div class="monitor-header">
+      <h2>Monitor de Atividades</h2>
+      <div class="monitor-filter">
+        <div class="monitor-chip-bar" role="tablist" aria-label="Filtros do monitor">
+          ${MONITOR_FILTERS.map((option) => {
+            const active = option.key === filter ? "active" : "";
+            const selected = option.key === filter ? "true" : "false";
+            return `<button type="button" class="monitor-chip ${active}" data-monitor-filter="${option.key}" aria-selected="${selected}">${option.label}</button>`;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+    <div class="monitor-filters">
+      <label class="monitor-select">
+        <span>Cliente</span>
+        <select data-monitor-select="client">
+          <option value="">Todos</option>
+          ${clientOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.client === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="monitor-select">
+        <span>Projeto</span>
+        <select data-monitor-select="project">
+          <option value="">Todos</option>
+          ${projectOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.project === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="monitor-select">
+        <span>Responsavel</span>
+        <select data-monitor-select="responsible">
+          <option value="">Todos</option>
+          ${responsibleOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.responsible === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+  `;
+
+  const list = document.createElement("div");
+  list.className = "monitor-container span-all monitor-bento-grid";
+
+  const today = startOfDay(new Date());
+  const overdueItems = [];
+  const todayItems = [];
+  const upcomingItems = [];
+
+  filtered.forEach((item) => {
+    const diff = daysDiff(item.dueDay, today);
+    if (diff < 0 || item.status === "atrasado") {
+      overdueItems.push(item);
+    } else if (diff === 0) {
+      todayItems.push(item);
+    } else {
+      upcomingItems.push(item);
+    }
+  });
+
+  const sortByDue = (a, b) => a.dueDay.getTime() - b.dueDay.getTime();
+  overdueItems.sort(sortByDue);
+  todayItems.sort(sortByDue);
+  upcomingItems.sort(sortByDue);
+
+  const iconSvg = (name) => {
+    const icons = {
+      alert: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`,
+      calendarCheck: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><polyline points="9 16 11 18 15 14"></polyline></svg>`,
+      calendar: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`,
+      users: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`,
+      trend: `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>`,
+      code: `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
+      review: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9 12l2 2 4-4"></path></svg>`,
+      meeting: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="5" width="15" height="14" rx="2"></rect><polygon points="23 7 16 12 23 17 23 7"></polygon></svg>`
+    };
+    return icons[name] || icons.code;
+  };
+
+  const pickMonitorIcon = (item) => {
+    const rawTitle = String(item.taskTitle || "").toLowerCase();
+    const normalized = rawTitle.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (normalized.includes("revis") || normalized.includes("review") || normalized.includes("valid")) {
+      return "review";
+    }
+    if (
+      normalized.includes("reun") ||
+      normalized.includes("meeting") ||
+      normalized.includes("call") ||
+      normalized.includes("reuniao")
+    ) {
+      return "meeting";
+    }
+    return "code";
+  };
+
+  const renderTaskMiniCard = (item) => {
+    const diff = daysDiff(item.dueDay, today);
+    const tone = diff < 0 ? "overdue" : diff === 0 ? "today" : "upcoming";
+    const labelBase = formatMonitorDateLabel(item.dueDay, today);
+    const badgeLabel = diff < 0 ? "ATRASADO" : diff === 0 ? "HOJE" : "PROXIMO";
+    const deltaLabel =
+      diff < 0 ? `Atraso: ${Math.abs(diff)}d` : diff === 0 ? "Vence hoje" : `Em ${diff}d`;
+    const responsible = item.responsible || "A definir";
+    const icon = pickMonitorIcon(item);
+    return `
+      <div class="monitor-mini-card monitor-mini-card--${tone}" data-monitor-card="true" data-client-index="${item.clientIndex}" data-project-index="${item.projectIndex}" data-task-index="${item.taskIndex}">
+        <div class="monitor-mini-left">
+          <label class="monitor-mini-check" data-monitor-toggle="true" title="Concluir">
+            <input type="checkbox" aria-label="Concluir atividade">
+          </label>
+          <div class="monitor-mini-icon">${iconSvg(icon)}</div>
+          <div class="monitor-mini-info">
+            <div class="monitor-mini-title">${escapeHtml(item.taskTitle)}</div>
+            <div class="monitor-mini-meta">
+              <span class="monitor-mini-client">${escapeHtml(item.clientName)}</span>
+              <span class="monitor-mini-sep">|</span>
+              <span>${escapeHtml(item.projectName)}</span>
+              <span class="monitor-mini-sep">|</span>
+              <span>${escapeHtml(responsible)}</span>
+            </div>
+          </div>
+        </div>
+        <div class="monitor-mini-right">
+          <div class="monitor-mini-date">${labelBase}</div>
+          <div class="monitor-mini-status monitor-mini-status--${tone}">${badgeLabel}</div>
+          <div class="monitor-mini-gap">${deltaLabel}</div>
+        </div>
+      </div>
+    `;
+  };
+
+  const renderMiniList = (items) => {
+    if (!items.length) {
+      return `<div class="monitor-mini-empty">Sem atividades.</div>`;
+    }
+    const limit = 12;
+    const sliced = items.slice(0, limit);
+    const extra = items.length - sliced.length;
+    return `${sliced.map(renderTaskMiniCard).join("")}${
+      extra > 0 ? `<div class="monitor-mini-more">+${extra} restantes</div>` : ""
+    }`;
+  };
+
+  const teamMap = new Map();
+  filtered.forEach((item) => {
+    const name = item.responsible || "A definir";
+    const entry = teamMap.get(name) || { name, total: 0, overdue: 0 };
+    entry.total += 1;
+    if (daysDiff(item.dueDay, today) < 0) entry.overdue += 1;
+    teamMap.set(name, entry);
+  });
+  const teamItems = Array.from(teamMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 4);
+
+  const bottleneckMap = new Map();
+  overdueItems.forEach((item) => {
+    const key = item.projectName || "Projeto";
+    const entry = bottleneckMap.get(key) || { project: key, client: item.clientName || "", total: 0 };
+    entry.total += 1;
+    bottleneckMap.set(key, entry);
+  });
+  const bottlenecks = Array.from(bottleneckMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 4);
+
+  const renderTeamList = () => {
+    if (!teamItems.length) {
+      return `<div class="monitor-mini-empty">Sem dados de time.</div>`;
+    }
+    return teamItems
+      .map((member) => {
+        const initials = escapeHtml(initialsFromName(member.name || "T"));
+        const name = escapeHtml(member.name || "A definir");
+        return `
+          <div class="monitor-mini-card monitor-mini-card--neutral">
+            <div class="monitor-mini-left">
+              <div class="monitor-mini-avatar">${initials}</div>
+              <div class="monitor-mini-info">
+                <div class="monitor-mini-title">${name}</div>
+                <div class="monitor-mini-meta">
+                  <span>${member.total} atividades</span>
+                </div>
+              </div>
+            </div>
+            <div class="monitor-mini-right">
+              <div class="monitor-mini-gap monitor-mini-gap--warn">${member.overdue} atrasadas</div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+  };
+
+  const renderBottleneckList = () => {
+    if (!bottlenecks.length) {
+      return `<div class="monitor-mini-empty">Sem gargalos.</div>`;
+    }
+    return bottlenecks
+      .map((entry) => {
+        const project = escapeHtml(entry.project || "Projeto");
+        const client = escapeHtml(entry.client || "");
+        return `
+          <div class="monitor-mini-card monitor-mini-card--risk">
+            <div class="monitor-mini-left">
+              <div class="monitor-mini-icon">${iconSvg("trend")}</div>
+              <div class="monitor-mini-info">
+                <div class="monitor-mini-title">${project}</div>
+                <div class="monitor-mini-meta">${client ? `${client}` : "Sem cliente"}</div>
+              </div>
+            </div>
+            <div class="monitor-mini-right">
+              <div class="monitor-mini-gap monitor-mini-gap--danger">${entry.total} atrasos</div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+  };
+
+  const cardsHtml = `
+    <div class="monitor-bento-card monitor-bento-card--critical monitor-bento-card--xl">
+      <div class="monitor-bento-head">
+        <div>
+          <div class="monitor-bento-title">Acoes Criticas</div>
+          <div class="monitor-bento-sub">Intervencao imediata</div>
+        </div>
+        <div class="monitor-bento-icon monitor-bento-icon--critical">${iconSvg("alert")}</div>
+      </div>
+      <div class="monitor-bento-count">${overdueItems.length} atividades</div>
+      <div class="monitor-bento-list">${renderMiniList(overdueItems)}</div>
+    </div>
+
+    <div class="monitor-bento-card monitor-bento-card--today monitor-bento-card--wide">
+      <div class="monitor-bento-head">
+        <div>
+          <div class="monitor-bento-title">Cronograma do Dia</div>
+          <div class="monitor-bento-sub">Entrega e follow-up</div>
+        </div>
+        <div class="monitor-bento-icon monitor-bento-icon--today">${iconSvg("calendarCheck")}</div>
+      </div>
+      <div class="monitor-bento-count">${todayItems.length} atividades</div>
+      <div class="monitor-bento-list">${renderMiniList(todayItems)}</div>
+    </div>
+
+    <div class="monitor-bento-card monitor-bento-card--upcoming">
+      <div class="monitor-bento-head">
+        <div>
+          <div class="monitor-bento-title">Proximos 7 dias</div>
+          <div class="monitor-bento-sub">Planejamento</div>
+        </div>
+        <div class="monitor-bento-icon monitor-bento-icon--upcoming">${iconSvg("calendar")}</div>
+      </div>
+      <div class="monitor-bento-count">${upcomingItems.length} atividades</div>
+      <div class="monitor-bento-list">${renderMiniList(upcomingItems)}</div>
+    </div>
+
+    <div class="monitor-bento-card monitor-bento-card--team">
+      <div class="monitor-bento-head">
+        <div>
+          <div class="monitor-bento-title">Metricas de Time</div>
+          <div class="monitor-bento-sub">Carga por responsavel</div>
+        </div>
+        <div class="monitor-bento-icon monitor-bento-icon--team">${iconSvg("users")}</div>
+      </div>
+      <div class="monitor-bento-list">${renderTeamList()}</div>
+    </div>
+
+    <div class="monitor-bento-card monitor-bento-card--bottleneck">
+      <div class="monitor-bento-head">
+        <div>
+          <div class="monitor-bento-title">Gargalos</div>
+          <div class="monitor-bento-sub">Projetos com atraso</div>
+        </div>
+        <div class="monitor-bento-icon monitor-bento-icon--risk">${iconSvg("trend")}</div>
+      </div>
+      <div class="monitor-bento-list">${renderBottleneckList()}</div>
+    </div>
+  `;
+
+  list.innerHTML = cardsHtml;
+  container.appendChild(header);
+  container.appendChild(list);
+}
+
+function normalizePersonKey(value) {
+  if (!value) return "";
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w@.\s-]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function developerIdentityKeys() {
+  const keys = new Set();
+  const user = auth?.currentUser || null;
+  const email = (state.currentUserEmail || user?.email || "").trim();
+  const name = (user?.displayName || "").trim();
+  [name, email].forEach((value) => {
+    const key = normalizePersonKey(value);
+    if (key) keys.add(key);
+  });
+  if (email.includes("@")) {
+    const base = email.split("@")[0].replace(/[._-]+/g, " ");
+    const key = normalizePersonKey(base);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+function devColumnKey(task) {
+  const normalized = normalizeTaskStatus(getTaskStatus(task));
+  if (normalized === "concluido") return "done";
+  if (normalized === "em_validacao") return "review";
+  if (normalized === "em_andamento" || normalized === "parado") return "doing";
+  return "todo";
+}
+
+function collectDeveloperTasks(identityKeys) {
+  const items = [];
+  const unassignedKeys = new Set(["a definir", "nao definido", "sem responsavel"]);
+  state.clients.forEach((client) => {
+    (client.projects || []).forEach((project) => {
+      const projectKey = normalizePersonKey(project?.developer || "");
+      const projectMatch = projectKey && identityKeys.has(projectKey);
+      (project.tasks || []).forEach((task, taskIndex) => {
+        const ownerKey = normalizePersonKey(taskOwner(task));
+        const hasOwner = ownerKey && !unassignedKeys.has(ownerKey);
+        const matches = (hasOwner && identityKeys.has(ownerKey)) || (!hasOwner && projectMatch);
+        if (!matches) return;
+        const dueLabel = formatDateBR(taskDueStr(task) || "");
+        const progress = taskProgressValue(task);
+        const statusInfoData = taskStatusInfo(getTaskStatus(task));
+        items.push({
+          client,
+          project,
+          task,
+          taskIndex,
+          column: devColumnKey(task),
+          dueLabel,
+          progress,
+          statusLabel: statusInfoData.label,
+          statusClass: statusInfoData.className || "planejado"
+        });
+      });
+    });
+  });
+  return items;
+}
+
+function resolveDevTaskRef(dataset) {
+  const clientId = dataset.clientId || "";
+  const clientName = dataset.clientName || "";
+  const projectId = dataset.projectId || "";
+  const projectName = dataset.projectName || "";
+  const taskId = dataset.taskId || "";
+  const taskIndexRaw = dataset.taskIndex;
+  const taskIndex = taskIndexRaw === "" || taskIndexRaw == null ? null : Number(taskIndexRaw);
+  const client =
+    state.clients.find((item) => (clientId && item.id === clientId) || (clientName && item.name === clientName)) || null;
+  if (!client) return null;
+  const project =
+    (client.projects || []).find(
+      (item) => (projectId && item.id === projectId) || (projectName && item.name === projectName)
+    ) || null;
+  if (!project) return null;
+  let task = null;
+  if (Number.isFinite(taskIndex) && project.tasks?.[taskIndex]) {
+    task = project.tasks[taskIndex];
+  } else if (taskId) {
+    task = (project.tasks || []).find((item) => item.id === taskId) || null;
+  }
+  if (!task) return null;
+  return { client, project, task, taskIndex };
+}
+
+function updateDeveloperTaskStatus(dataset, columnKey) {
+  const ref = resolveDevTaskRef(dataset);
+  if (!ref) return;
+  const statusMap = {
+    todo: "planejado",
+    doing: "em_andamento",
+    review: "em_validacao",
+    done: "concluido"
+  };
+  const nextStatus = statusMap[columnKey] || "planejado";
+  if (normalizeTaskStatus(ref.task.status) === normalizeTaskStatus(nextStatus)) {
+    return;
+  }
+  const previousStatus = ref.task.status;
+  applyTaskStatus(ref.task, nextStatus);
+  if (db && ref.client.id && ref.project.id && ref.task.id) {
+    updateTaskStatusOnDb(ref.client.id, ref.project.id, ref.task.id, {
+      status: ref.task.status,
+      dataConclusao: ref.task.dataConclusao || null
+    })
+      .then(() => {
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        ref.task.status = previousStatus;
+        applyTaskStatus(ref.task, previousStatus);
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  renderMain();
+}
+
+function updateDeveloperTaskProgress(dataset, progressValue) {
+  const ref = resolveDevTaskRef(dataset);
+  if (!ref) return;
+  const prevProgress = ref.task.progress;
+  const prevStatus = ref.task.status;
+  const nextProgress = Math.max(0, Math.min(100, Number(progressValue)));
+  ref.task.progress = Number.isFinite(nextProgress) ? nextProgress : 0;
+  if (ref.task.progress >= 100) {
+    applyTaskStatus(ref.task, "concluido");
+  } else if (normalizeTaskStatus(ref.task.status) === "concluido") {
+    applyTaskStatus(ref.task, "em_andamento");
+  }
+  const payload = {
+    progress: ref.task.progress,
+    status: ref.task.status,
+    dataConclusao: ref.task.dataConclusao || null
+  };
+  if (db && ref.client.id && ref.project.id && ref.task.id) {
+    updateTaskOnDb(ref.client.id, ref.project.id, ref.task.id, payload)
+      .then(() => {
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        ref.task.progress = prevProgress;
+        ref.task.status = prevStatus;
+        applyTaskStatus(ref.task, prevStatus);
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  renderMain();
+}
+
+function setupDeveloperBoard() {
+  if (document.body.dataset.devBoardWired) return;
+  document.body.dataset.devBoardWired = "true";
+
+  document.body.addEventListener("dragstart", (e) => {
+    const card = e.target.closest("[data-dev-task]");
+    if (!card) return;
+    const payload = {
+      clientId: card.dataset.clientId || "",
+      clientName: card.dataset.clientName || "",
+      projectId: card.dataset.projectId || "",
+      projectName: card.dataset.projectName || "",
+      taskId: card.dataset.taskId || "",
+      taskIndex: card.dataset.taskIndex || ""
+    };
+    card.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", JSON.stringify(payload));
+  });
+
+  document.body.addEventListener("dragend", (e) => {
+    const card = e.target.closest("[data-dev-task]");
+    if (card) card.classList.remove("dragging");
+  });
+
+  document.body.addEventListener("dragover", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  });
+
+  document.body.addEventListener("dragenter", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (column) column.classList.add("over");
+  });
+
+  document.body.addEventListener("dragleave", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    if (!column.contains(e.relatedTarget)) {
+      column.classList.remove("over");
+    }
+  });
+
+  document.body.addEventListener("drop", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    e.preventDefault();
+    column.classList.remove("over");
+    const payloadRaw = e.dataTransfer.getData("text/plain");
+    if (!payloadRaw) return;
+    let payload = null;
+    try {
+      payload = JSON.parse(payloadRaw);
+    } catch (err) {
+      return;
+    }
+    const columnKey = column.dataset.devColumn || "";
+    if (!columnKey) return;
+    updateDeveloperTaskStatus(payload, columnKey);
+  });
+
+  document.body.addEventListener("input", (e) => {
+    const slider = e.target.closest("[data-progress-input]");
+    if (!slider) return;
+    const wrapper = slider.closest(".dev-progress");
+    const valueEl = wrapper?.querySelector("[data-progress-label]");
+    if (valueEl) valueEl.textContent = `${slider.value}%`;
+  });
+
+  document.body.addEventListener("change", (e) => {
+    const slider = e.target.closest("[data-progress-input]");
+    if (!slider) return;
+    updateDeveloperTaskProgress(slider.dataset, slider.value);
+  });
+}
+
+function renderDeveloperBoard(container) {
+  setCrumbPathText("Painel Desenvolvedor");
+  const role = normalizeUserRole(state.currentUserRole);
+  if (role !== "developer" && role !== "admin") {
+    container.innerHTML = `
+      <div class="empty-state span-all" style="text-align: center; padding: 40px;">
+        <h2>Acesso restrito</h2>
+        <p>Esta tela esta disponivel apenas para usuarios com perfil Desenvolvedor.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const identityKeys = developerIdentityKeys();
+  const tasks = collectDeveloperTasks(identityKeys);
+  if (!tasks.length) {
+    container.innerHTML = `
+      <div class="empty-state span-all" style="text-align: center; padding: 40px;">
+        <h2>Sem atividades</h2>
+        <p>Nenhuma atividade atribuida a voce no momento.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const columns = [
+    { key: "todo", label: "A fazer" },
+    { key: "doing", label: "Em andamento" },
+    { key: "review", label: "Revisao / QA" },
+    { key: "done", label: "Concluido" }
+  ];
+  const grouped = columns.reduce((acc, col) => {
+    acc[col.key] = [];
+    return acc;
+  }, {});
+  tasks.forEach((item) => {
+    const columnKey = grouped[item.column] ? item.column : "todo";
+    grouped[columnKey].push(item);
+  });
+
+  const columnsHtml = columns
+    .map((col) => {
+      const ordered = grouped[col.key].slice().sort((a, b) => taskDueValueSafe(a.task) - taskDueValueSafe(b.task));
+      const cards = ordered
+        .map((item) => {
+          const projectLabel = item.project?.name || "Projeto";
+          const clientLabel = item.client?.name || "Cliente";
+          const taskTitleText = escapeHtml(taskTitle(item.task));
+          const phaseLabel = normalizePhaseLabel(item.task?.phase || "OUTROS");
+          const dueText = item.dueLabel && item.dueLabel !== "-" ? item.dueLabel : "Sem prazo";
+          const progress = Math.max(0, Math.min(100, Math.round(item.progress || 0)));
+          const taskId = item.task?.id || "";
+          const clientId = item.client?.id || "";
+          const projectId = item.project?.id || "";
+          return `
+            <article class="dev-card" draggable="true" data-dev-task data-client-id="${escapeHtml(clientId)}" data-client-name="${escapeHtml(clientLabel)}" data-project-id="${escapeHtml(projectId)}" data-project-name="${escapeHtml(projectLabel)}" data-task-id="${escapeHtml(taskId)}" data-task-index="${item.taskIndex}">
+              <div class="dev-card-meta">
+                <span class="dev-card-project">${escapeHtml(projectLabel)} • ${escapeHtml(clientLabel)}</span>
+                <span class="pill ${item.statusClass}">${item.statusLabel}</span>
+              </div>
+              <div class="dev-card-title">${taskTitleText}</div>
+              <div class="dev-card-sub">Epico: ${escapeHtml(phaseLabel)}</div>
+              <div class="dev-card-sub">Prazo: ${escapeHtml(dueText)}</div>
+              <div class="dev-progress">
+                <div class="dev-progress-label">
+                  <span>Progresso</span>
+                  <span class="dev-progress-value" data-progress-label>${progress}%</span>
+                </div>
+                <input type="range" min="0" max="100" value="${progress}" data-progress-input data-client-id="${escapeHtml(clientId)}" data-client-name="${escapeHtml(clientLabel)}" data-project-id="${escapeHtml(projectId)}" data-project-name="${escapeHtml(projectLabel)}" data-task-id="${escapeHtml(taskId)}" data-task-index="${item.taskIndex}">
+              </div>
+            </article>
+          `;
+        })
+        .join("");
+      return `
+        <section class="dev-column" data-dev-column="${col.key}">
+          <div class="dev-column-header">
+            <div class="dev-column-title">${col.label}</div>
+            <span class="dev-column-count">${grouped[col.key].length}</span>
+          </div>
+          <div class="dev-column-body">
+            ${cards || "<div class=\"dev-empty\">Sem atividades</div>"}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <div class="dev-board span-all">
+      <div class="section-header">
+        <div class="header-row">
+          <h2>Atividades do Desenvolvedor</h2>
+        </div>
+        <div class="muted">Arraste os cards entre colunas e atualize o progresso.</div>
+      </div>
+      <div class="dev-board-grid">
+        ${columnsHtml}
+      </div>
+    </div>
+  `;
+
+  setupDeveloperBoard();
+}
+
+function openGanttModal() {
+  const modal = byId("gantt-modal");
+  if (!modal) return;
+  renderGanttModal();
+  showModal(modal);
+}
+
+function renderGanttModal() {
+  const container = byId("gantt-content");
+  if (!container) return;
+  const titleEl = byId("gantt-title");
+  const subtitleEl = byId("gantt-subtitle");
+  const footerRight = byId("gantt-footer-right");
+
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+
+  if (!project) {
+    if (titleEl) titleEl.textContent = "Cronograma do Projeto";
+    if (subtitleEl) subtitleEl.textContent = "Selecione um projeto para visualizar o Gantt.";
+    if (footerRight) footerRight.textContent = "";
+    container.innerHTML = `<div class="gantt-empty">Selecione um projeto para gerar o Gantt.</div>`;
+    return;
+  }
+
+  if (titleEl) titleEl.textContent = project.name || "Cronograma do Projeto";
+  if (subtitleEl) {
+    const clientLabel = client?.name ? `Cliente: ${client.name}` : "Projeto selecionado";
+    subtitleEl.textContent = clientLabel;
+  }
+
+  const tasks = flattenProjectTasks(project);
+  if (!tasks.length) {
+    if (footerRight) footerRight.textContent = "";
+    container.innerHTML = `<div class="gantt-empty">Nenhuma atividade cadastrada.</div>`;
+    return;
+  }
+
+  const normalizedTasks = tasks.map((task, idx) => {
+    const title = taskTitle(task);
+    const phase = normalizePhaseLabel(task.phase || task.epic || task.stage || "OUTROS");
+    const startRaw = taskStartStr(task) || taskDateStr(task);
+    const endRaw = taskDueStr(task) || taskDateStr(task);
+    let startDate = parseTaskDate(startRaw);
+    let endDate = parseTaskDate(endRaw);
+    if (!startDate && endDate) startDate = endDate;
+    if (!endDate && startDate) endDate = startDate;
+    const noDate = !startDate && !endDate;
+    if (startDate && endDate && endDate < startDate) {
+      const tmp = startDate;
+      startDate = endDate;
+      endDate = tmp;
+    }
+    const progress = taskProgressValue(task);
+    const gapValue = Number(
+      task?.gap ?? task?.gapPP ?? task?.gapPct ?? task?.gapPercent ?? task?.gapValue ?? Number.NaN
+    );
+    const done = progress >= 100 || isDoneTask(task);
+    const overdue = Number.isFinite(gapValue) ? gapValue > 0 : isOverdueTask(task);
+    const statusClass = done ? "is-done" : overdue ? "is-late" : "is-ok";
+    return {
+      id: task?.id || `task-${idx}`,
+      title,
+      phase,
+      startDate,
+      endDate,
+      startRaw,
+      endRaw,
+      progress,
+      statusClass,
+      noDate
+    };
+  });
+
+  const datedTasks = normalizedTasks.filter((task) => !task.noDate);
+  const taskMinTs = datedTasks.length ? Math.min(...datedTasks.map((task) => task.startDate.getTime())) : null;
+  const taskMaxTs = datedTasks.length ? Math.max(...datedTasks.map((task) => task.endDate.getTime())) : null;
+  const projectStart = parseDateSafe(project?.start || project?.startDate);
+  const projectEnd = parseDateSafe(project?.end || project?.goLive || project?.goLiveDate);
+  let rangeStart = projectStart
+    ? startOfDay(projectStart)
+    : taskMinTs
+      ? startOfDay(new Date(taskMinTs))
+      : startOfDay(new Date());
+  let rangeEnd = projectEnd
+    ? startOfDay(projectEnd)
+    : taskMaxTs
+      ? startOfDay(new Date(taskMaxTs))
+      : addDays(rangeStart, 1);
+  if (taskMinTs != null && taskMinTs < rangeStart.getTime()) {
+    rangeStart = startOfDay(new Date(taskMinTs));
+  }
+  if (taskMaxTs != null && taskMaxTs > rangeEnd.getTime()) {
+    rangeEnd = startOfDay(new Date(taskMaxTs));
+  }
+  if (rangeEnd.getTime() < rangeStart.getTime()) {
+    const tmp = rangeStart;
+    rangeStart = rangeEnd;
+    rangeEnd = tmp;
+  }
+  if (rangeEnd.getTime() === rangeStart.getTime()) {
+    rangeEnd = addDays(rangeStart, 1);
+  }
+  const minTs = rangeStart.getTime();
+  const maxTs = rangeEnd.getTime();
+  const rangeMs = Math.max(1, maxTs - minTs);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const formatTsBR = (ts) => {
+    const dt = new Date(ts);
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    const yyyy = dt.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const timelineTicks = [];
+  const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+  const tickStart = new Date(new Date(minTs).getFullYear(), new Date(minTs).getMonth(), 1);
+  const tickEnd = new Date(new Date(maxTs).getFullYear(), new Date(maxTs).getMonth(), 1);
+  for (let d = new Date(tickStart); d <= tickEnd; d.setMonth(d.getMonth() + 1)) {
+    const left = ((d.getTime() - minTs) / rangeMs) * 100;
+    timelineTicks.push({
+      label: `${months[d.getMonth()]} ${d.getFullYear()}`,
+      left: Math.max(0, Math.min(100, left))
+    });
+  }
+
+  const todayTs = todayStartTs();
+  const todayLeft = todayTs >= minTs && todayTs <= maxTs ? ((todayTs - minTs) / rangeMs) * 100 : null;
+  const startLabel = formatTsBR(minTs);
+  const endLabel = formatTsBR(maxTs);
+
+  const groupMap = new Map();
+  normalizedTasks.forEach((task) => {
+    if (!groupMap.has(task.phase)) groupMap.set(task.phase, []);
+    groupMap.get(task.phase).push(task);
+  });
+
+  const ganttPhaseOrder = new Map([
+    ["LEVANTAMENTO", 0],
+    ["DESENVOLVIMENTO", 1],
+    ["TESTES", 3],
+    ["DEPLOY", 4]
+  ]);
+  const groups = Array.from(groupMap.entries()).sort((a, b) => {
+    const aRank = ganttPhaseOrder.has(a[0]) ? ganttPhaseOrder.get(a[0]) : 2;
+    const bRank = ganttPhaseOrder.has(b[0]) ? ganttPhaseOrder.get(b[0]) : 2;
+    if (aRank !== bRank) return aRank - bRank;
+    return a[0].localeCompare(b[0]);
+  });
+
+  const groupsHtml = groups
+    .map(([phase, groupTasks]) => {
+      const anyLate = groupTasks.some((task) => task.statusClass === "is-late");
+      const allDone = groupTasks.every((task) => task.statusClass === "is-done");
+      const epicColor = allDone ? "#2f8f61" : anyLate ? "#9b1c23" : "#245363";
+      const progressAvg = groupTasks.length
+        ? Math.round(groupTasks.reduce((acc, task) => acc + (task.progress || 0), 0) / groupTasks.length)
+        : 0;
+      const tasksHtml = groupTasks
+        .sort((a, b) => {
+          if (a.noDate && b.noDate) return a.title.localeCompare(b.title);
+          if (a.noDate) return 1;
+          if (b.noDate) return -1;
+          return a.startDate.getTime() - b.startDate.getTime();
+        })
+        .map((task) => {
+          if (task.noDate) {
+            return `
+              <div class="gantt-row">
+                <div class="gantt-task-info">
+                  <div class="gantt-task-title">${escapeHtml(task.title)}</div>
+                </div>
+                <div class="gantt-task-bar no-date">
+                  <span class="gantt-task-meta">Sem datas definidas</span>
+                </div>
+              </div>
+            `;
+          }
+          const startTs = task.startDate.getTime();
+          const endTs = task.endDate.getTime();
+          const spanMs = Math.max(dayMs, endTs - startTs);
+          let leftPct = ((startTs - minTs) / rangeMs) * 100;
+          let widthPct = (spanMs / rangeMs) * 100;
+          if (!Number.isFinite(leftPct)) leftPct = 0;
+          if (!Number.isFinite(widthPct)) widthPct = 1.5;
+          widthPct = Math.max(widthPct, 1.5);
+          if (widthPct > 100) widthPct = 100;
+          leftPct = Math.max(0, Math.min(100 - widthPct, leftPct));
+          const progressValue = Number.isFinite(task.progress) ? task.progress : 0;
+          const progressPct = Math.max(0, Math.min(100, Math.round(progressValue)));
+          const isCompact = widthPct < 5;
+          const labelSide = leftPct + widthPct > 92 ? "label-left" : "label-right";
+          const compactClass = isCompact ? "is-compact" : "";
+          const labelClass = isCompact ? labelSide : "";
+          return `
+            <div class="gantt-row">
+              <div class="gantt-task-info">
+                <div class="gantt-task-title">${escapeHtml(task.title)}</div>
+              </div>
+              <div class="gantt-task-bar">
+                <div class="gantt-bar ${task.statusClass} ${compactClass}" style="left:${leftPct.toFixed(2)}%; width:${widthPct.toFixed(2)}%;">
+                  <div class="gantt-bar-fill" style="width:${progressPct}%;"></div>
+                  <span class="gantt-bar-label ${labelClass}">${progressPct}%</span>
+                </div>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+      return `
+        <section class="gantt-group">
+          <div class="gantt-group-header">
+            <span>${escapeHtml(phase)}</span>
+            <div class="gantt-epic-track">
+              <span style="width:${progressAvg}%; background:${epicColor};"></span>
+            </div>
+          </div>
+          ${tasksHtml || "<div class=\"gantt-empty\">Nenhuma atividade neste grupo.</div>"}
+        </section>
+      `;
+    })
+    .join("");
+
+  const ticksHtml = timelineTicks
+    .map((tick) => `<div class="gantt-tick" style="left:${tick.left.toFixed(2)}%"><span>${tick.label}</span></div>`)
+    .join("");
+  const todayHtml = todayLeft == null ? "" : `<div class="gantt-today" style="left:${todayLeft.toFixed(2)}%"></div>`;
+
+  container.innerHTML = `
+    <div class="gantt-canvas">
+      <div class="gantt-timeline">
+        ${ticksHtml}
+        ${todayHtml}
+      </div>
+      <div class="gantt-content">
+        <div class="gantt-top-row">
+          <div class="gantt-top-label">Estrutura / Epicos</div>
+          <div class="gantt-top-timeline">
+            <span>Inicio: ${startLabel}</span>
+            <span>Go Live: ${endLabel}</span>
+            <div class="gantt-top-line"></div>
+          </div>
+        </div>
+        ${groupsHtml}
+      </div>
+    </div>
+  `;
+
+  if (footerRight) {
+    footerRight.textContent = "";
+  }
+}
+
+function renderConfig(container) {
+  setCrumbPathText("Configuracoes");
+  const user = auth?.currentUser || null;
+  const displayName = user?.displayName || "";
+  const email = state.currentUserEmail || user?.email || "";
+  const role = normalizeUserRole(state.currentUserRole);
+  const admin = role === "admin";
+  const roleName = roleLabel(role);
+
+  container.innerHTML = `
+    <div class="config-page span-all">
+      <div class="section-header">
+        <div class="header-row">
+          <h2>Configuracoes da conta</h2>
+        </div>
+        <div class="muted">Atualize seu nome, e-mail ou senha de acesso.</div>
+      </div>
+
+      <div class="config-grid">
+        <div class="config-card">
+          <form id="account-form" class="form">
+            <label>
+              Nome completo
+              <input id="account-name" type="text" value="${escapeHtml(displayName)}" placeholder="Seu nome completo">
+            </label>
+            <label>
+              E-mail
+              <input id="account-email" type="email" value="${escapeHtml(email)}" placeholder="seu@email.com">
+            </label>
+            <label>
+              Senha atual
+              <input id="account-current-password" type="password" placeholder="Obrigatoria para trocar e-mail ou senha" autocomplete="current-password">
+            </label>
+            <div class="form-grid">
+              <label>
+                Nova senha
+                <input id="account-new-password" type="password" placeholder="Nova senha" autocomplete="new-password">
+              </label>
+              <label>
+                Confirmar senha
+                <input id="account-confirm-password" type="password" placeholder="Repita a nova senha" autocomplete="new-password">
+              </label>
+            </div>
+            <div class="config-hint">Para alterar e-mail ou senha, confirme sua senha atual.</div>
+            <div class="config-actions">
+              <button class="btn primary" type="submit">Salvar alteracoes</button>
+            </div>
+            <p id="account-error" class="config-message error hidden"></p>
+            <p id="account-success" class="config-message success hidden"></p>
+          </form>
+        </div>
+
+        <div class="config-card">
+          <div class="config-card-title">Dados da conta</div>
+          <div class="config-info">
+            <div>
+              <div class="config-info-label">Usuario</div>
+              <div class="config-info-value" id="config-info-name">${escapeHtml(displayName || "Nao informado")}</div>
+            </div>
+            <div>
+              <div class="config-info-label">E-mail</div>
+              <div class="config-info-value" id="config-info-email">${escapeHtml(email || "-")}</div>
+            </div>
+            <div>
+              <div class="config-info-label">Perfil</div>
+              <div class="config-info-value">${roleName}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      ${admin ? `
+        <div class="section-header">
+          <div class="header-row">
+            <h2>Usuarios da plataforma</h2>
+          </div>
+          <div class="muted">Somente administradores podem visualizar e editar cadastros internos.</div>
+        </div>
+        <div class="config-card" id="admin-users-section">
+          <div id="admin-users-list" class="config-admin-table">Carregando usuarios...</div>
+          <div class="config-hint">Use "Resetar senha" para enviar o e-mail de redefinicao ao usuario.</div>
+        </div>
+
+        <div class="section-header">
+          <div class="header-row">
+            <h2>Grupos de acesso</h2>
+          </div>
+          <div class="muted">Defina quais usuarios visualizam cada cliente.</div>
+        </div>
+        <div class="config-card" id="admin-groups-section">
+          <div class="group-create">
+            <input class="config-input" id="group-name-input" type="text" placeholder="Nome do grupo">
+            <button class="btn sm primary" type="button" id="group-create-btn">Criar grupo</button>
+          </div>
+          <div id="admin-groups-list" class="config-groups">Carregando grupos...</div>
+        </div>
+      ` : ""}
+    </div>
+  `;
+
+  const form = byId("account-form");
+  if (form) {
+    form.addEventListener("submit", handleAccountUpdate);
+  }
+
+  if (admin) {
+    loadAdminUsers();
+    loadAdminGroups();
+    const groupCreateBtn = byId("group-create-btn");
+    if (groupCreateBtn && !groupCreateBtn.dataset.wired) {
+      groupCreateBtn.addEventListener("click", async () => {
+        const input = byId("group-name-input");
+        const name = input?.value.trim() || "";
+        if (!name) {
+          alert("Informe o nome do grupo.");
+          return;
+        }
+        try {
+          await createGroupInDb(name);
+          if (input) input.value = "";
+          await loadAdminGroups();
+        } catch (err) {
+          console.error(err);
+          alert("Nao foi possivel criar o grupo.");
+        }
+      });
+      groupCreateBtn.dataset.wired = "true";
+    }
+  }
+}
+
+async function handleAccountUpdate(e) {
+  e.preventDefault();
+  const user = auth?.currentUser;
+  if (!user) {
+    setAccountMessage("error", "Usuario nao autenticado.");
+    return;
+  }
+  const nameInput = byId("account-name");
+  const emailInput = byId("account-email");
+  const currentPassInput = byId("account-current-password");
+  const newPassInput = byId("account-new-password");
+  const confirmPassInput = byId("account-confirm-password");
+
+  const newName = nameInput?.value.trim() || "";
+  const newEmail = emailInput?.value.trim() || "";
+  const currentPassword = currentPassInput?.value || "";
+  const newPassword = newPassInput?.value || "";
+  const confirmPassword = confirmPassInput?.value || "";
+
+  setAccountMessage("", "");
+
+  if (!newEmail) {
+    setAccountMessage("error", "Informe um e-mail valido.");
+    return;
+  }
+  if (newPassword && newPassword.length < 6) {
+    setAccountMessage("error", "A nova senha precisa ter ao menos 6 caracteres.");
+    return;
+  }
+  if (newPassword && newPassword !== confirmPassword) {
+    setAccountMessage("error", "As novas senhas nao conferem.");
+    return;
+  }
+
+  const needsEmailUpdate = newEmail && newEmail !== user.email;
+  const needsPasswordUpdate = Boolean(newPassword);
+
+  try {
+    if (needsEmailUpdate || needsPasswordUpdate) {
+      await reauthenticateUser(user, currentPassword);
+    }
+    if (newName && newName !== user.displayName) {
+      await user.updateProfile({ displayName: newName });
+    }
+    if (needsEmailUpdate) {
+      await user.updateEmail(newEmail);
+    }
+    if (needsPasswordUpdate) {
+      await user.updatePassword(newPassword);
+    }
+    await syncUserProfile(user);
+    await loadCurrentUserRole(user);
+    updateUserHeader(user);
+    setAccountMessage("success", "Dados atualizados com sucesso.");
+    if (currentPassInput) currentPassInput.value = "";
+    if (newPassInput) newPassInput.value = "";
+    if (confirmPassInput) confirmPassInput.value = "";
+    const infoName = byId("config-info-name");
+    if (infoName && newName) infoName.textContent = newName;
+    const infoEmail = byId("config-info-email");
+    if (infoEmail && needsEmailUpdate) infoEmail.textContent = newEmail;
+    if (needsEmailUpdate) state.currentUserEmail = newEmail;
+  } catch (err) {
+    console.error(err);
+    if (err?.code === "auth/requires-recent-login") {
+      setAccountMessage("error", "Confirme sua autenticacao para atualizar dados sensiveis.");
+      return;
+    }
+    if (err?.code === "auth/wrong-password") {
+      setAccountMessage("error", "Senha atual incorreta.");
+      return;
+    }
+    if (err?.code === "auth/invalid-email") {
+      setAccountMessage("error", "E-mail invalido.");
+      return;
+    }
+    if (err?.code === "auth/email-already-in-use") {
+      setAccountMessage("error", "E-mail ja esta em uso.");
+      return;
+    }
+    if (err?.message) {
+      setAccountMessage("error", err.message);
+      return;
+    }
+    setAccountMessage("error", "Nao foi possivel atualizar os dados.");
+  }
+}
+
+async function loadAdminUsers() {
+  const list = byId("admin-users-list");
+  if (!list) return;
+  if (!db) {
+    list.textContent = "Usuarios indisponiveis sem Firebase configurado.";
+    return;
+  }
+  try {
+    const users = await loadUsersFromDb();
+    state.users = users.slice();
+    renderAdminUsers(list, users);
+  } catch (err) {
+    console.error(err);
+    list.textContent = "Falha ao carregar usuarios.";
+  }
+}
+
+async function loadAdminGroups() {
+  const list = byId("admin-groups-list");
+  if (!list) return;
+  if (!db) {
+    list.textContent = "Grupos indisponiveis sem Firebase configurado.";
+    return;
+  }
+  try {
+    const groups = await loadGroupsFromDb();
+    state.groups = groups.slice();
+    if (!state.users.length) {
+      state.users = await loadUsersFromDb();
+    }
+    renderAdminGroups(list, groups, state.users);
+  } catch (err) {
+    console.error(err);
+    list.textContent = "Falha ao carregar grupos.";
+  }
+}
+
+function renderAdminUsers(container, users) {
+  const rows = users
+    .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
+    .map((user) => {
+      const email = escapeHtml(user.email || "");
+      const name = escapeHtml(user.displayName || "");
+      const isMaster = isAdminEmail(user.email);
+      const role = normalizeUserRole(user.role);
+      const canReset = Boolean(user.email);
+      return `
+        <div class="config-admin-row" data-user-id="${escapeHtml(user.uid)}" data-user-email="${email}">
+          <input class="config-input" type="text" value="${name}" placeholder="Nome" data-user-name>
+          <div class="config-user-email">${email || "-"}</div>
+          <select class="config-input" data-user-role ${isMaster ? "disabled" : ""}>
+            <option value="user"${role === "user" ? " selected" : ""}>Usuario</option>
+            <option value="developer"${role === "developer" ? " selected" : ""}>Desenvolvedor</option>
+            <option value="admin"${role === "admin" ? " selected" : ""}>Administrador</option>
+          </select>
+          <button class="btn sm ghost" type="button" data-user-save ${isMaster ? "disabled" : ""}>Salvar</button>
+          <button class="btn sm ghost" type="button" data-user-reset ${!canReset ? "disabled" : ""}>Resetar senha</button>
+          <div class="config-admin-status" data-user-status></div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <div class="config-admin-row header">
+      <div>Nome</div>
+      <div>E-mail</div>
+      <div>Perfil</div>
+      <div>Salvar</div>
+      <div>Reset senha</div>
+      <div></div>
+    </div>
+    ${rows || "<div class=\"muted\">Nenhum usuario cadastrado.</div>"}
+  `;
+
+  if (!container.dataset.wired) {
+    container.addEventListener("click", async (e) => {
+      const saveBtn = e.target.closest("[data-user-save]");
+      const resetBtn = e.target.closest("[data-user-reset]");
+      if (!saveBtn && !resetBtn) return;
+      const row = (saveBtn || resetBtn).closest("[data-user-id]");
+      if (!row) return;
+      const status = row.querySelector("[data-user-status]");
+
+      if (resetBtn) {
+        const email = row.dataset.userEmail || "";
+        if (!email) {
+          if (status) {
+            status.textContent = "E-mail indisponivel.";
+            status.classList.remove("success");
+            status.classList.add("error");
+          }
+          return;
+        }
+        const confirmed = window.confirm(`Enviar redefinicao de senha para ${email}?`);
+        if (!confirmed) return;
+        if (status) {
+          status.textContent = "Enviando...";
+          status.classList.remove("error");
+          status.classList.remove("success");
+        }
+        try {
+          await sendPasswordReset(email);
+          if (status) {
+            status.textContent = "E-mail enviado.";
+            status.classList.add("success");
+          }
+        } catch (err) {
+          console.error(err);
+          if (status) {
+            status.textContent = "Erro ao enviar.";
+            status.classList.add("error");
+          }
+        }
+        return;
+      }
+
+      const uid = row.dataset.userId;
+      const nameInput = row.querySelector("[data-user-name]");
+      const roleSelect = row.querySelector("[data-user-role]");
+      const newName = nameInput?.value.trim() || "";
+      const newRole = normalizeUserRole(roleSelect?.value);
+      if (status) {
+        status.textContent = "Salvando...";
+        status.classList.remove("error");
+        status.classList.remove("success");
+      }
+      try {
+        await updateUserProfileInDb(uid, { displayName: newName, role: newRole });
+        if (auth?.currentUser?.uid === uid) {
+          await loadCurrentUserRole(auth.currentUser);
+          renderMain();
+        }
+        if (status) {
+          status.textContent = "Salvo.";
+          status.classList.add("success");
+        }
+      } catch (err) {
+        console.error(err);
+        if (status) {
+          status.textContent = "Erro ao salvar.";
+          status.classList.add("error");
+        }
+      }
+    });
+    container.dataset.wired = "true";
+  }
+}
+
+function renderAdminGroups(container, groups, users) {
+  const clients = state.clients || [];
+  const groupHtml = groups
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((group) => {
+      const membersHtml = users
+        .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
+        .map((user) => {
+          const name = escapeHtml(user.displayName || user.email || "Usuario");
+          const email = escapeHtml(user.email || "");
+          const isMember = Boolean(group.members?.[user.uid]);
+          return `
+            <label class="config-group-item">
+              <input type="checkbox" data-group-member data-user-id="${escapeHtml(user.uid)}"${isMember ? " checked" : ""}>
+              <span>${name}</span>
+              <small>${email}</small>
+            </label>
+          `;
+        })
+        .join("");
+
+      const clientsHtml = clients
+        .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+        .map((client) => {
+          const isAssigned = Boolean(group.clients?.[client.id]);
+          const clientName = escapeHtml(client.name || "Cliente");
+          return `
+            <label class="config-group-item">
+              <input type="checkbox" data-group-client data-client-id="${escapeHtml(client.id)}"${isAssigned ? " checked" : ""}>
+              <span>${clientName}</span>
+            </label>
+          `;
+        })
+        .join("");
+
+      return `
+        <div class="config-group" data-group-id="${escapeHtml(group.id)}">
+          <div class="config-group-header">
+            <input class="config-input" type="text" value="${escapeHtml(group.name)}" data-group-name>
+            <div class="config-group-actions">
+              <button class="btn sm ghost" type="button" data-group-save>Salvar</button>
+              <button class="btn sm ghost danger" type="button" data-group-delete>Excluir</button>
+            </div>
+          </div>
+          <div class="config-group-columns">
+            <div class="config-group-col">
+              <div class="config-group-title">Usuarios</div>
+              <div class="config-group-list">${membersHtml || "<div class=\"muted\">Sem usuarios</div>"}</div>
+            </div>
+            <div class="config-group-col">
+              <div class="config-group-title">Clientes</div>
+              <div class="config-group-list">${clientsHtml || "<div class=\"muted\">Sem clientes</div>"}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = groupHtml || "<div class=\"muted\">Nenhum grupo cadastrado.</div>";
+
+  if (container.dataset.wired) return;
+  container.dataset.wired = "true";
+
+  container.addEventListener("click", async (e) => {
+    const groupRow = e.target.closest("[data-group-id]");
+    if (!groupRow) return;
+    const groupId = groupRow.dataset.groupId;
+    if (e.target.closest("[data-group-save]")) {
+      const nameInput = groupRow.querySelector("[data-group-name]");
+      const name = nameInput?.value.trim() || "Grupo";
+      try {
+        await updateGroupNameInDb(groupId, name);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    if (e.target.closest("[data-group-delete]")) {
+      const confirmed = window.confirm("Excluir este grupo? Os clientes vinculados ficarao sem grupo.");
+      if (!confirmed) return;
+      try {
+        await deleteGroupFromDb(groupId);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  });
+
+  container.addEventListener("change", async (e) => {
+    const groupRow = e.target.closest("[data-group-id]");
+    if (!groupRow) return;
+    const groupId = groupRow.dataset.groupId;
+    const memberInput = e.target.closest("[data-group-member]");
+    if (memberInput) {
+      const uid = memberInput.dataset.userId;
+      const enabled = memberInput.checked;
+      try {
+        await updateGroupMemberInDb(groupId, uid, enabled);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
+    const clientInput = e.target.closest("[data-group-client]");
+    if (clientInput) {
+      const clientId = clientInput.dataset.clientId;
+      const enabled = clientInput.checked;
+      try {
+        if (enabled) {
+          await assignClientToGroup(clientId, groupId);
+        } else {
+          await removeClientFromGroup(clientId, groupId);
+        }
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  });
+}
+
+function captureScrollPositions() {
+  const positions = {};
+  document.querySelectorAll("[data-preserve-scroll]").forEach((el) => {
+    const key = el.dataset.preserveScroll;
+    if (!key) return;
+    positions[key] = el.scrollTop;
+  });
+  return positions;
+}
+
+function restoreScrollPositions(positions) {
+  if (!positions) return;
+  document.querySelectorAll("[data-preserve-scroll]").forEach((el) => {
+    const key = el.dataset.preserveScroll;
+    if (!key) return;
+    if (!(key in positions)) return;
+    el.scrollTop = positions[key];
+  });
+}
+
+function renderMain() {
+  removeRelatorioStyles(); 
+
+  if (normalizeUserRole(state.currentUserRole) === "developer" && state.currentSection !== "dev-board") {
+    state.currentSection = "dev-board";
+  }
+
+  const prevContext = state.lastRenderContext || null;
+  const nextContext = {
+    section: state.currentSection,
+    clientId: state.selectedClient?.id || state.selectedClient?.name || null,
+    projectId: state.selectedProject?.id || state.selectedProject?.name || null
+  };
+  const preserveScroll =
+    prevContext &&
+    prevContext.section === nextContext.section &&
+    prevContext.clientId === nextContext.clientId &&
+    prevContext.projectId === nextContext.projectId;
+  const scrollX = preserveScroll ? window.scrollX : 0;
+  const scrollY = preserveScroll ? window.scrollY : 0;
+  const scrollPositions = preserveScroll ? captureScrollPositions() : null;
+
+  const { selectedClient, selectedProject } = state;
+  const panels = byId("dashboard-panels");
+  panels.innerHTML = "";
+  setActiveNav(state.currentSection);
+  updateTopActions();
+
+  if (state.currentSection === "dashboard-melhorias" || state.currentSection === "minhas-melhorias") {
+    state.currentSection = "dashboard";
+  }
+
+  const finalizeRender = () => {
+    state.lastRenderContext = nextContext;
+    if (preserveScroll) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.scrollTo(scrollX, scrollY);
+          restoreScrollPositions(scrollPositions);
+        });
+      });
+    }
+  };
+
+  if (state.currentSection === "inicio") {
+    renderHome(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "dashboard") {
+    renderDashboard(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "relatorio") {
+    renderRelatorioSection();
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "monitor") {
+    renderMonitorActivities(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "dev-board") {
+    renderDeveloperBoard(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "config") {
+    renderConfig(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (!selectedClient || !selectedProject) {
+    if (!state.clients.length) {
+      const message = state.dbAccessDenied
+        ? "Sem acesso aos projetos cadastrados. Solicite liberacao ao administrador."
+        : "Nenhum projeto cadastrado no momento.";
+      panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Projetos indisponiveis</h2><p>${message}</p></div>`;
+    } else {
+      panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Bem-vindo!</h2><p>Selecione um cliente e um projeto na barra lateral para começar.</p></div>`;
+    }
+    finalizeRender();
+    return;
+  }
+
+  setCrumbPathProject(selectedClient, selectedProject);
+
+  const metrics = projectMetrics(selectedProject.tasks || []);
+  const status = projectStatus(selectedProject, metrics);
+  const statusBadge = statusInfo(status);
+  const scheduleBadge = scheduleStatusInfo(projectScheduleStatus(selectedProject));
+  const progressPct = clampPct(metrics.progress ?? selectedProject.progress ?? 0);
+  const sCurveSeries = computeSCurveDailyBaseline(selectedProject, selectedProject?.tasks || null, progressPct);
+  const baselinePct = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(selectedProject, progressPct);
+  const realizedPct = progressPct;
+  const gap = round1(baselinePct - realizedPct);
+  const gapStart = round1(Math.min(realizedPct, baselinePct));
+  const gapWidth = round1(Math.abs(realizedPct - baselinePct));
+  const gapStatus = gapStatusInfo(gap, baselinePct, realizedPct);
+  const progressTrendClass = realizedPct > baselinePct ? "is-ahead" : realizedPct < baselinePct ? "is-behind" : "";
+  const progressTrackClass = [
+    "progress-track",
+    progressTrendClass,
+    gapStatus.className === "gap-critical" ? "is-critical" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const baselineLabel = formatMetric(baselinePct);
+  const gapLabel = formatSignedMetric(gap);
+  const tasks = selectedProject.tasks || [];
+  const sparkRealized = renderSparklineSvg(buildSparklineSeries(progressPct), {
+    stroke: "var(--accent)",
+    fill: "var(--accent-soft)"
+  });
+  const sparkBaseline = renderSparklineSvg(buildSparklineSeries(baselinePct), {
+    stroke: "var(--muted)",
+    fill: "rgba(148, 163, 184, 0.14)"
+  });
+  const gapSparkPalette = {
+    "gap-ok": { stroke: "#16a34a", fill: "rgba(22, 163, 74, 0.12)" },
+    "gap-low": { stroke: "#64748b", fill: "rgba(100, 116, 139, 0.12)" },
+    "gap-risk": { stroke: "#b06013", fill: "rgba(199, 107, 26, 0.14)" },
+    "gap-delayed": { stroke: "#9c4f0f", fill: "rgba(199, 107, 26, 0.16)" },
+    "gap-critical": { stroke: "#9b1c23", fill: "rgba(155, 28, 35, 0.14)" }
+  };
+  const gapSparkTone = gapSparkPalette[gapStatus.className] || gapSparkPalette["gap-risk"];
+  const gapSparkBase = 100 - Math.min(Math.abs(gap) * 2, 60);
+  const sparkGap = renderSparklineSvg(buildSparklineSeries(gapSparkBase), gapSparkTone);
+  const curveColors = getSystemColors();
+  const curveSvg = sCurveSeries
+    ? renderSCurveSvgDaily(sCurveSeries, {
+        width: 960,
+        height: 190,
+        colors: {
+          planned: curveColors.planned,
+          actual: curveColors.actual,
+          axis: curveColors.grid,
+          muted: curveColors.muted,
+          text: curveColors.text
+        }
+      })
+    : "";
+  const emptyIllustration = `
+    <svg class="empty-illustration" viewBox="0 0 64 40" role="img" aria-hidden="true">
+      <rect x="4" y="8" width="56" height="24" rx="6" fill="none" stroke="currentColor" stroke-width="2"></rect>
+      <line x1="16" y1="18" x2="48" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+      <line x1="16" y1="26" x2="38" y2="26" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+    </svg>
+  `;
+  const renderSideEmpty = (label) => `
+    <div class="side-empty">
+      ${emptyIllustration}
+      <span>${label}</span>
+    </div>
+  `;
+  const milestoneItems = upcomingMilestones(tasks, 4);
+  const milestoneList = milestoneItems.length
+    ? `<ul class="side-list">
+        ${milestoneItems
+          .map(({ task, due }) => {
+            const title = escapeHtml(task?.title || "Atividade");
+            const phase = normalizePhaseLabel(task?.phase || "");
+            const dueLabel = due ? formatDateBR(due) : "-";
+            return `<li><span class="side-item-title">${title}</span><span class="side-item-meta">${phase} | ${dueLabel}</span></li>`;
+          })
+          .join("")}
+      </ul>`
+    : renderSideEmpty("Sem marcos proximos.");
+  const logItems = latestCompletedTasks(tasks, 4);
+  const logList = logItems.length
+    ? `<ul class="side-list">
+        ${logItems
+          .map((task) => {
+            const title = escapeHtml(task?.title || "Atividade");
+            const doneLabel = formatDateBR(activityDoneDate(task) || taskDueStr(task)) || "-";
+            return `<li><span class="side-item-title">${title}</span><span class="side-item-meta">Concluido | ${doneLabel}</span></li>`;
+          })
+          .join("")}
+      </ul>`
+    : renderSideEmpty("Sem logs recentes.");
+
+  const headerCard = document.createElement("div");
+  headerCard.className = "card project-header span-all";
+  headerCard.innerHTML = `
+    <div class="project-header-top">
+      <div>
+        <h2>${selectedProject.name}</h2>
+        <div class="project-subtitle">${selectedClient.name}</div>
+      </div>
+      <div class="project-header-badges">
+        <span class="pill project-status ${statusBadge.className}">${statusBadge.label}</span>
+        <span class="pill schedule-status ${scheduleBadge.className}">${scheduleBadge.label}</span>
+        <button class="btn sm ghost" type="button" data-export-project>Exportar</button>
+      </div>
+    </div>
+    <div class="project-meta-row">
+      <div class="project-meta-item">
+        <span class="label">Cliente</span>
+        <span class="value">${selectedClient.name}</span>
+      </div>
+      <div class="project-meta-item">
+        <span class="label">Responsavel</span>
+        <span class="value">${selectedProject.developer || "A definir"}</span>
+      </div>
+      <div class="project-meta-item">
+        <span class="label">Inicio</span>
+        <span class="value is-editable" data-edit-project-date="start" tabindex="0" role="button" aria-label="Editar data inicio">
+          ${formatDateBR(selectedProject.start) || "-"}
+        </span>
+      </div>
+      <div class="project-meta-item">
+        <span class="label">Go Live</span>
+        <span class="value is-editable" data-edit-project-date="end" tabindex="0" role="button" aria-label="Editar data fim">
+          ${formatDateBR(selectedProject.end) || "-"}
+        </span>
+      </div>
+    </div>
+  `;
+
+  const performanceGrid = document.createElement("div");
+  performanceGrid.className = "metrics-grid performance-grid project-performance-grid";
+  performanceGrid.innerHTML = `
+    <div class="metric-card card--kpi performance-card realizado">
+      <div class="label">Realizado (%)</div>
+      <div class="value">${progressPct}%</div>
+      <div class="sub">Atividades concluidas</div>
+      <div class="kpi-sparkline">${sparkRealized}</div>
+    </div>
+    <div class="metric-card card--kpi performance-card previsto">
+      <div class="label">Previsto (Baseline)</div>
+      <div class="value">${baselineLabel}%</div>
+      <div class="sub">Meta para hoje</div>
+      <div class="kpi-sparkline">${sparkBaseline}</div>
+    </div>
+    <div class="metric-card card--kpi performance-card gap ${gapStatus.className}">
+      <div class="label">GAP (Desvio)</div>
+      <div class="value">${gapLabel}pp</div>
+      <div class="sub">${gapStatus.label}</div>
+      <div class="kpi-sparkline">${sparkGap}</div>
+    </div>
+  `;
+
+  const progressCompare = document.createElement("div");
+  progressCompare.className = "card progress-compare card--progress";
+  progressCompare.innerHTML = `
+    <div class="progress-head">
+      <div class="progress-title">Avanco vs meta</div>
+      <div class="progress-legend">
+        <span class="leg"><b>Realizado</b> <span>${progressPct}%</span></span>
+        <span class="dot">|</span>
+        <span class="leg"><b>Previsto</b> <span>${baselineLabel}%</span></span>
+      </div>
+      <div class="delta-badge ${gapStatus.className}">${gapLabel}pp</div>
+    </div>
+    <div class="progress-curve">
+      ${curveSvg || `<div class="side-empty">Curva S: defina Data Inicio e Go Live.</div>`}
     </div>
   `;
 
   const metricsGrid = document.createElement("div");
-  metricsGrid.className = "metrics-grid project-metrics-grid span-all";
+  metricsGrid.className = "metrics-grid project-metrics-grid";
   metricsGrid.innerHTML = `
     <div class="metric-card card--kpi">
       <div class="label">Total de atividades</div>
@@ -5183,16 +7580,15 @@ function renderMain() {
     </div>
   `;
 
-  const tasks = selectedProject.tasks || [];
   const requiredPhases = Array.isArray(selectedProject.epics) && selectedProject.epics.length
     ? selectedProject.epics
     : DEFAULT_EPICS;
   const tasksCard = document.createElement("div");
-  tasksCard.className = "card scroll-card span-all";
+  tasksCard.className = "card scroll-card";
   tasksCard.innerHTML = `
     <div class="card-head">
       <h3>Atividades</h3>
-      <button class="btn sm ghost" data-open-activity>+ Nova Atividade</button>
+      <button class="btn sm primary" data-open-activity>+ Nova Atividade</button>
     </div>`;
   const tasksBox = document.createElement("div");
   tasksBox.className = "tasks";
@@ -5266,12 +7662,14 @@ function renderMain() {
             const title = formatTaskTitle(task.title, sub.title);
             const startLabel = formatDateBR(taskStartStr(task));
             const endLabel = formatDateBR(taskDueStr(task));
-            const progressLabel = `${taskProgressValue(task)}%`;
+            const progressValue = taskProgressValue(task);
+            const progressLabel = progressValue >= 100 ? "OK" : `${progressValue}%`;
+            const progressClass = progressValue >= 100 ? "task-progress-btn is-complete" : "task-progress-btn";
             row.innerHTML = `
               <div>${title}</div>
               <div class="task-date task-date-editable" data-edit-task-date="start" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data inicio">${startLabel}</div>
               <div class="task-date task-date-editable" data-edit-task-date="due" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data fim">${endLabel}</div>
-              <button type="button" class="task-progress-btn" data-task-edit data-task-index="${task._idx}">
+              <button type="button" class="${progressClass}" data-task-edit data-task-index="${task._idx}">
                 ${progressLabel}
               </button>
               <button class="pill ${info.className} status-btn" data-task-index="${task._idx}">
@@ -5295,12 +7693,14 @@ function renderMain() {
         const health = taskHealthInfo(task);
         const startLabel = formatDateBR(taskStartStr(task));
         const endLabel = formatDateBR(taskDueStr(task));
-        const progressLabel = `${taskProgressValue(task)}%`;
+        const progressValue = taskProgressValue(task);
+        const progressLabel = progressValue >= 100 ? "OK" : `${progressValue}%`;
+        const progressClass = progressValue >= 100 ? "task-progress-btn is-complete" : "task-progress-btn";
         row.innerHTML = `
           <div>${task.title}</div>
           <div class="task-date task-date-editable" data-edit-task-date="start" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data inicio">${startLabel}</div>
           <div class="task-date task-date-editable" data-edit-task-date="due" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data fim">${endLabel}</div>
-          <button type="button" class="task-progress-btn" data-task-edit data-task-index="${task._idx}">
+          <button type="button" class="${progressClass}" data-task-edit data-task-index="${task._idx}">
             ${progressLabel}
           </button>
           <button class="pill ${info.className} status-btn" data-task-index="${task._idx}">
@@ -5318,11 +7718,39 @@ function renderMain() {
   }
   tasksCard.appendChild(tasksBox);
 
+  const projectLayout = document.createElement("div");
+  projectLayout.className = "project-layout span-all";
+  const projectMain = document.createElement("div");
+  projectMain.className = "project-main";
+  projectMain.appendChild(progressCompare);
+  projectMain.appendChild(tasksCard);
+  const projectSide = document.createElement("div");
+  projectSide.className = "project-side";
+  projectSide.appendChild(performanceGrid);
+  projectSide.appendChild(metricsGrid);
+  const milestonesCard = document.createElement("div");
+  milestonesCard.className = "card project-side-card";
+  milestonesCard.innerHTML = `
+    <div class="card-head">
+      <h4>Proximos marcos</h4>
+    </div>
+    ${milestoneList}
+  `;
+  const logsCard = document.createElement("div");
+  logsCard.className = "card project-side-card";
+  logsCard.innerHTML = `
+    <div class="card-head">
+      <h4>Logs recentes</h4>
+    </div>
+    ${logList}
+  `;
+  projectSide.appendChild(milestonesCard);
+  projectSide.appendChild(logsCard);
+  projectLayout.appendChild(projectMain);
+  projectLayout.appendChild(projectSide);
+
   panels.appendChild(headerCard);
-  panels.appendChild(performanceGrid);
-  panels.appendChild(progressCompare);
-  panels.appendChild(metricsGrid);
-  panels.appendChild(tasksCard);
+  panels.appendChild(projectLayout);
 
   finalizeRender();
 }
@@ -5356,7 +7784,7 @@ function wireNav() {
       }
     }
 
-    const navBtn = e.target.closest(".nav-link, .btn[data-section]");
+    const navBtn = e.target.closest(".nav-link, .btn[data-section], .sidebar-user-logout");
     if (!navBtn) return;
 
     const section = navBtn.dataset.section;
@@ -5953,11 +8381,46 @@ function saveMonitorTaskChanges() {
   renderMain();
 }
 
+function completeMonitorTask(clientIndex, projectIndex, taskIndex) {
+  const client = state.clients?.[clientIndex];
+  const project = client?.projects?.[projectIndex];
+  const task = project?.tasks?.[taskIndex];
+  if (!client || !project || !task) return;
+  const previousStatus = task.status;
+  const previousDone = task.dataConclusao;
+  applyTaskStatus(task, "concluido");
+  const payload = { status: task.status, dataConclusao: task.dataConclusao ?? null };
+
+  if (db && project.id && client.id && task.id) {
+    updateTaskStatusOnDb(client.id, project.id, task.id, payload)
+      .then(() => {
+        saveLocalState();
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        task.status = previousStatus;
+        task.dataConclusao = previousDone;
+        alert("Erro ao concluir atividade.");
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  renderMain();
+}
+
 function setupMonitorActions() {
   if (document.body.dataset.monitorWired) return;
   document.body.dataset.monitorWired = "true";
 
   document.body.addEventListener("click", (e) => {
+    const toggle = e.target.closest("[data-monitor-toggle]");
+    if (toggle) {
+      e.stopPropagation();
+      return;
+    }
+
     const filterBtn = e.target.closest("[data-monitor-filter-btn]");
     if (filterBtn) {
       const popover = byId("monitor-filter-popover");
@@ -5969,6 +8432,12 @@ function setupMonitorActions() {
     if (filterOpt) {
       state.monitor.filter = filterOpt.dataset.monitorFilter || "all";
       renderMain();
+      return;
+    }
+
+    const actionBtn = e.target.closest("[data-monitor-action]");
+    if (actionBtn) {
+      e.stopPropagation();
       return;
     }
 
@@ -5992,6 +8461,21 @@ function setupMonitorActions() {
   });
 
   document.body.addEventListener("change", (e) => {
+    const toggle = e.target.closest("[data-monitor-toggle]");
+    if (toggle) {
+      const input = toggle.matches("input") ? toggle : toggle.querySelector("input");
+      if (!input || !input.checked) return;
+      const card = toggle.closest("[data-monitor-card]");
+      if (!card) return;
+      const clientIndex = Number(card.dataset.clientIndex);
+      const projectIndex = Number(card.dataset.projectIndex);
+      const taskIndex = Number(card.dataset.taskIndex);
+      if (Number.isFinite(clientIndex) && Number.isFinite(projectIndex) && Number.isFinite(taskIndex)) {
+        completeMonitorTask(clientIndex, projectIndex, taskIndex);
+      }
+      return;
+    }
+
     const select = e.target.closest("[data-monitor-select]");
     if (!select) return;
     const key = select.dataset.monitorSelect;
@@ -6329,7 +8813,9 @@ async function renameClient(client, nextName) {
   const previousName = client.name;
   if (db && client.id) {
     try {
-      await db.ref(`clients/${client.id}`).update({ name: trimmed });
+      const clientRef = clientDocRef(client.id);
+      if (!clientRef) return;
+      await clientRef.update({ name: trimmed });
       await loadStateFromDb({
         clientId: client.id,
         projectId: state.selectedProject?.id,
@@ -7272,6 +9758,7 @@ async function logout() {
 
 async function init() {
   showLogin();
+  setupThemeToggle();
   wireLogin();
   const ok = await initFirebase();
   if (!ok) return;
@@ -7327,23 +9814,29 @@ if (typeof window !== "undefined") {
 }
 
 async function ensureClientDoc(clientName) {
-  const query = db.ref("clients").orderByChild("name").equalTo(clientName).limitToFirst(1);
+  const rootRef = clientDataRootRef();
+  if (!rootRef) throw new Error("Base de clientes indisponivel.");
+  const query = rootRef.orderByChild("name").equalTo(clientName).limitToFirst(1);
   const existing = await query.once("value");
   if (existing.exists()) {
     const clientId = Object.keys(existing.val())[0];
-    return { id: clientId, ref: db.ref(`clients/${clientId}`) };
+    return { id: clientId, ref: rootRef.child(clientId) };
   }
-  const newRef = db.ref("clients").push();
+  const newRef = rootRef.push();
   await newRef.set({ name: clientName, projects: {} });
   return { id: newRef.key, ref: newRef };
 }
 
 async function deleteProjectFromDb(clientId, projectId) {
-  await db.ref(`clients/${clientId}/projects/${projectId}`).remove();
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).remove();
 }
 
 async function deleteClientFromDb(clientId) {
-  await db.ref(`clients/${clientId}`).remove();
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.remove();
 }
 
 async function saveProjectToDb(payload) {
@@ -7364,7 +9857,9 @@ async function saveProjectToDb(payload) {
 }
 
 async function updateProjectOnDb(clientId, projectId, payload) {
-  await db.ref(`clients/${clientId}/projects/${projectId}`).update({
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).update({
     name: payload.name,
     developer: payload.developer,
     start: payload.start,
@@ -7375,7 +9870,9 @@ async function updateProjectOnDb(clientId, projectId, payload) {
 }
 
 async function saveTaskToDb(clientId, projectId, task) {
-  const taskRef = db.ref(`clients/${clientId}/projects/${projectId}/tasks`).push();
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  const taskRef = clientRef.child("projects").child(projectId).child("tasks").push();
   const normalizedStatus = normalizeTaskStatus(task.status);
   const dataConclusao =
     task.dataConclusao || (normalizedStatus === "concluido" ? new Date().toISOString().slice(0, 10) : "");
@@ -7397,14 +9894,18 @@ async function updateTaskStatusOnDb(clientId, projectId, taskId, payload) {
   if (normalizeTaskStatus(updatePayload.status) === "concluido" && !updatePayload.dataConclusao) {
     updatePayload.dataConclusao = new Date().toISOString().slice(0, 10);
   }
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(updatePayload);
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).child("tasks").child(taskId).update(updatePayload);
 }
 
 async function updateTaskProgressOnDb(clientId, projectId, taskId, progress) {
   if (progress == null) return;
   const value = Number(progress);
   if (!Number.isFinite(value)) return;
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update({ progress: value });
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).child("tasks").child(taskId).update({ progress: value });
 }
 
 async function updateTaskOnDb(clientId, projectId, taskId, payload) {
@@ -7428,15 +9929,21 @@ async function updateTaskOnDb(clientId, projectId, taskId, payload) {
   Object.keys(updatePayload).forEach((key) => {
     if (updatePayload[key] === undefined) delete updatePayload[key];
   });
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(updatePayload);
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).child("tasks").child(taskId).update(updatePayload);
 }
 
 async function deleteTaskFromDb(clientId, projectId, taskId) {
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).remove();
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).child("tasks").child(taskId).remove();
 }
 
 async function updateProjectPackagesOnDb(clientId, projectId, packages) {
-  await db.ref(`clients/${clientId}/projects/${projectId}`).update({ packages });
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).update({ packages });
 }
 
 function projectMetrics(tasks = []) {
@@ -7773,14 +10280,32 @@ function renderDashboard(container) {
       const info = statusInfo(p.status);
       const scheduleInfo = scheduleStatusInfo(p.schedule);
       const gapInfo = gapStatusInfo(p.gap, p.baseline, p.progress);
+      const progressValue = clampPct(p.progress);
+      const isCompleted = progressValue >= 100;
+      const developerName = p.developer || "";
+      const avatarLabel = developerName ? initialsFromName(developerName) : "";
+      const avatarHtml = developerName
+        ? `<div class="table-person" title="${escapeHtml(developerName)}"><span class="avatar">${escapeHtml(avatarLabel)}</span></div>`
+        : `<span class="person-empty">-</span>`;
+      const progressBarClass = isCompleted ? "progress-inline-bar progress-inline-bar--done" : "progress-inline-bar";
+      const progressValueClass = isCompleted
+        ? "progress-inline-value progress-inline-value--done"
+        : "progress-inline-value";
       return `
         <tr data-client="${p.clientName}" data-project="${p.name}">
           <td>${p.name}</td>
           <td>${p.clientName}</td>
-          <td>${p.developer || "-"}</td>
+          <td>${avatarHtml}</td>
           <td><span class="pill project-status ${info.className}">${info.label}</span></td>
           <td><span class="pill schedule-status ${scheduleInfo.className}">${scheduleInfo.label}</span></td>
-          <td>${p.progress}%</td>
+          <td>
+            <div class="progress-inline">
+              <div class="progress-inline-track">
+                <span class="${progressBarClass}" style="width:${progressValue}%"></span>
+              </div>
+              <span class="${progressValueClass}">${progressValue}%</span>
+            </div>
+          </td>
           <td>${formatMetric(p.baseline)}%</td>
           <td><span class="delta-badge ${gapInfo.className}">${formatSignedMetric(p.gap)}pp</span></td>
           <td>${formatDateBR(p.goLive) || "-"}</td>

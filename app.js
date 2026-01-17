@@ -224,6 +224,29 @@ const state = {
 };
 
 const LOCAL_STORAGE_KEY = "controle_projetos_state_v1";
+const ADMIN_EMAILS = new Set(["joaodamasit@gmail.com"]);
+
+function isAdminEmail(email) {
+  if (!email) return false;
+  return ADMIN_EMAILS.has(String(email).trim().toLowerCase());
+}
+
+function clientDataRootPath(user = auth?.currentUser) {
+  if (isAdminEmail(user?.email)) return "clients";
+  const uid = user?.uid;
+  return uid ? `tenants/${uid}/clients` : "clients";
+}
+
+function clientDataRootRef(user = auth?.currentUser) {
+  if (!db) return null;
+  const path = clientDataRootPath(user);
+  return path ? db.ref(path) : null;
+}
+
+function clientDocRef(clientId, user = auth?.currentUser) {
+  const root = clientDataRootRef(user);
+  return root && clientId ? root.child(clientId) : null;
+}
 
 const STATUS_OPTIONS = [
   { value: "planejado", label: "Planejado", className: "planejado" },
@@ -409,7 +432,9 @@ async function initFirebase() {
 
 async function loadStateFromDb(keepSelection = null) {
   if (!db) return;
-  const snapshot = await db.ref("clients").once("value");
+  const rootRef = clientDataRootRef();
+  if (!rootRef) return;
+  const snapshot = await rootRef.once("value");
   const clientsData = snapshot.val() || {};
   const clients = Object.entries(clientsData).map(([clientId, clientData]) => {
     const projectsData = clientData.projects || {};
@@ -1793,19 +1818,23 @@ async function init() {
 document.addEventListener("DOMContentLoaded", init);
 
 async function ensureClientDoc(clientName) {
-  const query = db.ref("clients").orderByChild("name").equalTo(clientName).limitToFirst(1);
+  const rootRef = clientDataRootRef();
+  if (!rootRef) throw new Error("Base de clientes indisponivel.");
+  const query = rootRef.orderByChild("name").equalTo(clientName).limitToFirst(1);
   const existing = await query.once("value");
   if (existing.exists()) {
     const clientId = Object.keys(existing.val())[0];
-    return { id: clientId, ref: db.ref(`clients/${clientId}`) };
+    return { id: clientId, ref: rootRef.child(clientId) };
   }
-  const newRef = db.ref("clients").push();
+  const newRef = rootRef.push();
   await newRef.set({ name: clientName, projects: {} });
   return { id: newRef.key, ref: newRef };
 }
 
 async function deleteProjectFromDb(clientId, projectId) {
-  await db.ref(`clients/${clientId}/projects/${projectId}`).remove();
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).remove();
 }
 
 async function saveProjectToDb(payload) {
@@ -1824,7 +1853,9 @@ async function saveProjectToDb(payload) {
 }
 
 async function updateProjectOnDb(clientId, projectId, payload) {
-  await db.ref(`clients/${clientId}/projects/${projectId}`).update({
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).update({
     name: payload.name,
     developer: payload.developer,
     start: payload.start,
@@ -1833,7 +1864,9 @@ async function updateProjectOnDb(clientId, projectId, payload) {
 }
 
 async function saveTaskToDb(clientId, projectId, task) {
-  const taskRef = db.ref(`clients/${clientId}/projects/${projectId}/tasks`).push();
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  const taskRef = clientRef.child("projects").child(projectId).child("tasks").push();
   await taskRef.set({
     title: task.title,
     phase: task.phase,
@@ -1846,7 +1879,9 @@ async function saveTaskToDb(clientId, projectId, task) {
 }
 
 async function updateTaskStatusOnDb(clientId, projectId, taskId, payload) {
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(payload);
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).child("tasks").child(taskId).update(payload);
 }
 
 async function updateTaskOnDb(clientId, projectId, taskId, payload) {
@@ -1861,15 +1896,21 @@ async function updateTaskOnDb(clientId, projectId, taskId, payload) {
   Object.keys(updatePayload).forEach((key) => {
     if (updatePayload[key] === undefined) delete updatePayload[key];
   });
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).update(updatePayload);
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).child("tasks").child(taskId).update(updatePayload);
 }
 
 async function deleteTaskFromDb(clientId, projectId, taskId) {
-  await db.ref(`clients/${clientId}/projects/${projectId}/tasks/${taskId}`).remove();
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).child("tasks").child(taskId).remove();
 }
 
 async function updateProjectPackagesOnDb(clientId, projectId, packages) {
-  await db.ref(`clients/${clientId}/projects/${projectId}`).update({ packages });
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).update({ packages });
 }
 
 function projectMetrics(tasks = []) {

@@ -1,0 +1,26 @@
+{
+  "name": "controleprojetos",
+  "version": "1.0.0",
+  "description": "Enterprise project management system",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@genkit-ai/firebase": "^1.27.0",
+    "@genkit-ai/google-genai": "^1.27.0",
+    "framer-motion": "^12.26.2",
+    "lucide-react": "^0.303.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

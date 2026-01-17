@@ -1,17 +1,24 @@
 import React from "react";
-import { motion } from "framer-motion";
+import { motion, HTMLMotionProps } from "framer-motion";
 import { ShieldCheck, ArrowUpRight, LogIn, UserPlus } from "lucide-react";
 
 /** Moneyflow Fintech Landing Page (no browser chrome) */
 
-const Stat = ({ label, value }) => (
+interface StatProps {
+  label: string;
+  value: string;
+}
+
+const Stat: React.FC<StatProps> = ({ label, value }) => (
   <div className="space-y-1">
     <div className="text-3xl font-semibold tracking-tight text-slate-900">{value}</div>
     <div className="text-sm text-slate-500">{label}</div>
   </div>
 );
 
-const SoftButton = ({ children, className = "", ...props }) => (
+type SoftButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement>;
+
+const SoftButton: React.FC<SoftButtonProps> = ({ children, className = "", ...props }) => (
   <button
     className={
       "rounded-full px-5 py-2.5 text-sm font-medium shadow-sm transition focus:outline-none focus:ring-2 focus:ring-offset-2 " +
@@ -70,14 +77,21 @@ function Planet() {
   );
 }
 
+import CheckoutForm from "./CheckoutForm";
+
 export default function MoneyflowLandingPage() {
   return (
     <div className="min-h-screen w-full bg-[#F3F5F7]">
       {/* Fonts */}
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100;400;700;900&display=swap');
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-        :root { --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif; }
+        :root { 
+          --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif; 
+          --font-outfit: 'Outfit', var(--font-sans);
+        }
         .font-jakarta { font-family: var(--font-sans); }
+        .font-outfit { font-family: var(--font-outfit); }
       `}</style>
 
       {/* Top nav (no fake browser bar) */}
@@ -213,6 +227,10 @@ export default function MoneyflowLandingPage() {
           <div className="hidden md:block" />
         </div>
       </div>
+
+      <section className="bg-slate-50 dark:bg-[#0B0F1A] font-outfit">
+        <CheckoutForm />
+      </section>
 
       <footer className="mx-auto w-full max-w-[1180px] px-4 pb-10 text-center text-xs text-slate-400 md:px-0">
         © {new Date().getFullYear()} moneyflow, Inc. All rights reserved.
