@@ -9,6 +9,11 @@ const firebaseConfig = {
   measurementId: "G-1HCL23GXV4"
 };
 
+// Supabase Configuration
+const supabaseUrl = "YOUR_SUPABASE_URL";
+const supabaseKey = "YOUR_SUPABASE_ANON_KEY";
+let supabase = null;
+
 let db = null;
 let auth = null;
 let appInitialized = false;
@@ -318,6 +323,7 @@ const DASHBOARD_COLUMNS = [
   { key: "progress", label: "Progresso", type: "number" },
   { key: "baseline", label: "Previsto", type: "number" },
   { key: "gap", label: "GAP (pp)", type: "number" },
+  { key: "cost", label: "Custo", type: "number" },
   { key: "goLive", label: "Go Live previsto", type: "date" }
 ];
 
@@ -343,7 +349,17 @@ function formatDateTime(date) {
   const yyyy = date.getFullYear();
   const hh = String(date.getHours()).padStart(2, "0");
   const min = String(date.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} – ${hh}:${min}`;
+  return `${dd}/${mm}/${yyyy} - ${hh}:${min}`;
+}
+
+function formatDateBR(value) {
+  if (!value) return "";
+  const dt = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(dt.getTime())) return "";
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const yyyy = dt.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
 }
 
 function normalizePackageLabel(label) {
@@ -420,6 +436,10 @@ function ensureFirebaseApp() {
   if (!firebase.apps?.length) {
     firebase.initializeApp(firebaseConfig);
   }
+  // Initialize Supabase if available
+  if (window.supabase && !supabase) {
+    supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+  }
 }
 
 async function initFirebase() {
@@ -455,6 +475,7 @@ async function loadStateFromDb(keepSelection = null) {
       const progress = computeProgress(tasks);
       const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
       const packages = Array.isArray(projData.packages) ? projData.packages : [];
+      const financials = Array.isArray(projData.financials) ? projData.financials : [];
       return {
         id: projectId,
         clientId,
@@ -462,6 +483,7 @@ async function loadStateFromDb(keepSelection = null) {
         progress,
         epics,
         packages,
+        financials,
         tasks
       };
     });
@@ -539,6 +561,12 @@ async function initApp() {
   setupStatusPopover();
   setupTaskActions();
   setupDashboardFilters();
+
+  const user = auth?.currentUser;
+  const auditBtn = byId("nav-audit");
+  if (auditBtn && isAdminEmail(user?.email)) {
+    auditBtn.classList.remove("hidden");
+  }
 }
 
 function renderClientList() {
@@ -674,6 +702,11 @@ function renderMain() {
     return;
   }
 
+  if (state.currentSection === "audit") {
+    renderAuditTrail(panels);
+    return;
+  }
+
   if (!selectedClient || !selectedProject) return;
 
   byId("crumb-path").textContent = `${selectedClient.name} / ${selectedProject.name}`;
@@ -681,6 +714,8 @@ function renderMain() {
   const metrics = projectMetrics(selectedProject.tasks || []);
   const status = projectStatus(selectedProject, metrics);
   const statusBadge = statusInfo(status);
+  const projectCost = resolveProjectCost(selectedProject);
+  const costLabel = formatCurrency(projectCost);
 
   const headerCard = document.createElement("div");
   headerCard.className = "card project-header span-all";
@@ -690,7 +725,10 @@ function renderMain() {
         <h2>${selectedProject.name}</h2>
         <div class="project-subtitle">${selectedClient.name}</div>
       </div>
-      <span class="pill project-status ${statusBadge.className}">${statusBadge.label}</span>
+      <div class="project-header-actions">
+        <span class="pill project-status ${statusBadge.className}">${statusBadge.label}</span>
+        <button class="btn sm primary" type="button" data-open-expense>Adicionar despesa</button>
+      </div>
     </div>
     <div class="project-meta-grid">
       <div class="meta-item">
@@ -736,6 +774,10 @@ function renderMain() {
       <div class="label">% Progresso</div>
       <div class="value">${metrics.progress}%</div>
     </div>
+    <button class="metric-card is-clickable" type="button" data-open-financials>
+      <div class="label">Custo do projeto</div>
+      <div class="value">${costLabel}</div>
+    </button>
   `;
 
   const tasks = selectedProject.tasks || [];
@@ -869,6 +911,8 @@ function wireModals() {
   const projectModal = byId("project-modal");
   const employeeModal = byId("employee-modal");
   const activityModal = byId("activity-modal");
+  const financeModal = byId("finance-modal");
+  const expenseModal = byId("expense-modal");
   const deleteProjectBtn = byId("delete-project-btn");
 
   const openProjectBtn = byId("open-project-modal");
@@ -887,6 +931,17 @@ function wireModals() {
   document.body.addEventListener("click", (e) => {
     if (e.target.closest("[data-open-activity]")) {
       openActivityModal("new");
+      return;
+    }
+    const financeBtn = e.target.closest("[data-open-financials]");
+    if (financeBtn) {
+      openFinanceModal();
+      return;
+    }
+    const expenseBtn = e.target.closest("[data-open-expense]");
+    if (expenseBtn) {
+      openExpenseModal(expenseBtn.dataset.openExpense || "despesa");
+      return;
     }
   });
 
@@ -895,8 +950,11 @@ function wireModals() {
       if (projectModal) hideModal(projectModal);
       if (employeeModal) hideModal(employeeModal);
       if (activityModal) hideModal(activityModal);
+      if (financeModal) hideModal(financeModal);
+      if (expenseModal) hideModal(expenseModal);
       resetProjectModal();
       resetActivityModal();
+      resetExpenseModal();
     });
   });
 
@@ -969,7 +1027,7 @@ function wireModals() {
           alert("Cliente nao encontrado.");
           return;
         }
-        const newProject = { ...payload, tasks: [], epics: DEFAULT_EPICS.slice(), packages: [] };
+        const newProject = { ...payload, tasks: [], epics: DEFAULT_EPICS.slice(), packages: [], financials: [] };
         client.projects.push(newProject);
         state.selectedClient = client;
         state.selectedProject = newProject;
@@ -999,6 +1057,38 @@ function wireModals() {
       employeeForm.reset();
       if (employeeModal) hideModal(employeeModal);
       alert("Funcionario cadastrado!");
+    });
+  }
+
+  const expenseForm = byId("expense-form");
+  if (expenseForm) {
+    expenseForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const project = state.selectedProject;
+      if (!project) {
+        alert("Nenhum projeto selecionado.");
+        return;
+      }
+      const data = new FormData(expenseForm);
+      const amount = parseNumericValue(data.get("amount"));
+      if (!Number.isFinite(amount) || amount <= 0) {
+        alert("Informe um valor valido.");
+        return;
+      }
+      const entry = {
+        id: createFinanceEntryId(),
+        type: normalizeFinanceType(data.get("type")),
+        description: String(data.get("description") || "").trim(),
+        amount,
+        date: data.get("date") || "",
+        createdAt: Date.now()
+      };
+      getProjectFinancials(project).push(entry);
+      persistProjectFinancials(project);
+      if (expenseModal) hideModal(expenseModal);
+      resetExpenseModal();
+      renderMain();
+      openFinanceModal();
     });
   }
 
@@ -1182,6 +1272,110 @@ function resetActivityModal() {
   if (title) title.textContent = "Nova Atividade";
   if (submitBtn) submitBtn.textContent = "Salvar Atividade";
   updateActivityPackageField();
+}
+
+function createFinanceEntryId() {
+  return `fin_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function persistProjectFinancials(project) {
+  saveLocalState();
+  if (db && project?.id && project?.clientId) {
+    updateProjectFinancialsOnDb(project.clientId, project.id, project.financials).catch((err) => {
+      console.error(err);
+      alert("Erro ao salvar financeiro no Firebase.");
+    });
+  }
+}
+
+function openFinanceModal() {
+  const project = state.selectedProject;
+  const modal = byId("finance-modal");
+  if (!project || !modal) return;
+  const summary = computeFinanceSummary(project);
+  const entries = sortFinanceEntries(summary.entries);
+  const summaryBox = modal.querySelector("[data-finance-summary]");
+  const historyBody = modal.querySelector("[data-finance-history]");
+
+  if (summaryBox) {
+    const saldoClass = summary.saldo < 0 ? "is-negative" : "is-positive";
+    const cards = [];
+    if (Number.isFinite(summary.budgetBase)) {
+      cards.push(`
+        <div class="summary-card">
+          <div class="label">Orcamento base</div>
+          <div class="value">${formatCurrency(summary.budgetBase)}</div>
+        </div>
+      `);
+    }
+    cards.push(`
+      <div class="summary-card">
+        <div class="label">Receita</div>
+        <div class="value">${formatCurrency(summary.receita)}</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">Despesa</div>
+        <div class="value">${formatCurrency(summary.despesa)}</div>
+      </div>
+      <div class="summary-card ${saldoClass}">
+        <div class="label">Saldo</div>
+        <div class="value">${formatCurrency(summary.saldo)}</div>
+      </div>
+    `);
+    summaryBox.innerHTML = cards.join("");
+  }
+
+  if (historyBody) {
+    let running = Number.isFinite(summary.budgetBase) ? summary.budgetBase : 0;
+    const rows = entries.length
+      ? entries
+          .map((entry) => {
+            const type = normalizeFinanceType(entry?.type);
+            const amount = parseNumericValue(entry?.amount);
+            running += type === "receita" ? amount : -amount;
+            const dateLabel = formatDateBR(entry?.date) || "-";
+            const description = entry?.description ? escapeHtml(entry.description) : "-";
+            const typeLabel = type === "receita" ? "Receita" : "Despesa";
+            const amountLabel = formatFinanceAmount(amount, type);
+            const runningLabel = formatCurrency(running);
+            return `
+              <tr>
+                <td>${dateLabel}</td>
+                <td>${typeLabel}</td>
+                <td>${description}</td>
+                <td>${amountLabel}</td>
+                <td>${runningLabel}</td>
+              </tr>
+            `;
+          })
+          .join("")
+      : `<tr><td colspan="5">Nenhum movimento cadastrado.</td></tr>`;
+    historyBody.innerHTML = rows;
+  }
+
+  showModal(modal);
+}
+
+function openExpenseModal(defaultType = "despesa") {
+  const financeModal = byId("finance-modal");
+  const modal = byId("expense-modal");
+  const form = byId("expense-form");
+  if (form) {
+    form.reset();
+    if (form.elements.type) {
+      form.elements.type.value = normalizeFinanceType(defaultType);
+    }
+    if (form.elements.date) {
+      form.elements.date.value = new Date().toISOString().slice(0, 10);
+    }
+  }
+  if (financeModal) hideModal(financeModal);
+  if (modal) showModal(modal);
+}
+
+function resetExpenseModal() {
+  const form = byId("expense-form");
+  if (form) form.reset();
 }
 
 function deleteTaskByIndex(idx) {
@@ -1903,6 +2097,7 @@ async function saveProjectToDb(payload) {
     end: payload.end,
     epics: DEFAULT_EPICS.slice(),
     packages: [],
+    financials: [],
     tasks: {},
     createdAt: firebase.database.ServerValue.TIMESTAMP
   });
@@ -1917,6 +2112,12 @@ async function updateProjectOnDb(clientId, projectId, payload) {
     start: payload.start,
     end: payload.end
   });
+}
+
+async function updateProjectFinancialsOnDb(clientId, projectId, financials) {
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).update({ financials });
 }
 
 async function saveTaskToDb(clientId, projectId, task) {
@@ -2105,6 +2306,121 @@ function formatSignedMetric(value) {
   const base = formatMetric(value);
   if (Number.isFinite(num) && num > 0) return `+${base}`;
   return base;
+}
+
+function parseNumericValue(value) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const raw = String(value).trim();
+  if (!raw) return 0;
+  let normalized = raw.replace(/[^0-9,.-]/g, "");
+  const hasComma = normalized.includes(",");
+  const hasDot = normalized.includes(".");
+  if (hasComma && hasDot) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    normalized = normalized.replace(",", ".");
+  }
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function resolveProjectCost(project) {
+  const budgetBase = resolveProjectBudget(project);
+  if (Number.isFinite(budgetBase) && budgetBase > 0) return budgetBase;
+  const summary = computeFinanceSummary(project);
+  if (Number.isFinite(summary.despesa) && summary.despesa > 0) {
+    return summary.despesa;
+  }
+  return null;
+}
+
+function resolveProjectBudget(project) {
+  if (!project) return null;
+  const candidates = [
+    project.budget,
+    project.cost,
+    project.custo,
+    project.valor,
+    project.valorProjeto
+  ];
+  for (const value of candidates) {
+    const numeric = parseNumericValue(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  }
+  return null;
+}
+
+function formatCurrency(value) {
+  if (!Number.isFinite(value)) return "-";
+  try {
+    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+  } catch (err) {
+    return `R$ ${value.toFixed(2)}`;
+  }
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function normalizeFinanceType(value) {
+  const type = String(value || "").trim().toLowerCase();
+  return type === "receita" ? "receita" : "despesa";
+}
+
+function getProjectFinancials(project) {
+  if (!project) return [];
+  if (!Array.isArray(project.financials)) {
+    project.financials = [];
+  }
+  return project.financials;
+}
+
+function sortFinanceEntries(entries) {
+  return entries.slice().sort((a, b) => {
+    const aDate = parseDateValue(a?.date || a?.createdAt);
+    const bDate = parseDateValue(b?.date || b?.createdAt);
+    if (Number.isNaN(aDate) && Number.isNaN(bDate)) return 0;
+    if (Number.isNaN(aDate)) return 1;
+    if (Number.isNaN(bDate)) return -1;
+    if (aDate !== bDate) return aDate - bDate;
+    return (a?.createdAt || 0) - (b?.createdAt || 0);
+  });
+}
+
+function computeFinanceSummary(project) {
+  const entries = getProjectFinancials(project);
+  const budgetBase = resolveProjectBudget(project);
+  let receita = 0;
+  let despesa = 0;
+  entries.forEach((entry) => {
+    const amount = parseNumericValue(entry?.amount);
+    if (normalizeFinanceType(entry?.type) === "receita") {
+      receita += amount;
+    } else {
+      despesa += amount;
+    }
+  });
+  const saldoBase = Number.isFinite(budgetBase) ? budgetBase : 0;
+  return {
+    receita,
+    despesa,
+    saldo: saldoBase + receita - despesa,
+    budgetBase,
+    entries
+  };
+}
+
+function formatFinanceAmount(amount, type) {
+  if (!Number.isFinite(amount)) return "-";
+  const label = formatCurrency(amount);
+  return normalizeFinanceType(type) === "despesa" ? `-${label}` : label;
 }
 
 function baselinePctFromDates(startValue, endValue, now = new Date()) {
@@ -2342,6 +2658,7 @@ function dashboardDisplayValue(project, key) {
   if (key === "progress") return `${project.progress}%`;
   if (key === "baseline") return `${formatMetric(project.baseline)}%`;
   if (key === "gap") return `${formatSignedMetric(project.gap)}pp`;
+  if (key === "cost") return formatCurrency(project.cost);
   if (key === "goLive") return project.goLive || "-";
   return "";
 }
@@ -2351,7 +2668,7 @@ function dashboardFilterValues(projects, key) {
   const values = Array.from(new Set(projects.map((project) => dashboardDisplayValue(project, key))));
   return values.sort((a, b) => {
     if (column?.type === "number") {
-      const toNumber = (value) => Number(String(value).replace(/[^0-9.+-]/g, ""));
+      const toNumber = (value) => parseNumericValue(value);
       return toNumber(a) - toNumber(b);
     }
     if (column?.type === "date") {
@@ -2411,8 +2728,10 @@ function allProjects() {
       const metrics = projectMetrics(p.tasks || []);
       const baseline = baselinePctFromDates(p.start, p.end);
       const gap = round1(metrics.progress - baseline);
+      const cost = resolveProjectCost(p);
       return {
         ...p,
+        cost,
         clientName: client.name,
         metrics,
         progress: metrics.progress,
@@ -2800,6 +3119,7 @@ function renderDashboard(container) {
   const rows = projects
     .map((p) => {
       const info = statusInfo(p.status);
+      const costLabel = formatCurrency(p.cost);
       return `
         <tr data-client="${p.clientName}" data-project="${p.name}">
           <td>${p.name}</td>
@@ -2809,6 +3129,7 @@ function renderDashboard(container) {
           <td>${p.progress}%</td>
           <td>${formatMetric(p.baseline)}%</td>
           <td>${formatSignedMetric(p.gap)}pp</td>
+          <td>${costLabel}</td>
           <td>${p.goLive || "-"}</td>
         </tr>
       `;
@@ -2822,7 +3143,7 @@ function renderDashboard(container) {
         </tr>
       </thead>
       <tbody>
-        ${rows || "<tr><td colspan='8'>Nenhum projeto cadastrado.</td></tr>"}
+        ${rows || "<tr><td colspan='9'>Nenhum projeto cadastrado.</td></tr>"}
       </tbody>
     </table>
   `;
@@ -2841,4 +3162,79 @@ function renderDashboard(container) {
 
   container.appendChild(header);
   container.appendChild(tableCard);
+}
+
+async function renderAuditTrail(container) {
+  byId("crumb-path").textContent = "Audit Logs";
+
+  const header = document.createElement("div");
+  header.className = "section-header span-all";
+  header.innerHTML = `
+    <div class="header-row">
+      <h2>Logs de Auditoria</h2>
+      <button class="btn sm ghost" id="refresh-audit">Atualizar</button>
+    </div>
+    <div class="muted">Rastreamento de segurança e conformidade (Supabase).</div>
+  `;
+
+  const tableCard = document.createElement("div");
+  tableCard.className = "table-card span-all";
+  tableCard.innerHTML = `<div style="padding:20px;">Carregando logs...</div>`;
+
+  container.appendChild(header);
+  container.appendChild(tableCard);
+
+  if (!supabase) {
+    tableCard.innerHTML = `<div style="padding:20px;">Supabase não configurado. Verifique as chaves em app.js.</div>`;
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('audit_logs')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error) {
+    console.error("Erro ao buscar logs:", error);
+    tableCard.innerHTML = `<div style="padding:20px; color:var(--bad);">Erro ao carregar logs: ${error.message}</div>`;
+    return;
+  }
+
+  if (!data || !data.length) {
+    tableCard.innerHTML = `<div style="padding:20px;">Nenhum registro de auditoria encontrado.</div>`;
+    return;
+  }
+
+  const rows = data.map(log => `
+    <tr>
+      <td>${formatDateTime(new Date(log.created_at))}</td>
+      <td>${log.action}</td>
+      <td>${log.admin_id || '-'}</td>
+      <td>${log.target_id || '-'}</td>
+      <td>${log.ip_address || '-'}</td>
+    </tr>
+  `).join("");
+
+  tableCard.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Data</th>
+          <th>Ação</th>
+          <th>Admin ID</th>
+          <th>Alvo</th>
+          <th>IP</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+  `;
+
+  const refreshBtn = byId("refresh-audit");
+  if(refreshBtn) {
+    refreshBtn.addEventListener("click", () => renderAuditTrail(container));
+  }
 }

@@ -269,6 +269,7 @@ const DASHBOARD_COLUMNS = [
   { key: "progress", label: "Progresso", type: "number" },
   { key: "baseline", label: "Previsto", type: "number" },
   { key: "gap", label: "GAP (pp)", type: "number" },
+  { key: "cost", label: "Custo", type: "number" },
   { key: "goLive", label: "Go Live previsto", type: "date" }
 ];
 
@@ -1137,6 +1138,114 @@ function formatSignedMetric(value) {
   const base = formatMetric(value);
   if (Number.isFinite(num) && num > 0) return `+${base}`;
   return base;
+}
+
+function parseNumericValue(value) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const raw = String(value).trim();
+  if (!raw) return 0;
+  let normalized = raw.replace(/[^0-9,.-]/g, "");
+  const hasComma = normalized.includes(",");
+  const hasDot = normalized.includes(".");
+  if (hasComma && hasDot) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    normalized = normalized.replace(",", ".");
+  }
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function resolveProjectCost(project) {
+  const budgetBase = resolveProjectBudget(project);
+  if (Number.isFinite(budgetBase) && budgetBase > 0) return budgetBase;
+  const summary = computeFinanceSummary(project);
+  if (Number.isFinite(summary.despesa) && summary.despesa > 0) {
+    return summary.despesa;
+  }
+  return null;
+}
+
+function resolveProjectBudget(project) {
+  if (!project) return null;
+  const candidates = [
+    project.budget,
+    project.cost,
+    project.custo,
+    project.valor,
+    project.valorProjeto
+  ];
+  for (const value of candidates) {
+    const numeric = parseNumericValue(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  }
+  return null;
+}
+
+function formatCurrency(value) {
+  if (!Number.isFinite(value)) return "-";
+  try {
+    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+  } catch (err) {
+    return `R$ ${value.toFixed(2)}`;
+  }
+}
+
+function normalizeFinanceType(value) {
+  const type = String(value || "").trim().toLowerCase();
+  return type === "receita" ? "receita" : "despesa";
+}
+
+function getProjectFinancials(project) {
+  if (!project) return [];
+  if (!Array.isArray(project.financials)) {
+    project.financials = [];
+  }
+  return project.financials;
+}
+
+function sortFinanceEntries(entries) {
+  return entries.slice().sort((a, b) => {
+    const aDate = parseDateSafe(a?.date || a?.createdAt);
+    const bDate = parseDateSafe(b?.date || b?.createdAt);
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    const aTime = aDate.getTime();
+    const bTime = bDate.getTime();
+    if (aTime !== bTime) return aTime - bTime;
+    return (a?.createdAt || 0) - (b?.createdAt || 0);
+  });
+}
+
+function computeFinanceSummary(project) {
+  const entries = getProjectFinancials(project);
+  const budgetBase = resolveProjectBudget(project);
+  let receita = 0;
+  let despesa = 0;
+  entries.forEach((entry) => {
+    const amount = parseNumericValue(entry?.amount);
+    if (normalizeFinanceType(entry?.type) === "receita") {
+      receita += amount;
+    } else {
+      despesa += amount;
+    }
+  });
+  const saldoBase = Number.isFinite(budgetBase) ? budgetBase : 0;
+  return {
+    receita,
+    despesa,
+    saldo: saldoBase + receita - despesa,
+    budgetBase,
+    entries
+  };
+}
+
+function formatFinanceAmount(amount, type) {
+  if (!Number.isFinite(amount)) return "-";
+  const label = formatCurrency(amount);
+  return normalizeFinanceType(type) === "despesa" ? `-${label}` : label;
 }
 
 function baselinePctFromDates(startValue, endValue, now = new Date()) {
@@ -3351,18 +3460,20 @@ function mapClientData(clientId, clientData) {
       id: taskId,
       ...taskData
     }));
-    const progress = computeProgress(tasks);
-    const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
-    const packages = Array.isArray(projData.packages) ? projData.packages : [];
-    return {
-      id: projectId,
-      clientId,
-      ...projData,
-      progress,
-      epics,
-      packages,
-      tasks
-    };
+      const progress = computeProgress(tasks);
+      const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
+      const packages = Array.isArray(projData.packages) ? projData.packages : [];
+      const financials = Array.isArray(projData.financials) ? projData.financials : [];
+      return {
+        id: projectId,
+        clientId,
+        ...projData,
+        progress,
+        epics,
+        packages,
+        financials,
+        tasks
+      };
   });
   return { id: clientId, ...clientData, projects };
 }
@@ -3529,6 +3640,27 @@ async function updateUserProfileInDb(uid, payload) {
     ...payload,
     updatedAt: firebase.database.ServerValue.TIMESTAMP
   });
+}
+
+async function removeUserFromGroups(uid) {
+  if (!db || !uid) return;
+  const snapshot = await db.ref("groups").once("value");
+  const groups = snapshot.val() || {};
+  const updates = {};
+  Object.entries(groups).forEach(([groupId, data]) => {
+    if (data?.members?.[uid]) {
+      updates[`groups/${groupId}/members/${uid}`] = null;
+    }
+  });
+  if (Object.keys(updates).length) {
+    await db.ref().update(updates);
+  }
+}
+
+async function deleteUserFromDb(uid) {
+  if (!db || !uid) return;
+  await db.ref(`users/${uid}`).remove();
+  await removeUserFromGroups(uid);
 }
 
 async function sendPasswordReset(email) {
@@ -5052,15 +5184,101 @@ function renderConfig(container) {
       </div>
 
       ${admin ? `
-        <div class="section-header">
-          <div class="header-row">
-            <h2>Usuarios da plataforma</h2>
+        <div class="config-users-shell" id="admin-users-section">
+          <div class="config-users-toolbar">
+            <div>
+              <h2>Gerenciamento de equipe</h2>
+              <div class="muted">Controle de acessos, convites e permissoes do workspace.</div>
+            </div>
+            <div class="config-users-actions">
+              <label class="config-users-search">
+                <i data-lucide="search"></i>
+                <input id="admin-users-search" type="search" placeholder="Buscar usuario ou e-mail">
+              </label>
+              <button class="btn primary" type="button" id="admin-invite-btn">+ Convidar usuario</button>
+            </div>
           </div>
-          <div class="muted">Somente administradores podem visualizar e editar cadastros internos.</div>
-        </div>
-        <div class="config-card" id="admin-users-section">
-          <div id="admin-users-list" class="config-admin-table">Carregando usuarios...</div>
+          <div class="config-users-filters">
+            <label>
+              Perfil
+              <select id="admin-role-filter" class="config-input">
+                <option value="all">Todos</option>
+                <option value="admin">Administrador</option>
+                <option value="developer">Desenvolvedor</option>
+                <option value="user">Usuario</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <select id="admin-status-filter" class="config-input">
+                <option value="all">Todos</option>
+                <option value="active">Ativo</option>
+                <option value="pending">Pendente</option>
+                <option value="inactive">Inativo</option>
+              </select>
+            </label>
+            <button class="btn sm ghost" type="button" id="admin-clear-filters">Limpar filtros</button>
+          </div>
+          <div class="config-users-table">
+            <div class="config-users-head">
+              <div>Usuario</div>
+              <div>Perfil</div>
+              <div>Status</div>
+              <div>Ultimo login</div>
+              <div></div>
+            </div>
+            <div id="admin-users-list" class="config-users-body">Carregando usuarios...</div>
+          </div>
           <div class="config-hint">Use "Resetar senha" para enviar o e-mail de redefinicao ao usuario.</div>
+        </div>
+
+        <div class="config-user-drawer" id="admin-user-drawer" aria-hidden="true">
+          <div class="config-user-drawer-backdrop" data-drawer-close></div>
+          <div class="config-user-drawer-panel">
+            <div class="drawer-header">
+              <div>
+                <div class="drawer-title">Usuario selecionado</div>
+                <div class="drawer-subtitle" id="drawer-user-email">-</div>
+              </div>
+              <button class="btn sm ghost" type="button" data-drawer-close>
+                <i data-lucide="x"></i>
+              </button>
+            </div>
+            <div class="drawer-body">
+              <label>
+                Nome
+                <input id="drawer-user-name" class="config-input" type="text" placeholder="Nome do usuario">
+              </label>
+              <label>
+                Perfil
+                <select id="drawer-user-role" class="config-input">
+                  <option value="user">Usuario</option>
+                  <option value="developer">Desenvolvedor</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </label>
+              <div class="drawer-permissions">
+                <div class="drawer-permissions-title">Permissoes rapidas</div>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Pode criar tarefas</span>
+                </label>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Ve orcamentos</span>
+                </label>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Gerencia usuarios</span>
+                </label>
+              </div>
+            </div>
+            <div class="drawer-actions">
+              <button class="btn sm ghost" type="button" id="drawer-reset-btn">Resetar senha</button>
+              <button class="btn sm primary" type="button" id="drawer-save-btn">Salvar alteracoes</button>
+            </div>
+            <p id="drawer-status" class="config-message"></p>
+          </div>
         </div>
 
         <div class="section-header">
@@ -5085,9 +5303,75 @@ function renderConfig(container) {
     form.addEventListener("submit", handleAccountUpdate);
   }
 
+  if (window.lucide) {
+    window.lucide.createIcons();
+  }
+
   if (admin) {
+    if (!state.adminUserFilters) {
+      state.adminUserFilters = { query: "", role: "all", status: "all" };
+    }
+
+    const searchInput = byId("admin-users-search");
+    if (searchInput) {
+      searchInput.value = state.adminUserFilters.query || "";
+      if (!searchInput.dataset.wired) {
+        searchInput.addEventListener("input", () => {
+          state.adminUserFilters.query = searchInput.value;
+          applyAdminUserFilters();
+        });
+        searchInput.dataset.wired = "true";
+      }
+    }
+
+    const roleFilter = byId("admin-role-filter");
+    if (roleFilter) {
+      roleFilter.value = state.adminUserFilters.role || "all";
+      if (!roleFilter.dataset.wired) {
+        roleFilter.addEventListener("change", () => {
+          state.adminUserFilters.role = roleFilter.value;
+          applyAdminUserFilters();
+        });
+        roleFilter.dataset.wired = "true";
+      }
+    }
+
+    const statusFilter = byId("admin-status-filter");
+    if (statusFilter) {
+      statusFilter.value = state.adminUserFilters.status || "all";
+      if (!statusFilter.dataset.wired) {
+        statusFilter.addEventListener("change", () => {
+          state.adminUserFilters.status = statusFilter.value;
+          applyAdminUserFilters();
+        });
+        statusFilter.dataset.wired = "true";
+      }
+    }
+
+    const clearFiltersBtn = byId("admin-clear-filters");
+    if (clearFiltersBtn && !clearFiltersBtn.dataset.wired) {
+      clearFiltersBtn.addEventListener("click", () => {
+        state.adminUserFilters = { query: "", role: "all", status: "all" };
+        if (searchInput) searchInput.value = "";
+        if (roleFilter) roleFilter.value = "all";
+        if (statusFilter) statusFilter.value = "all";
+        applyAdminUserFilters();
+      });
+      clearFiltersBtn.dataset.wired = "true";
+    }
+
+    const inviteBtn = byId("admin-invite-btn");
+    if (inviteBtn && !inviteBtn.dataset.wired) {
+      inviteBtn.addEventListener("click", () => {
+        alert("Fluxo de convite em configuracao.");
+      });
+      inviteBtn.dataset.wired = "true";
+    }
+
     loadAdminUsers();
     loadAdminGroups();
+    wireAdminUserDrawer();
+
     const groupCreateBtn = byId("group-create-btn");
     if (groupCreateBtn && !groupCreateBtn.dataset.wired) {
       groupCreateBtn.addEventListener("click", async () => {
@@ -5209,7 +5493,7 @@ async function loadAdminUsers() {
   try {
     const users = await loadUsersFromDb();
     state.users = users.slice();
-    renderAdminUsers(list, users);
+    renderAdminUsers(list, getFilteredAdminUsers(users));
   } catch (err) {
     console.error(err);
     list.textContent = "Falha ao carregar usuarios.";
@@ -5236,95 +5520,98 @@ async function loadAdminGroups() {
   }
 }
 
-function renderAdminUsers(container, users) {
-  const rows = users
-    .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
-    .map((user) => {
-      const email = escapeHtml(user.email || "");
-      const name = escapeHtml(user.displayName || "");
-      const isMaster = isAdminEmail(user.email);
-      const role = normalizeUserRole(user.role);
-      const canReset = Boolean(user.email);
-      return `
-        <div class="config-admin-row" data-user-id="${escapeHtml(user.uid)}" data-user-email="${email}">
-          <input class="config-input" type="text" value="${name}" placeholder="Nome" data-user-name>
-          <div class="config-user-email">${email || "-"}</div>
-          <select class="config-input" data-user-role ${isMaster ? "disabled" : ""}>
-            <option value="user"${role === "user" ? " selected" : ""}>Usuario</option>
-            <option value="developer"${role === "developer" ? " selected" : ""}>Desenvolvedor</option>
-            <option value="admin"${role === "admin" ? " selected" : ""}>Administrador</option>
-          </select>
-          <button class="btn sm ghost" type="button" data-user-save ${isMaster ? "disabled" : ""}>Salvar</button>
-          <button class="btn sm ghost" type="button" data-user-reset ${!canReset ? "disabled" : ""}>Resetar senha</button>
-          <div class="config-admin-status" data-user-status></div>
-        </div>
-      `;
-    })
-    .join("");
+function getAdminUserStatus(user) {
+  if (user?.lastLoginAt) {
+    return { key: "active", label: "Ativo", className: "status-active" };
+  }
+  if (user?.createdAt) {
+    return { key: "pending", label: "Pendente", className: "status-pending" };
+  }
+  return { key: "inactive", label: "Inativo", className: "status-inactive" };
+}
 
-  container.innerHTML = `
-    <div class="config-admin-row header">
-      <div>Nome</div>
-      <div>E-mail</div>
-      <div>Perfil</div>
-      <div>Salvar</div>
-      <div>Reset senha</div>
-      <div></div>
-    </div>
-    ${rows || "<div class=\"muted\">Nenhum usuario cadastrado.</div>"}
-  `;
+function getAdminUserLastLoginLabel(user) {
+  if (!user?.lastLoginAt) return "Nunca";
+  const raw = typeof user.lastLoginAt === "number" ? user.lastLoginAt : Number(user.lastLoginAt);
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return "-";
+  return formatDateTime(dt);
+}
 
-  if (!container.dataset.wired) {
-    container.addEventListener("click", async (e) => {
-      const saveBtn = e.target.closest("[data-user-save]");
-      const resetBtn = e.target.closest("[data-user-reset]");
-      if (!saveBtn && !resetBtn) return;
-      const row = (saveBtn || resetBtn).closest("[data-user-id]");
-      if (!row) return;
-      const status = row.querySelector("[data-user-status]");
+function getFilteredAdminUsers(users) {
+  const filters = state.adminUserFilters || { query: "", role: "all", status: "all" };
+  const query = String(filters.query || "").trim().toLowerCase();
+  return (users || []).filter((user) => {
+    const name = String(user.displayName || "").toLowerCase();
+    const email = String(user.email || "").toLowerCase();
+    const role = normalizeUserRole(user.role);
+    const status = getAdminUserStatus(user).key;
+    const matchesQuery = !query || name.includes(query) || email.includes(query);
+    const matchesRole = filters.role === "all" || role === filters.role;
+    const matchesStatus = filters.status === "all" || status === filters.status;
+    return matchesQuery && matchesRole && matchesStatus;
+  });
+}
 
-      if (resetBtn) {
-        const email = row.dataset.userEmail || "";
-        if (!email) {
-          if (status) {
-            status.textContent = "E-mail indisponivel.";
-            status.classList.remove("success");
-            status.classList.add("error");
-          }
-          return;
-        }
-        const confirmed = window.confirm(`Enviar redefinicao de senha para ${email}?`);
-        if (!confirmed) return;
-        if (status) {
-          status.textContent = "Enviando...";
-          status.classList.remove("error");
-          status.classList.remove("success");
-        }
-        try {
-          await sendPasswordReset(email);
-          if (status) {
-            status.textContent = "E-mail enviado.";
-            status.classList.add("success");
-          }
-        } catch (err) {
-          console.error(err);
-          if (status) {
-            status.textContent = "Erro ao enviar.";
-            status.classList.add("error");
-          }
-        }
-        return;
-      }
+function applyAdminUserFilters() {
+  const list = byId("admin-users-list");
+  if (!list) return;
+  renderAdminUsers(list, getFilteredAdminUsers(state.users || []));
+}
 
-      const uid = row.dataset.userId;
-      const nameInput = row.querySelector("[data-user-name]");
-      const roleSelect = row.querySelector("[data-user-role]");
+function openAdminUserDrawer(user) {
+  if (!user) return;
+  const drawer = byId("admin-user-drawer");
+  if (!drawer) return;
+  drawer.classList.add("open");
+  drawer.setAttribute("aria-hidden", "false");
+  drawer.dataset.userId = user.uid || "";
+  drawer.dataset.userEmail = user.email || "";
+  const nameInput = byId("drawer-user-name");
+  if (nameInput) nameInput.value = user.displayName || "";
+  const roleSelect = byId("drawer-user-role");
+  if (roleSelect) roleSelect.value = normalizeUserRole(user.role);
+  const emailLabel = byId("drawer-user-email");
+  if (emailLabel) emailLabel.textContent = user.email || "-";
+  const statusMsg = byId("drawer-status");
+  if (statusMsg) {
+    statusMsg.textContent = "";
+    statusMsg.classList.remove("error", "success");
+  }
+}
+
+function closeAdminUserDrawer() {
+  const drawer = byId("admin-user-drawer");
+  if (!drawer) return;
+  drawer.classList.remove("open");
+  drawer.setAttribute("aria-hidden", "true");
+  drawer.dataset.userId = "";
+  drawer.dataset.userEmail = "";
+}
+
+function wireAdminUserDrawer() {
+  const drawer = byId("admin-user-drawer");
+  if (!drawer || drawer.dataset.wired) return;
+
+  drawer.addEventListener("click", (event) => {
+    if (event.target.closest("[data-drawer-close]")) {
+      closeAdminUserDrawer();
+    }
+  });
+
+  const saveBtn = byId("drawer-save-btn");
+  if (saveBtn) {
+    saveBtn.addEventListener("click", async () => {
+      const uid = drawer.dataset.userId || "";
+      if (!uid) return;
+      const nameInput = byId("drawer-user-name");
+      const roleSelect = byId("drawer-user-role");
       const newName = nameInput?.value.trim() || "";
       const newRole = normalizeUserRole(roleSelect?.value);
-      if (status) {
-        status.textContent = "Salvando...";
-        status.classList.remove("error");
-        status.classList.remove("success");
+      const statusMsg = byId("drawer-status");
+      if (statusMsg) {
+        statusMsg.textContent = "Salvando...";
+        statusMsg.classList.remove("error", "success");
       }
       try {
         await updateUserProfileInDb(uid, { displayName: newName, role: newRole });
@@ -5332,19 +5619,148 @@ function renderAdminUsers(container, users) {
           await loadCurrentUserRole(auth.currentUser);
           renderMain();
         }
-        if (status) {
-          status.textContent = "Salvo.";
-          status.classList.add("success");
+        const idx = (state.users || []).findIndex((user) => user.uid === uid);
+        if (idx >= 0) {
+          state.users[idx] = { ...state.users[idx], displayName: newName, role: newRole };
+        }
+        applyAdminUserFilters();
+        if (statusMsg) {
+          statusMsg.textContent = "Salvo.";
+          statusMsg.classList.add("success");
         }
       } catch (err) {
         console.error(err);
-        if (status) {
-          status.textContent = "Erro ao salvar.";
-          status.classList.add("error");
+        if (statusMsg) {
+          statusMsg.textContent = "Erro ao salvar.";
+          statusMsg.classList.add("error");
         }
       }
     });
+  }
+
+  const resetBtn = byId("drawer-reset-btn");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", async () => {
+      const email = drawer.dataset.userEmail || "";
+      const statusMsg = byId("drawer-status");
+      if (!email) {
+        if (statusMsg) {
+          statusMsg.textContent = "E-mail indisponivel.";
+          statusMsg.classList.add("error");
+        }
+        return;
+      }
+      const confirmed = window.confirm(`Enviar redefinicao de senha para ${email}?`);
+      if (!confirmed) return;
+      if (statusMsg) {
+        statusMsg.textContent = "Enviando...";
+        statusMsg.classList.remove("error", "success");
+      }
+      try {
+        await sendPasswordReset(email);
+        if (statusMsg) {
+          statusMsg.textContent = "E-mail enviado.";
+          statusMsg.classList.add("success");
+        }
+      } catch (err) {
+        console.error(err);
+        if (statusMsg) {
+          statusMsg.textContent = "Erro ao enviar.";
+          statusMsg.classList.add("error");
+        }
+      }
+    });
+  }
+
+  drawer.dataset.wired = "true";
+}
+
+function renderAdminUsers(container, users) {
+  const rows = users
+    .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
+    .map((user) => {
+      const email = escapeHtml(user.email || "");
+      const name = escapeHtml(user.displayName || user.email || "Usuario");
+      const role = normalizeUserRole(user.role);
+      const roleClass = role === "admin" ? "role-admin" : role === "developer" ? "role-dev" : "role-user";
+      const status = getAdminUserStatus(user);
+      const lastLoginLabel = getAdminUserLastLoginLabel(user);
+      return `
+        <div class="config-user-row" data-user-id="${escapeHtml(user.uid)}" data-user-email="${email}">
+          <div class="config-user-main">
+            <div class="config-user-name">${name}</div>
+            <div class="config-user-email">${email || "-"}</div>
+          </div>
+          <div>
+            <span class="config-badge ${roleClass}">${roleLabel(role)}</span>
+          </div>
+          <div>
+            <span class="config-badge ${status.className}">${status.label}</span>
+          </div>
+          <div class="config-user-last">${lastLoginLabel}</div>
+          <div class="config-user-actions">
+            <button class="btn sm ghost" type="button" data-user-open title="Detalhes">
+              <i data-lucide="more-horizontal"></i>
+            </button>
+            <button class="btn sm danger" type="button" data-user-delete title="Excluir perfil">
+              <i data-lucide="trash-2"></i>
+            </button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = rows || "<div class=\"muted\">Nenhum usuario encontrado.</div>";
+
+  if (!container.dataset.wired) {
+    container.addEventListener("click", async (e) => {
+      const deleteBtn = e.target.closest("[data-user-delete]");
+      if (deleteBtn) {
+        const row = deleteBtn.closest("[data-user-id]");
+        if (!row) return;
+        const uid = row.dataset.userId || "";
+        const email = row.dataset.userEmail || "";
+        if (!uid) return;
+        if (auth?.currentUser?.uid === uid) {
+          alert("Nao e possivel excluir o proprio perfil.");
+          return;
+        }
+        if (isAdminEmail(email)) {
+          alert("Nao e possivel excluir o administrador principal.");
+          return;
+        }
+        const confirmed = window.confirm(`Excluir o perfil de ${email || "este usuario"}?`);
+        if (!confirmed) return;
+        deleteBtn.disabled = true;
+        try {
+          await deleteUserFromDb(uid);
+          state.users = (state.users || []).filter((item) => item.uid !== uid);
+          applyAdminUserFilters();
+          await loadAdminGroups();
+          closeAdminUserDrawer();
+        } catch (err) {
+          console.error(err);
+          alert("Erro ao excluir usuario.");
+        } finally {
+          deleteBtn.disabled = false;
+        }
+        return;
+      }
+
+      const row = e.target.closest("[data-user-id]");
+      if (!row) return;
+      const isOpen = e.target.closest("[data-user-open]") || e.target.closest(".config-user-row");
+      if (!isOpen) return;
+      const uid = row.dataset.userId || "";
+      const user = (state.users || []).find((item) => item.uid === uid);
+      openAdminUserDrawer(user);
+    });
     container.dataset.wired = "true";
+  }
+
+  if (window.lucide) {
+    window.lucide.createIcons();
   }
 }
 
@@ -5609,6 +6025,8 @@ function renderMain() {
     .join(" ");
   const baselineLabel = formatMetric(baselinePct);
   const gapLabel = formatSignedMetric(gap);
+  const projectCost = resolveProjectCost(selectedProject);
+  const costLabel = formatCurrency(projectCost);
   const tasks = selectedProject.tasks || [];
   const sparkRealized = renderSparklineSvg(buildSparklineSeries(progressPct), {
     stroke: "var(--accent)",
@@ -5693,6 +6111,7 @@ function renderMain() {
         <span class="pill project-status ${statusBadge.className}">${statusBadge.label}</span>
         <span class="pill schedule-status ${scheduleBadge.className}">${scheduleBadge.label}</span>
         <button class="btn sm ghost" type="button" data-export-project>Exportar</button>
+        <button class="btn sm primary" type="button" data-open-expense>Adicionar despesa</button>
       </div>
     </div>
     <div class="project-meta-row">
@@ -6864,15 +7283,101 @@ function renderConfig(container) {
       </div>
 
       ${admin ? `
-        <div class="section-header">
-          <div class="header-row">
-            <h2>Usuarios da plataforma</h2>
+        <div class="config-users-shell" id="admin-users-section">
+          <div class="config-users-toolbar">
+            <div>
+              <h2>Gerenciamento de equipe</h2>
+              <div class="muted">Controle de acessos, convites e permissoes do workspace.</div>
+            </div>
+            <div class="config-users-actions">
+              <label class="config-users-search">
+                <i data-lucide="search"></i>
+                <input id="admin-users-search" type="search" placeholder="Buscar usuario ou e-mail">
+              </label>
+              <button class="btn primary" type="button" id="admin-invite-btn">+ Convidar usuario</button>
+            </div>
           </div>
-          <div class="muted">Somente administradores podem visualizar e editar cadastros internos.</div>
-        </div>
-        <div class="config-card" id="admin-users-section">
-          <div id="admin-users-list" class="config-admin-table">Carregando usuarios...</div>
+          <div class="config-users-filters">
+            <label>
+              Perfil
+              <select id="admin-role-filter" class="config-input">
+                <option value="all">Todos</option>
+                <option value="admin">Administrador</option>
+                <option value="developer">Desenvolvedor</option>
+                <option value="user">Usuario</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <select id="admin-status-filter" class="config-input">
+                <option value="all">Todos</option>
+                <option value="active">Ativo</option>
+                <option value="pending">Pendente</option>
+                <option value="inactive">Inativo</option>
+              </select>
+            </label>
+            <button class="btn sm ghost" type="button" id="admin-clear-filters">Limpar filtros</button>
+          </div>
+          <div class="config-users-table">
+            <div class="config-users-head">
+              <div>Usuario</div>
+              <div>Perfil</div>
+              <div>Status</div>
+              <div>Ultimo login</div>
+              <div></div>
+            </div>
+            <div id="admin-users-list" class="config-users-body">Carregando usuarios...</div>
+          </div>
           <div class="config-hint">Use "Resetar senha" para enviar o e-mail de redefinicao ao usuario.</div>
+        </div>
+
+        <div class="config-user-drawer" id="admin-user-drawer" aria-hidden="true">
+          <div class="config-user-drawer-backdrop" data-drawer-close></div>
+          <div class="config-user-drawer-panel">
+            <div class="drawer-header">
+              <div>
+                <div class="drawer-title">Usuario selecionado</div>
+                <div class="drawer-subtitle" id="drawer-user-email">-</div>
+              </div>
+              <button class="btn sm ghost" type="button" data-drawer-close>
+                <i data-lucide="x"></i>
+              </button>
+            </div>
+            <div class="drawer-body">
+              <label>
+                Nome
+                <input id="drawer-user-name" class="config-input" type="text" placeholder="Nome do usuario">
+              </label>
+              <label>
+                Perfil
+                <select id="drawer-user-role" class="config-input">
+                  <option value="user">Usuario</option>
+                  <option value="developer">Desenvolvedor</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </label>
+              <div class="drawer-permissions">
+                <div class="drawer-permissions-title">Permissoes rapidas</div>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Pode criar tarefas</span>
+                </label>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Ve orcamentos</span>
+                </label>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Gerencia usuarios</span>
+                </label>
+              </div>
+            </div>
+            <div class="drawer-actions">
+              <button class="btn sm ghost" type="button" id="drawer-reset-btn">Resetar senha</button>
+              <button class="btn sm primary" type="button" id="drawer-save-btn">Salvar alteracoes</button>
+            </div>
+            <p id="drawer-status" class="config-message"></p>
+          </div>
         </div>
 
         <div class="section-header">
@@ -6897,9 +7402,75 @@ function renderConfig(container) {
     form.addEventListener("submit", handleAccountUpdate);
   }
 
+  if (window.lucide) {
+    window.lucide.createIcons();
+  }
+
   if (admin) {
+    if (!state.adminUserFilters) {
+      state.adminUserFilters = { query: "", role: "all", status: "all" };
+    }
+
+    const searchInput = byId("admin-users-search");
+    if (searchInput) {
+      searchInput.value = state.adminUserFilters.query || "";
+      if (!searchInput.dataset.wired) {
+        searchInput.addEventListener("input", () => {
+          state.adminUserFilters.query = searchInput.value;
+          applyAdminUserFilters();
+        });
+        searchInput.dataset.wired = "true";
+      }
+    }
+
+    const roleFilter = byId("admin-role-filter");
+    if (roleFilter) {
+      roleFilter.value = state.adminUserFilters.role || "all";
+      if (!roleFilter.dataset.wired) {
+        roleFilter.addEventListener("change", () => {
+          state.adminUserFilters.role = roleFilter.value;
+          applyAdminUserFilters();
+        });
+        roleFilter.dataset.wired = "true";
+      }
+    }
+
+    const statusFilter = byId("admin-status-filter");
+    if (statusFilter) {
+      statusFilter.value = state.adminUserFilters.status || "all";
+      if (!statusFilter.dataset.wired) {
+        statusFilter.addEventListener("change", () => {
+          state.adminUserFilters.status = statusFilter.value;
+          applyAdminUserFilters();
+        });
+        statusFilter.dataset.wired = "true";
+      }
+    }
+
+    const clearFiltersBtn = byId("admin-clear-filters");
+    if (clearFiltersBtn && !clearFiltersBtn.dataset.wired) {
+      clearFiltersBtn.addEventListener("click", () => {
+        state.adminUserFilters = { query: "", role: "all", status: "all" };
+        if (searchInput) searchInput.value = "";
+        if (roleFilter) roleFilter.value = "all";
+        if (statusFilter) statusFilter.value = "all";
+        applyAdminUserFilters();
+      });
+      clearFiltersBtn.dataset.wired = "true";
+    }
+
+    const inviteBtn = byId("admin-invite-btn");
+    if (inviteBtn && !inviteBtn.dataset.wired) {
+      inviteBtn.addEventListener("click", () => {
+        alert("Fluxo de convite em configuracao.");
+      });
+      inviteBtn.dataset.wired = "true";
+    }
+
     loadAdminUsers();
     loadAdminGroups();
+    wireAdminUserDrawer();
+
     const groupCreateBtn = byId("group-create-btn");
     if (groupCreateBtn && !groupCreateBtn.dataset.wired) {
       groupCreateBtn.addEventListener("click", async () => {
@@ -7021,7 +7592,7 @@ async function loadAdminUsers() {
   try {
     const users = await loadUsersFromDb();
     state.users = users.slice();
-    renderAdminUsers(list, users);
+    renderAdminUsers(list, getFilteredAdminUsers(users));
   } catch (err) {
     console.error(err);
     list.textContent = "Falha ao carregar usuarios.";
@@ -7053,110 +7624,87 @@ function renderAdminUsers(container, users) {
     .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
     .map((user) => {
       const email = escapeHtml(user.email || "");
-      const name = escapeHtml(user.displayName || "");
-      const isMaster = isAdminEmail(user.email);
+      const name = escapeHtml(user.displayName || user.email || "Usuario");
       const role = normalizeUserRole(user.role);
-      const canReset = Boolean(user.email);
+      const roleClass = role === "admin" ? "role-admin" : role === "developer" ? "role-dev" : "role-user";
+      const status = getAdminUserStatus(user);
+      const lastLoginLabel = getAdminUserLastLoginLabel(user);
       return `
-        <div class="config-admin-row" data-user-id="${escapeHtml(user.uid)}" data-user-email="${email}">
-          <input class="config-input" type="text" value="${name}" placeholder="Nome" data-user-name>
-          <div class="config-user-email">${email || "-"}</div>
-          <select class="config-input" data-user-role ${isMaster ? "disabled" : ""}>
-            <option value="user"${role === "user" ? " selected" : ""}>Usuario</option>
-            <option value="developer"${role === "developer" ? " selected" : ""}>Desenvolvedor</option>
-            <option value="admin"${role === "admin" ? " selected" : ""}>Administrador</option>
-          </select>
-          <button class="btn sm ghost" type="button" data-user-save ${isMaster ? "disabled" : ""}>Salvar</button>
-          <button class="btn sm ghost" type="button" data-user-reset ${!canReset ? "disabled" : ""}>Resetar senha</button>
-          <div class="config-admin-status" data-user-status></div>
+        <div class="config-user-row" data-user-id="${escapeHtml(user.uid)}" data-user-email="${email}">
+          <div class="config-user-main">
+            <div class="config-user-name">${name}</div>
+            <div class="config-user-email">${email || "-"}</div>
+          </div>
+          <div>
+            <span class="config-badge ${roleClass}">${roleLabel(role)}</span>
+          </div>
+          <div>
+            <span class="config-badge ${status.className}">${status.label}</span>
+          </div>
+          <div class="config-user-last">${lastLoginLabel}</div>
+          <div class="config-user-actions">
+            <button class="btn sm ghost" type="button" data-user-open title="Detalhes">
+              <i data-lucide="more-horizontal"></i>
+            </button>
+            <button class="btn sm danger" type="button" data-user-delete title="Excluir perfil">
+              <i data-lucide="trash-2"></i>
+            </button>
+          </div>
         </div>
       `;
     })
     .join("");
 
-  container.innerHTML = `
-    <div class="config-admin-row header">
-      <div>Nome</div>
-      <div>E-mail</div>
-      <div>Perfil</div>
-      <div>Salvar</div>
-      <div>Reset senha</div>
-      <div></div>
-    </div>
-    ${rows || "<div class=\"muted\">Nenhum usuario cadastrado.</div>"}
-  `;
+  container.innerHTML = rows || "<div class=\"muted\">Nenhum usuario encontrado.</div>";
 
   if (!container.dataset.wired) {
     container.addEventListener("click", async (e) => {
-      const saveBtn = e.target.closest("[data-user-save]");
-      const resetBtn = e.target.closest("[data-user-reset]");
-      if (!saveBtn && !resetBtn) return;
-      const row = (saveBtn || resetBtn).closest("[data-user-id]");
-      if (!row) return;
-      const status = row.querySelector("[data-user-status]");
-
-      if (resetBtn) {
+      const deleteBtn = e.target.closest("[data-user-delete]");
+      if (deleteBtn) {
+        const row = deleteBtn.closest("[data-user-id]");
+        if (!row) return;
+        const uid = row.dataset.userId || "";
         const email = row.dataset.userEmail || "";
-        if (!email) {
-          if (status) {
-            status.textContent = "E-mail indisponivel.";
-            status.classList.remove("success");
-            status.classList.add("error");
-          }
+        if (!uid) return;
+        if (auth?.currentUser?.uid === uid) {
+          alert("Nao e possivel excluir o proprio perfil.");
           return;
         }
-        const confirmed = window.confirm(`Enviar redefinicao de senha para ${email}?`);
-        if (!confirmed) return;
-        if (status) {
-          status.textContent = "Enviando...";
-          status.classList.remove("error");
-          status.classList.remove("success");
+        if (isAdminEmail(email)) {
+          alert("Nao e possivel excluir o administrador principal.");
+          return;
         }
+        const confirmed = window.confirm(`Excluir o perfil de ${email || "este usuario"}?`);
+        if (!confirmed) return;
+        deleteBtn.disabled = true;
         try {
-          await sendPasswordReset(email);
-          if (status) {
-            status.textContent = "E-mail enviado.";
-            status.classList.add("success");
-          }
+          await deleteUserFromDb(uid);
+          state.users = (state.users || []).filter((item) => item.uid !== uid);
+          applyAdminUserFilters();
+          await loadAdminGroups();
+          closeAdminUserDrawer();
         } catch (err) {
           console.error(err);
-          if (status) {
-            status.textContent = "Erro ao enviar.";
-            status.classList.add("error");
-          }
+          alert("Erro ao excluir usuario.");
+        } finally {
+          deleteBtn.disabled = false;
         }
         return;
       }
 
-      const uid = row.dataset.userId;
-      const nameInput = row.querySelector("[data-user-name]");
-      const roleSelect = row.querySelector("[data-user-role]");
-      const newName = nameInput?.value.trim() || "";
-      const newRole = normalizeUserRole(roleSelect?.value);
-      if (status) {
-        status.textContent = "Salvando...";
-        status.classList.remove("error");
-        status.classList.remove("success");
-      }
-      try {
-        await updateUserProfileInDb(uid, { displayName: newName, role: newRole });
-        if (auth?.currentUser?.uid === uid) {
-          await loadCurrentUserRole(auth.currentUser);
-          renderMain();
-        }
-        if (status) {
-          status.textContent = "Salvo.";
-          status.classList.add("success");
-        }
-      } catch (err) {
-        console.error(err);
-        if (status) {
-          status.textContent = "Erro ao salvar.";
-          status.classList.add("error");
-        }
-      }
+      const row = e.target.closest("[data-user-id]");
+      if (!row) return;
+      const isOpen = e.target.closest("[data-user-open]") || e.target.closest(".config-user-row");
+      if (!isOpen) return;
+      const uid = row.dataset.userId || "";
+      const user = (state.users || []).find((item) => item.uid === uid);
+      openAdminUserDrawer(user);
     });
     container.dataset.wired = "true";
+  }
+
+  if (window.lucide) {
+    window.lucide.createIcons();
   }
 }
 
@@ -7421,6 +7969,8 @@ function renderMain() {
     .join(" ");
   const baselineLabel = formatMetric(baselinePct);
   const gapLabel = formatSignedMetric(gap);
+  const projectCost = resolveProjectCost(selectedProject);
+  const costLabel = formatCurrency(projectCost);
   const tasks = selectedProject.tasks || [];
   const sparkRealized = renderSparklineSvg(buildSparklineSeries(progressPct), {
     stroke: "var(--accent)",
@@ -7586,6 +8136,10 @@ function renderMain() {
       <div class="label">Atividades pendentes</div>
       <div class="value">${metrics.pending}</div>
     </div>
+    <button class="metric-card card--kpi is-clickable" type="button" data-open-financials>
+      <div class="label">Custo do projeto</div>
+      <div class="value">${costLabel}</div>
+    </button>
   `;
 
   const requiredPhases = Array.isArray(selectedProject.epics) && selectedProject.epics.length
@@ -7823,6 +8377,8 @@ function wireModals() {
   const employeeModal = byId("employee-modal");
   const clientModal = byId("client-modal");
   const activityModal = byId("activity-modal");
+  const financeModal = byId("finance-modal");
+  const expenseModal = byId("expense-modal");
   const monitorTaskModal = byId("monitor-task-modal");
   const ganttModal = byId("gantt-modal");
   const deleteProjectBtn = byId("delete-project-btn");
@@ -7850,6 +8406,16 @@ function wireModals() {
       openActivityModal("new");
       return;
     }
+    const financeBtn = e.target.closest("[data-open-financials]");
+    if (financeBtn) {
+      openFinanceModal();
+      return;
+    }
+    const expenseBtn = e.target.closest("[data-open-expense]");
+    if (expenseBtn) {
+      openExpenseModal(expenseBtn.dataset.openExpense || "despesa");
+      return;
+    }
     const exportBtn = e.target.closest("[data-export-project]");
     if (exportBtn) {
       openExportPopover(exportBtn);
@@ -7872,11 +8438,14 @@ function wireModals() {
       if (employeeModal) hideModal(employeeModal);
       if (clientModal) hideModal(clientModal);
       if (activityModal) hideModal(activityModal);
+      if (financeModal) hideModal(financeModal);
+      if (expenseModal) hideModal(expenseModal);
       if (monitorTaskModal) hideModal(monitorTaskModal);
       if (ganttModal) hideModal(ganttModal);
       resetProjectModal();
       resetClientModal();
       resetActivityModal();
+      resetExpenseModal();
       resetMonitorTaskModal();
     });
   });
@@ -7953,7 +8522,7 @@ function wireModals() {
           alert("Cliente nao encontrado.");
           return;
         }
-        const newProject = { ...payload, tasks: [], epics: DEFAULT_EPICS.slice(), packages: [] };
+        const newProject = { ...payload, tasks: [], epics: DEFAULT_EPICS.slice(), packages: [], financials: [] };
         client.projects.push(newProject);
         state.selectedClient = client;
         state.selectedProject = newProject;
@@ -7983,6 +8552,38 @@ function wireModals() {
       employeeForm.reset();
       if (employeeModal) hideModal(employeeModal);
       alert("Funcionario cadastrado!");
+    });
+  }
+
+  const expenseForm = byId("expense-form");
+  if (expenseForm) {
+    expenseForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const project = state.selectedProject;
+      if (!project) {
+        alert("Nenhum projeto selecionado.");
+        return;
+      }
+      const data = new FormData(expenseForm);
+      const amount = parseNumericValue(data.get("amount"));
+      if (!Number.isFinite(amount) || amount <= 0) {
+        alert("Informe um valor valido.");
+        return;
+      }
+      const entry = {
+        id: createFinanceEntryId(),
+        type: normalizeFinanceType(data.get("type")),
+        description: String(data.get("description") || "").trim(),
+        amount,
+        date: data.get("date") || "",
+        createdAt: Date.now()
+      };
+      getProjectFinancials(project).push(entry);
+      persistProjectFinancials(project);
+      if (expenseModal) hideModal(expenseModal);
+      resetExpenseModal();
+      renderMain();
+      openFinanceModal();
     });
   }
 
@@ -8638,6 +9239,110 @@ function resetActivityModal() {
   if (title) title.textContent = "Nova Atividade";
   if (submitBtn) submitBtn.textContent = "Salvar Atividade";
   updateActivityPackageField();
+}
+
+function createFinanceEntryId() {
+  return `fin_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function persistProjectFinancials(project) {
+  saveLocalState();
+  if (db && project?.id && project?.clientId) {
+    updateProjectFinancialsOnDb(project.clientId, project.id, project.financials).catch((err) => {
+      console.error(err);
+      alert("Erro ao salvar financeiro no Firebase.");
+    });
+  }
+}
+
+function openFinanceModal() {
+  const project = state.selectedProject;
+  const modal = byId("finance-modal");
+  if (!project || !modal) return;
+  const summary = computeFinanceSummary(project);
+  const entries = sortFinanceEntries(summary.entries);
+  const summaryBox = modal.querySelector("[data-finance-summary]");
+  const historyBody = modal.querySelector("[data-finance-history]");
+
+  if (summaryBox) {
+    const saldoClass = summary.saldo < 0 ? "is-negative" : "is-positive";
+    const cards = [];
+    if (Number.isFinite(summary.budgetBase)) {
+      cards.push(`
+        <div class="summary-card">
+          <div class="label">Orcamento base</div>
+          <div class="value">${formatCurrency(summary.budgetBase)}</div>
+        </div>
+      `);
+    }
+    cards.push(`
+      <div class="summary-card">
+        <div class="label">Receita</div>
+        <div class="value">${formatCurrency(summary.receita)}</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">Despesa</div>
+        <div class="value">${formatCurrency(summary.despesa)}</div>
+      </div>
+      <div class="summary-card ${saldoClass}">
+        <div class="label">Saldo</div>
+        <div class="value">${formatCurrency(summary.saldo)}</div>
+      </div>
+    `);
+    summaryBox.innerHTML = cards.join("");
+  }
+
+  if (historyBody) {
+    let running = Number.isFinite(summary.budgetBase) ? summary.budgetBase : 0;
+    const rows = entries.length
+      ? entries
+          .map((entry) => {
+            const type = normalizeFinanceType(entry?.type);
+            const amount = parseNumericValue(entry?.amount);
+            running += type === "receita" ? amount : -amount;
+            const dateLabel = formatDateBR(entry?.date) || "-";
+            const description = entry?.description ? escapeHtml(entry.description) : "-";
+            const typeLabel = type === "receita" ? "Receita" : "Despesa";
+            const amountLabel = formatFinanceAmount(amount, type);
+            const runningLabel = formatCurrency(running);
+            return `
+              <tr>
+                <td>${dateLabel}</td>
+                <td>${typeLabel}</td>
+                <td>${description}</td>
+                <td>${amountLabel}</td>
+                <td>${runningLabel}</td>
+              </tr>
+            `;
+          })
+          .join("")
+      : `<tr><td colspan="5">Nenhum movimento cadastrado.</td></tr>`;
+    historyBody.innerHTML = rows;
+  }
+
+  showModal(modal);
+}
+
+function openExpenseModal(defaultType = "despesa") {
+  const financeModal = byId("finance-modal");
+  const modal = byId("expense-modal");
+  const form = byId("expense-form");
+  if (form) {
+    form.reset();
+    if (form.elements.type) {
+      form.elements.type.value = normalizeFinanceType(defaultType);
+    }
+    if (form.elements.date) {
+      form.elements.date.value = new Date().toISOString().slice(0, 10);
+    }
+  }
+  if (financeModal) hideModal(financeModal);
+  if (modal) showModal(modal);
+}
+
+function resetExpenseModal() {
+  const form = byId("expense-form");
+  if (form) form.reset();
 }
 
 function openImprovementModal(improvementId = null) {
@@ -9859,6 +10564,7 @@ async function saveProjectToDb(payload) {
     goLiveDate: payload.end,
     epics: DEFAULT_EPICS.slice(),
     packages: [],
+    financials: [],
     tasks: {},
     createdAt: firebase.database.ServerValue.TIMESTAMP
   });
@@ -9875,6 +10581,12 @@ async function updateProjectOnDb(clientId, projectId, payload) {
     startDate: payload.startDate || payload.start,
     goLiveDate: payload.goLiveDate || payload.end
   });
+}
+
+async function updateProjectFinancialsOnDb(clientId, projectId, financials) {
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).update({ financials });
 }
 
 async function saveTaskToDb(clientId, projectId, task) {
@@ -10115,6 +10827,7 @@ function dashboardDisplayValue(project, key) {
   if (key === "progress") return `${project.progress}%`;
   if (key === "baseline") return `${formatMetric(project.baseline)}%`;
   if (key === "gap") return `${formatSignedMetric(project.gap)}pp`;
+  if (key === "cost") return formatCurrency(project.cost);
   if (key === "goLive") return project.goLive || "-";
   return "";
 }
@@ -10124,7 +10837,7 @@ function dashboardFilterValues(projects, key) {
   const values = Array.from(new Set(projects.map((project) => dashboardDisplayValue(project, key))));
   return values.sort((a, b) => {
     if (column?.type === "number") {
-      const toNumber = (value) => Number(String(value).replace(/[^0-9.+-]/g, ""));
+      const toNumber = (value) => parseNumericValue(value);
       return toNumber(a) - toNumber(b);
     }
     if (column?.type === "date") {
@@ -10186,8 +10899,10 @@ function allProjects() {
       const sCurveSeries = computeSCurveDailyBaseline(p, p?.tasks || null, progressPct);
       const baseline = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(p, progressPct);
       const gap = round1(baseline - progressPct);
+      const cost = resolveProjectCost(p);
       return {
         ...p,
+        cost,
         clientName: client.name,
         metrics,
         progress: progressPct,
@@ -10295,6 +11010,7 @@ function renderDashboard(container) {
       const avatarHtml = developerName
         ? `<div class="table-person" title="${escapeHtml(developerName)}"><span class="avatar">${escapeHtml(avatarLabel)}</span></div>`
         : `<span class="person-empty">-</span>`;
+      const costLabel = formatCurrency(p.cost);
       const progressBarClass = isCompleted ? "progress-inline-bar progress-inline-bar--done" : "progress-inline-bar";
       const progressValueClass = isCompleted
         ? "progress-inline-value progress-inline-value--done"
@@ -10316,6 +11032,7 @@ function renderDashboard(container) {
           </td>
           <td>${formatMetric(p.baseline)}%</td>
           <td><span class="delta-badge ${gapInfo.className}">${formatSignedMetric(p.gap)}pp</span></td>
+          <td>${costLabel}</td>
           <td>${formatDateBR(p.goLive) || "-"}</td>
         </tr>
       `;
@@ -10329,7 +11046,7 @@ function renderDashboard(container) {
         </tr>
       </thead>
       <tbody>
-        ${rows || "<tr><td colspan='9'>Nenhum projeto cadastrado.</td></tr>"}
+        ${rows || "<tr><td colspan='10'>Nenhum projeto cadastrado.</td></tr>"}
       </tbody>
     </table>
   `;

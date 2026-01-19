@@ -11,7 +11,8 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
-  <link rel="stylesheet" href="styles.css?v=20260101-1">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="styles.css?v=20260101-4">
 </head>
 <body>
   <div id="login-screen" class="login-screen">
@@ -117,6 +118,12 @@
           <span class="nav-link-content">
             <i data-lucide="code-2" class="nav-icon"></i>
             <span>Painel Desenvolvedor</span>
+          </span>
+        </button>
+        <button class="nav-link hidden" data-section="audit" id="nav-audit">
+          <span class="nav-link-content">
+            <i data-lucide="shield-alert" class="nav-icon"></i>
+            <span>Audit Logs</span>
           </span>
         </button>
         <div class="nav-group">
@@ -338,6 +345,71 @@
     </div>
   </div>
 
+  <div class="modal" id="finance-modal">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Financeiro do projeto</h2>
+        <button class="icon-btn" data-close-modal>&times;</button>
+      </div>
+      <div class="finance-summary" data-finance-summary></div>
+      <div class="modal-actions">
+        <button type="button" class="btn primary" data-open-expense>Adicionar despesa</button>
+      </div>
+      <div class="table-card">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Tipo</th>
+              <th>Descricao</th>
+              <th>Valor</th>
+              <th>Saldo</th>
+            </tr>
+          </thead>
+          <tbody data-finance-history></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="expense-modal">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Adicionar movimento</h2>
+        <button class="icon-btn" data-close-modal>&times;</button>
+      </div>
+      <form id="expense-form" class="form">
+        <label>
+          Tipo
+          <select name="type" required>
+            <option value="despesa">Despesa</option>
+            <option value="receita">Receita</option>
+          </select>
+        </label>
+        <label>
+          Descricao
+          <input type="text" name="description" placeholder="Ex.: Licenca, Setup, Mensalidade">
+        </label>
+        <div class="form-grid">
+          <label>
+            Valor
+            <input type="number" name="amount" step="0.01" min="0" required>
+          </label>
+          <label>
+            Data
+            <input type="date" name="date" required>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
+          <button type="submit" class="btn primary">Salvar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="modal gantt-modal" id="gantt-modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal></div>
     <div class="modal-content gantt-content">
@@ -416,7 +488,7 @@
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
-  <script src="./app.js?v=20260101-2" defer></script>
+  <script src="./app.js?v=20260101-5" defer></script>
   <script>
     window.addEventListener("DOMContentLoaded", () => {
       if (window.lucide) {

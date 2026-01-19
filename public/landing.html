@@ -382,5 +382,183 @@
 
       updatePrices("monthly");
     </script>
+
+    <div id="onboarding-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm">
+  
+      <div class="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+        
+        <div class="h-1.5 w-full bg-slate-800">
+          <div id="onboarding-progress" class="h-full bg-emerald-500 transition-all duration-500" style="width: 25%"></div>
+        </div>
+    
+        <div class="p-8">
+          <div id="step-1" class="space-y-6">
+            <div class="text-center">
+              <h2 class="text-2xl font-bold text-white">Bem-vindo ao AXON!</h2>
+              <p class="text-slate-400 mt-2">Vamos configurar o seu espaço de trabalho.</p>
+            </div>
+            
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-slate-300 mb-1">Nome da Companhia</label>
+                <input type="text" id="company-name" placeholder="Ex: AXON Tech" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-emerald-500 outline-none">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-slate-300 mb-1">Ramo de Atuação</label>
+                <select id="company-sector" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white outline-none">
+                  <option value="tech">Tecnologia</option>
+                  <option value="const">Construção Civil</option>
+                  <option value="serv">Serviços</option>
+                  <option value="ind">Indústria</option>
+                </select>
+              </div>
+            </div>
+            <button onclick="nextStep(2)" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-lg transition-colors">Continuar</button>
+          </div>
+    
+          <div id="step-2" class="hidden space-y-6">
+            <div class="text-center">
+              <h2 class="text-2xl font-bold text-white">Tamanho do Time</h2>
+              <p class="text-slate-400 mt-2">Quantas pessoas usarão o sistema?</p>
+            </div>
+    
+            <div class="grid grid-cols-1 gap-3">
+              <button onclick="selectSize('1-5')" class="p-4 border border-slate-700 rounded-xl hover:border-emerald-500 hover:bg-emerald-500/5 text-left text-white transition-all">
+                <span class="block font-bold">1 - 5 Funcionários</span>
+                <span class="text-xs text-slate-400 italic">Ideal para freelancers e pequenos times</span>
+              </button>
+              <button onclick="selectSize('6-20')" class="p-4 border border-slate-700 rounded-xl hover:border-emerald-500 hover:bg-emerald-500/5 text-left text-white transition-all">
+                <span class="block font-bold">6 - 20 Funcionários</span>
+                <span class="text-xs text-slate-400 italic">Perfeito para times em crescimento</span>
+              </button>
+              <button onclick="selectSize('21+')" class="p-4 border border-slate-700 rounded-xl hover:border-emerald-500 hover:bg-emerald-500/5 text-left text-white transition-all">
+                <span class="block font-bold">21+ Funcionários</span>
+                <span class="text-xs text-slate-400 italic">Nível Enterprise com múltiplos projetos</span>
+              </button>
+            </div>
+          </div>
+    
+          <div id="step-3" class="hidden space-y-6">
+            <div class="text-center">
+              <h2 class="text-2xl font-bold text-white">Plano Sugerido</h2>
+              <p class="text-slate-400 mt-2">Com base no seu perfil, recomendamos:</p>
+            </div>
+    
+            <div id="plan-recommendation" class="bg-emerald-500/10 border border-emerald-500/50 p-6 rounded-2xl text-center">
+              <h3 id="plan-title" class="text-xl font-bold text-emerald-400">Plano Professional</h3>
+              <p class="text-slate-300 text-sm mt-2">Gestão avançada de indicadores e métricas de time para até 20 usuários.</p>
+              <button class="mt-4 text-emerald-400 text-sm underline font-medium">Ver detalhes do plano</button>
+            </div>
+    
+            <button onclick="nextStep(4)" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-lg transition-colors">Continuar</button>
+          </div>
+
+          <div id="step-4" class="hidden space-y-6">
+            <div class="text-center">
+              <h2 class="text-2xl font-bold text-white">Termos e Privacidade</h2>
+              <p class="text-slate-400 mt-2">Segurança e conformidade Enterprise.</p>
+            </div>
+
+            <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-4 text-sm text-slate-300 h-32 overflow-y-auto">
+              <p class="mb-2"><strong>1. Auditoria:</strong> Todas as ações administrativas são registradas para segurança.</p>
+              <p class="mb-2"><strong>2. Dados:</strong> Seus dados são protegidos e você possui direito ao esquecimento conforme LGPD.</p>
+              <p>Ao continuar, você concorda com o monitoramento de logs de segurança e os termos de serviço.</p>
+            </div>
+
+            <label class="flex items-start gap-3 p-3 border border-slate-700 rounded-xl cursor-pointer hover:bg-slate-800/50 transition-colors">
+              <input type="checkbox" id="terms-check" class="mt-1 w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-500 focus:ring-emerald-500" onchange="toggleFinishButton()">
+              <span class="text-sm text-slate-300">Li e aceito os Termos de Uso e a Política de Privacidade.</span>
+            </label>
+
+            <button id="btn-finish" onclick="handleAcceptTerms()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-lg transition-colors opacity-50 cursor-not-allowed" disabled>Confirmar e Acessar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      let onboardingData = {
+          company: '',
+          sector: '',
+          size: ''
+      };
+
+      function nextStep(step) {
+          // Esconder todos os passos
+          document.getElementById('step-1').classList.add('hidden');
+          document.getElementById('step-2').classList.add('hidden');
+          document.getElementById('step-3').classList.add('hidden');
+          document.getElementById('step-4').classList.add('hidden');
+
+          // Mostrar o passo atual
+          document.getElementById(`step-${step}`).classList.remove('hidden');
+
+          // Atualizar barra de progresso
+          const progress = (step / 4) * 100;
+          document.getElementById('onboarding-progress').style.width = `${progress}%`;
+      }
+
+      function selectSize(size) {
+          onboardingData.size = size;
+          
+          // Lógica de Sugestão de Plano
+          const planTitle = document.getElementById('plan-title');
+          const planDescription = document.querySelector('#plan-recommendation p');
+          if (size === '1-5') {
+            planTitle.innerText = "Plano Starter";
+            planDescription.innerText = "Funcionalidades essenciais para freelancers e times pequenos iniciarem seus projetos.";
+          }
+          else if (size === '6-20') {
+            planTitle.innerText = "Plano Professional";
+            planDescription.innerText = "Gestão avançada de indicadores e métricas de time para até 20 usuários.";
+          }
+          else {
+            planTitle.innerText = "Plano Enterprise";
+            planDescription.innerText = "Soluções completas para grandes equipes, com múltiplos projetos e governança corporativa.";
+          }
+
+          nextStep(3);
+      }
+
+      function toggleFinishButton() {
+        const check = document.getElementById('terms-check');
+        const btn = document.getElementById('btn-finish');
+        if (check.checked) {
+          btn.classList.remove('opacity-50', 'cursor-not-allowed');
+          btn.disabled = false;
+        } else {
+          btn.classList.add('opacity-50', 'cursor-not-allowed');
+          btn.disabled = true;
+        }
+      }
+
+      async function handleAcceptTerms() {
+        // Simulação da chamada ao Supabase para registrar o aceite
+        /*
+        const { data, error } = await supabase
+          .from('profiles')
+          .update({ 
+            accepted_terms: true, 
+            terms_accepted_at: new Date().toISOString() 
+          })
+          .eq('id', user.id);
+        */
+        console.log("Termos aceitos. Registrando auditoria...");
+        finishOnboarding();
+      }
+
+      function finishOnboarding() {
+          onboardingData.company = document.getElementById('company-name').value;
+          onboardingData.sector = document.getElementById('company-sector').value;
+
+          console.log("Dados salvos:", onboardingData);
+          
+          // Efeito de saída
+          const modal = document.getElementById('onboarding-modal');
+          modal.classList.add('opacity-0', 'pointer-events-none');
+          setTimeout(() => {
+              modal.remove();
+          }, 500);
+      }
+    </script>
   </body>
 </html>

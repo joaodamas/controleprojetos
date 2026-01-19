@@ -407,6 +407,12 @@ body {
   gap: 12px;
 }
 
+.project-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .project-header h2 {
   margin: 0;
   font-size: 20px;
@@ -437,6 +443,25 @@ body {
   box-shadow: var(--shadow);
 }
 
+button.metric-card {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.metric-card.is-clickable {
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.metric-card.is-clickable:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
 .metric-card .label {
   color: var(--muted);
   font-weight: 600;
@@ -447,6 +472,41 @@ body {
   font-size: 22px;
   font-weight: 700;
   margin-top: 6px;
+}
+
+.finance-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.finance-summary .summary-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.finance-summary .summary-card .label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.finance-summary .summary-card .value {
+  font-size: 20px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.finance-summary .summary-card.is-negative .value {
+  color: #b91c1c;
+}
+
+.finance-summary .summary-card.is-positive .value {
+  color: var(--accent);
 }
 
 .hero-card {

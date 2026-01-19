@@ -3,9 +3,10 @@
 export function useUser() {
   return {
     user: {
-      name: "João Damas",
+      name: "Joao Damas",
       email: "joao@exemplo.com",
       plan: "STARTER", // Default plan for demonstration
+      has_completed_onboarding: false,
     },
   };
 }

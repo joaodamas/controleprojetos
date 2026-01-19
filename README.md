@@ -1,3 +1,112 @@
+# Nova Página de Gerenciamento de Usuários (React)
+
+Olá! Criei os arquivos para a nova página de gerenciamento de usuários com o design "Enterprise" que você solicitou, utilizando React e o padrão de `DataTable`.
+
+Devido a restrições no ambiente de execução, não foi possível instalar as dependências e componentes de UI automaticamente. **Por favor, siga os passos abaixo para completar a configuração:**
+
+### 1. Instale as dependências
+
+Abra o terminal na raiz do projeto e execute o comando abaixo para instalar as bibliotecas necessárias que foram adicionadas ao `package.json` (`@tanstack/react-table`, `class-variance-authority`, `clsx`, `tailwind-merge`, etc.).
+
+```bash
+npm install
+```
+
+### 2. Configure o Tailwind CSS
+
+O `shadcn/ui` utiliza o Tailwind CSS. Crie os seguintes arquivos de configuração na raiz do projeto:
+
+**`tailwind.config.js`**
+```javascript
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  darkMode: ["class"],
+  content: [
+    './pages/**/*.{ts,tsx}',
+    './components/**/*.{ts,tsx}',
+    './app/**/*.{ts,tsx}',
+    './src/**/*.{ts,tsx}',
+	],
+  prefix: "",
+  theme: {
+    container: {
+      center: true,
+      padding: "2rem",
+      screens: {
+        "2xl": "1400px",
+      },
+    },
+    extend: {
+      keyframes: {
+        "accordion-down": {
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
+        },
+        "accordion-up": {
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
+        },
+      },
+      animation: {
+        "accordion-down": "accordion-down 0.2s ease-out",
+        "accordion-up": "accordion-up 0.2s ease-out",
+      },
+    },
+  },
+  plugins: [require("tailwindcss-animate")],
+}
+```
+
+**`postcss.config.js`**
+```javascript
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+```
+
+E adicione as diretivas do Tailwind no topo do seu arquivo CSS global (ex: `styles.css`):
+```css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+```
+*(Não consegui identificar seu CSS global, por favor, adicione a um arquivo como `styles.css` ou similar que seja importado globalmente)*
+
+### 3. Adicione os Componentes da UI
+
+Execute o comando do `shadcn/ui` para adicionar os componentes que a página utiliza. Ele irá detectar os arquivos que já criei e/ou adicionar os que faltam.
+
+```bash
+npx shadcn-ui@latest add table dropdown-menu badge tabs card button input
+```
+
+### 4. Visualize a Página
+
+Os arquivos da nova feature estão localizados em:
+- `components/UserManagement/UserManagementPage.tsx` (O componente principal da página)
+- `components/UserManagement/columns.tsx` (As definições de coluna da tabela)
+- `components/ui/data-table.tsx` (O componente reutilizável da tabela)
+
+Para visualizar, importe e renderize o componente `UserManagementPage` no seu arquivo principal da aplicação React (por exemplo, `app.js`, `demo.tsx` ou outro ponto de entrada).
+
+**Exemplo:**
+```jsx
+import UserManagementPage from './components/UserManagement/UserManagementPage';
+
+function App() {
+  return (
+    <UserManagementPage />
+  );
+}
+
+export default App;
+```
+
+---
+
 # AXON - Projects
 
 Script em Python para cadastrar projetos, atividades, acompanhar percentual de avanco (conforme conclusao das atividades) e enviar alertas por e-mail quando ha tarefas proximas do vencimento.
