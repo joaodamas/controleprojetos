@@ -2727,7 +2727,7 @@ function allProjects() {
     (client.projects || []).map((p) => {
       const metrics = projectMetrics(p.tasks || []);
       const baseline = baselinePctFromDates(p.start, p.end);
-      const gap = round1(metrics.progress - baseline);
+      const gap = round1(baseline - metrics.progress);
       const cost = resolveProjectCost(p);
       return {
         ...p,
