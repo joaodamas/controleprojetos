@@ -5,6 +5,7 @@
 
 # Node
 node_modules/
+apps/**/node_modules/
 
 # Python
 __pycache__/
@@ -14,7 +15,16 @@ venv/
 
 # Logs
 *.log
+*.out
+*.err
 .firebase/
 
 # Environment variables
 .env
+.env.*
+
+# Build artifacts
+dist/
+build/
+.vite/
+coverage/
