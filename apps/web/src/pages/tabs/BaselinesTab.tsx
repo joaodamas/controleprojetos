@@ -130,7 +130,7 @@ export function BaselinesTab() {
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>Slips criticos</div>
                   {diff.slipsCritical.map((row) => (
                     <div key={row.workItemId} style={{ opacity: 0.85, marginTop: 6 }}>
-                      {row.title}: {row.baselineDue} -> {row.currentDue} (+{row.slipDays}d)
+                        {row.title}: {row.baselineDue} {"->"} {row.currentDue} (+{row.slipDays}d)
                     </div>
                   ))}
                 </div>
