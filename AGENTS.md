@@ -26,7 +26,7 @@ Sem buzzword. Sem “SaaS genérico pra tudo”. O objetivo é: reduzir atraso o
 ## Estrutura do repositório
 - apps/server: API Express, Prisma Client, rotas
 - apps/web: React UI
-- prisma: schema + migrations
+- apps/server/prisma: schema + migrations
 
 ## Regras de engenharia (não negociar)
 1. **Segurança no backend**: guard no front é UX, não segurança.

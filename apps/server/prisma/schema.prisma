@@ -1,0 +1,331 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WorkspaceRole {
+  owner
+  admin
+  manager
+  member
+  viewer
+}
+
+enum WorkspaceInviteStatus {
+  pending
+  accepted
+  revoked
+  expired
+}
+
+enum WorkItemType {
+  phase
+  milestone
+  task
+}
+
+enum RiskSeverity {
+  low
+  med
+  high
+}
+
+enum RiskStatus {
+  open
+  ack
+  resolved
+  ignored
+}
+
+enum InterventionStatus {
+  open
+  in_progress
+  done
+  canceled
+}
+
+model Workspace {
+  id               String   @id @default(cuid())
+  name             String
+  blueprintId      String?
+  blueprintVersion Int?
+  governancePreset String?
+  statusesJson     Json?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  members          WorkspaceMember[]
+  clients          Client[]
+  projects         Project[]
+  workItems        WorkItem[]
+  baselines        BaselineSnapshot[]
+  risks            Risk[]
+  interventions    Intervention[]
+  invites          WorkspaceInvite[]
+  auditEvents      AuditEvent[]
+  recomputeRuns    RecomputeRun[]
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole
+
+  createdAt   DateTime @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model WorkspaceInvite {
+  id               String               @id @default(cuid())
+  workspaceId      String
+  email            String
+  role             WorkspaceRole
+  status           WorkspaceInviteStatus @default(pending)
+
+  tokenHash        String               @unique
+  tokenPrefix      String?
+
+  invitedByUserId  String
+  acceptedByUserId String?
+  acceptedAt       DateTime?
+  revokedAt        DateTime?
+  expiresAt        DateTime
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, email, status])
+  @@index([workspaceId, status, createdAt])
+  @@index([email, status])
+  @@index([expiresAt])
+}
+
+model Client {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  projects    Project[]
+}
+
+model Project {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  clientId         String?
+  name             String
+
+  health           String?
+  healthReason     String?
+
+  baselineActiveId String?  @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client           Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  baselineActive   BaselineSnapshot? @relation("ActiveBaseline", fields: [baselineActiveId], references: [id], onDelete: SetNull)
+
+  workItems        WorkItem[]
+  baselines        BaselineSnapshot[] @relation("ProjectBaselines")
+  risks            Risk[]
+  interventions    Intervention[]
+  lastSeen         UserProjectLastSeen[]
+  auditEvents      AuditEvent[]
+  recomputeRuns    RecomputeRun[]
+  recomputeQueue   RecomputeQueue?
+
+  @@index([workspaceId])
+}
+
+model WorkItem {
+  id          String       @id @default(cuid())
+  workspaceId String
+  projectId   String
+
+  type        WorkItemType
+  parentId    String?
+  title       String
+  status      String
+
+  startDate   DateTime?
+  dueDate     DateTime?
+  doneAt      DateTime?
+
+  ownerUserId String?
+  isCritical  Boolean      @default(false)
+
+  orderIndex  Int          @default(0)
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  parent      WorkItem? @relation("WorkItemTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    WorkItem[] @relation("WorkItemTree")
+
+  @@index([projectId])
+  @@index([parentId])
+}
+
+model BaselineSnapshot {
+  id          String   @id @default(cuid())
+  workspaceId String
+  projectId   String
+
+  label       String?
+  payloadJson Json
+  summaryJson Json?
+
+  createdByUserId String
+  createdAt   DateTime @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project     Project   @relation("ProjectBaselines", fields: [projectId], references: [id], onDelete: Cascade)
+  activeForProject Project? @relation("ActiveBaseline")
+
+  @@index([projectId, createdAt])
+}
+
+model Risk {
+  id              String       @id @default(cuid())
+  workspaceId      String
+  projectId        String
+
+  ruleId           String
+  targetKey        String
+  targetWorkItemId String?
+
+  severity         RiskSeverity
+  status           RiskStatus
+
+  explanation      String
+  evidenceJson     Json?
+
+  createdAt        DateTime @default(now())
+  resolvedAt       DateTime?
+
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  intervention     Intervention?
+
+  @@unique([projectId, ruleId, targetKey])
+  @@index([projectId, status])
+}
+
+model Intervention {
+  id               String             @id @default(cuid())
+  workspaceId       String
+  projectId         String
+  riskId            String             @unique
+
+  title             String
+  status            InterventionStatus
+
+  ownerUserId       String?
+  dueDate           DateTime?
+
+  checklistJson     Json?
+  evidenceLinksJson Json?
+  evidenceNote      String?
+  closedAt          DateTime?
+  closedByUserId    String?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  risk              Risk      @relation(fields: [riskId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status])
+  @@index([workspaceId, status])
+  @@index([workspaceId, status, dueDate])
+  @@index([workspaceId, status, updatedAt])
+}
+
+model UserProjectLastSeen {
+  id         String   @id @default(cuid())
+  userId     String
+  projectId  String
+  lastSeenAt DateTime @default(now())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([projectId])
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  workspaceId String
+  projectId   String?
+  actorUserId String
+  type        String
+  payloadJson Json?
+  createdAt   DateTime @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([type, createdAt])
+}
+
+model RecomputeRun {
+  id          String   @id @default(cuid())
+  workspaceId String
+  projectId   String
+  reason      String
+  durationMs  Int
+  candidates  Int
+  upserted    Int
+  resolved    Int
+  high        Int
+  createdAt   DateTime @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([projectId, createdAt])
+}
+
+model RecomputeQueue {
+  id          String   @id @default(cuid())
+  workspaceId String
+  projectId   String   @unique
+
+  reason      String
+  nextRunAt   DateTime
+  lockedAt    DateTime?
+  lockedBy    String?
+  attempts    Int      @default(0)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([nextRunAt])
+  @@index([lockedAt])
+  @@index([workspaceId, nextRunAt])
+  @@index([nextRunAt, lockedAt])
+}
