@@ -3669,6 +3669,174 @@ async function sendPasswordReset(email) {
   await auth.sendPasswordResetEmail(email);
 }
 
+let adminAuthApp = null;
+let adminAuthInstance = null;
+
+function getAdminAuth() {
+  if (!firebase?.apps?.length) return null;
+  if (!adminAuthApp) {
+    adminAuthApp = firebase.apps.find((app) => app.name === "admin-create") || firebase.initializeApp(firebaseConfig, "admin-create");
+    adminAuthInstance = adminAuthApp.auth();
+    adminAuthInstance.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(() => null);
+  }
+  return adminAuthInstance;
+}
+
+function generateTempPassword() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  let out = "";
+  for (let i = 0; i < 12; i += 1) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
+}
+
+async function createUserFromAdminInvite({ email, name, role }) {
+  if (!db) throw new Error("Banco indisponivel.");
+  const adminAuth = getAdminAuth();
+  if (!adminAuth) throw new Error("Auth indisponivel.");
+  const tempPassword = generateTempPassword();
+  try {
+    const credential = await adminAuth.createUserWithEmailAndPassword(email, tempPassword);
+    const createdUser = credential?.user;
+    if (!createdUser) throw new Error("Falha ao criar usuario.");
+    if (name) {
+      await createdUser.updateProfile({ displayName: name });
+    }
+    const uid = createdUser.uid;
+    await db.ref(`users/${uid}`).update({
+      uid,
+      email,
+      displayName: name || "",
+      role: normalizeUserRole(role),
+      createdAt: firebase.database.ServerValue.TIMESTAMP
+    });
+    return { uid, tempPassword };
+  } finally {
+    await adminAuth.signOut().catch(() => null);
+  }
+}
+
+async function inviteUserFlow() {
+  const currentRole = normalizeUserRole(state.currentUserRole);
+  if (currentRole !== "admin") {
+    alert("Apenas administradores podem convidar usuarios.");
+    return;
+  }
+  if (!db) {
+    alert("Firebase nao configurado.");
+    return;
+  }
+  const rawEmail = window.prompt("E-mail do usuario:");
+  const email = String(rawEmail || "").trim().toLowerCase();
+  if (!email) return;
+  const rawName = window.prompt("Nome completo (opcional):");
+  const name = String(rawName || "").trim();
+  const role = "admin";
+
+  const confirmed = window.confirm(`Criar usuario ${email} com acesso total?`);
+  if (!confirmed) return;
+
+  try {
+    const result = await createUserFromAdminInvite({ email, name, role });
+    try {
+      await sendPasswordReset(email);
+    } catch (err) {
+      console.warn("Falha ao enviar redefinicao de senha.", err);
+    }
+    await loadAdminUsers();
+    alert(`Usuario criado. Senha temporaria: ${result.tempPassword}`);
+  } catch (err) {
+    console.error(err);
+    if (err?.code === "auth/email-already-in-use") {
+      alert("Este e-mail ja possui conta. Acesse o usuario e defina o perfil como Administrador.");
+      return;
+    }
+    alert("Nao foi possivel criar o usuario.");
+  }
+}
+
+function openCreateUserModal() {
+  const modal = byId("admin-create-user-modal");
+  if (!modal) return;
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+  const status = byId("admin-create-user-status");
+  if (status) {
+    status.textContent = "";
+    status.classList.remove("error", "success");
+  }
+}
+
+function closeCreateUserModal() {
+  const modal = byId("admin-create-user-modal");
+  if (!modal) return;
+  modal.classList.remove("show");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function wireCreateUserModal() {
+  const modal = byId("admin-create-user-modal");
+  if (!modal || modal.dataset.wired) return;
+  modal.dataset.wired = "true";
+
+  modal.addEventListener("click", (event) => {
+    if (event.target.closest("[data-modal-close]")) {
+      closeCreateUserModal();
+    }
+  });
+
+  const form = byId("admin-create-user-form");
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const emailInput = byId("admin-create-user-email");
+      const nameInput = byId("admin-create-user-name");
+      const status = byId("admin-create-user-status");
+      const email = String(emailInput?.value || "").trim().toLowerCase();
+      const name = String(nameInput?.value || "").trim();
+
+      if (status) {
+        status.textContent = "";
+        status.classList.remove("error", "success");
+      }
+
+      if (!email || !email.includes("@")) {
+        if (status) {
+          status.textContent = "Informe um e-mail valido.";
+          status.classList.add("error");
+        }
+        return;
+      }
+
+      try {
+        const result = await createUserFromAdminInvite({ email, name, role: "admin" });
+        try {
+          await sendPasswordReset(email);
+        } catch (err) {
+          console.warn("Falha ao enviar redefinicao de senha.", err);
+        }
+        await loadAdminUsers();
+        if (status) {
+          status.textContent = `Usuario criado. Senha temporaria: ${result.tempPassword}`;
+          status.classList.add("success");
+        }
+        if (emailInput) emailInput.value = "";
+        if (nameInput) nameInput.value = "";
+      } catch (err) {
+        console.error(err);
+        if (status) {
+          status.textContent =
+            err?.code === "auth/email-already-in-use"
+              ? "Este e-mail ja possui conta. Ajuste o perfil para Administrador."
+              : "Nao foi possivel criar o usuario.";
+          status.classList.add("error");
+        }
+      }
+    });
+  }
+}
+
 async function createGroupInDb(name) {
   if (!db) return null;
   const groupRef = db.ref("groups").push();
@@ -5195,7 +5363,7 @@ function renderConfig(container) {
                 <i data-lucide="search"></i>
                 <input id="admin-users-search" type="search" placeholder="Buscar usuario ou e-mail">
               </label>
-              <button class="btn primary" type="button" id="admin-invite-btn">+ Convidar usuario</button>
+              <button class="btn primary" type="button" id="admin-invite-btn">Criar usuario</button>
             </div>
           </div>
           <div class="config-users-filters">
@@ -5294,6 +5462,32 @@ function renderConfig(container) {
           </div>
           <div id="admin-groups-list" class="config-groups">Carregando grupos...</div>
         </div>
+
+        <div class="modal" id="admin-create-user-modal" aria-hidden="true">
+          <div class="modal-backdrop" data-modal-close></div>
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3>Criar usuario</h3>
+              <button class="btn sm ghost" type="button" data-modal-close>Fechar</button>
+            </div>
+            <form id="admin-create-user-form" class="form">
+              <label>
+                Nome completo
+                <input id="admin-create-user-name" type="text" placeholder="Nome do usuario">
+              </label>
+              <label>
+                E-mail
+                <input id="admin-create-user-email" type="email" placeholder="usuario@email.com" required>
+              </label>
+              <div class="config-hint">O usuario sera criado como Administrador e vera os mesmos projetos.</div>
+              <div class="modal-actions">
+                <button class="btn ghost" type="button" data-modal-close>Cancelar</button>
+                <button class="btn primary" type="submit">Criar usuario</button>
+              </div>
+              <p id="admin-create-user-status" class="config-message"></p>
+            </form>
+          </div>
+        </div>
       ` : ""}
     </div>
   `;
@@ -5363,7 +5557,7 @@ function renderConfig(container) {
     const inviteBtn = byId("admin-invite-btn");
     if (inviteBtn && !inviteBtn.dataset.wired) {
       inviteBtn.addEventListener("click", () => {
-        alert("Fluxo de convite em configuracao.");
+        openCreateUserModal();
       });
       inviteBtn.dataset.wired = "true";
     }
@@ -5371,6 +5565,7 @@ function renderConfig(container) {
     loadAdminUsers();
     loadAdminGroups();
     wireAdminUserDrawer();
+    wireCreateUserModal();
 
     const groupCreateBtn = byId("group-create-btn");
     if (groupCreateBtn && !groupCreateBtn.dataset.wired) {
@@ -7294,7 +7489,7 @@ function renderConfig(container) {
                 <i data-lucide="search"></i>
                 <input id="admin-users-search" type="search" placeholder="Buscar usuario ou e-mail">
               </label>
-              <button class="btn primary" type="button" id="admin-invite-btn">+ Convidar usuario</button>
+              <button class="btn primary" type="button" id="admin-invite-btn">Criar usuario</button>
             </div>
           </div>
           <div class="config-users-filters">
@@ -7393,6 +7588,32 @@ function renderConfig(container) {
           </div>
           <div id="admin-groups-list" class="config-groups">Carregando grupos...</div>
         </div>
+
+        <div class="modal" id="admin-create-user-modal" aria-hidden="true">
+          <div class="modal-backdrop" data-modal-close></div>
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3>Criar usuario</h3>
+              <button class="btn sm ghost" type="button" data-modal-close>Fechar</button>
+            </div>
+            <form id="admin-create-user-form" class="form">
+              <label>
+                Nome completo
+                <input id="admin-create-user-name" type="text" placeholder="Nome do usuario">
+              </label>
+              <label>
+                E-mail
+                <input id="admin-create-user-email" type="email" placeholder="usuario@email.com" required>
+              </label>
+              <div class="config-hint">O usuario sera criado como Administrador e vera os mesmos projetos.</div>
+              <div class="modal-actions">
+                <button class="btn ghost" type="button" data-modal-close>Cancelar</button>
+                <button class="btn primary" type="submit">Criar usuario</button>
+              </div>
+              <p id="admin-create-user-status" class="config-message"></p>
+            </form>
+          </div>
+        </div>
       ` : ""}
     </div>
   `;
@@ -7462,7 +7683,7 @@ function renderConfig(container) {
     const inviteBtn = byId("admin-invite-btn");
     if (inviteBtn && !inviteBtn.dataset.wired) {
       inviteBtn.addEventListener("click", () => {
-        alert("Fluxo de convite em configuracao.");
+        openCreateUserModal();
       });
       inviteBtn.dataset.wired = "true";
     }
@@ -7470,6 +7691,7 @@ function renderConfig(container) {
     loadAdminUsers();
     loadAdminGroups();
     wireAdminUserDrawer();
+    wireCreateUserModal();
 
     const groupCreateBtn = byId("group-create-btn");
     if (groupCreateBtn && !groupCreateBtn.dataset.wired) {
@@ -11066,3 +11288,10 @@ function renderDashboard(container) {
   container.appendChild(header);
   container.appendChild(tableCard);
 }
+
+
+
+
+
+
+

@@ -9,14 +9,11 @@ const firebaseConfig = {
   measurementId: "G-1HCL23GXV4"
 };
 
-// Supabase Configuration
-const supabaseUrl = "YOUR_SUPABASE_URL";
-const supabaseKey = "YOUR_SUPABASE_ANON_KEY";
-let supabase = null;
-
 let db = null;
 let auth = null;
 let appInitialized = false;
+
+const THEME_STORAGE_KEY = "axon-theme";
 
 const state = {
   clients: [
@@ -211,6 +208,13 @@ const state = {
     { name: "DEV Alovado", role: "Desenvolvedor", email: "dev.alovado@empresa.com" },
     { name: "Ana Lima", role: "Gestora de Projetos", email: "ana.lima@empresa.com" }
   ],
+  improvements: [],
+  users: [],
+  groups: [],
+  currentUserEmail: "",
+  currentUserRole: "user",
+  currentUserKey: "",
+  dbAccessDenied: false,
   selectedClient: null,
   selectedProject: null,
   collapsedPhases: {},
@@ -227,26 +231,254 @@ const state = {
     filters: {}
   },
   monitor: {
-    filters: {
-      client: "",
-      project: "",
-      responsible: ""
-    }
-  }
+    filter: "all",
+    client: "",
+    project: "",
+    responsible: ""
+  },
+  monitorEditing: null
 };
 
 const LOCAL_STORAGE_KEY = "controle_projetos_state_v1";
+const LOCAL_STORAGE_USER_KEY = "controle_projetos_state_user";
 const ADMIN_EMAILS = new Set(["joaodamasit@gmail.com"]);
+
+const STATUS_OPTIONS = [
+  { value: "planejado", label: "Nao iniciado", className: "planejado" },
+  { value: "em_andamento", label: "Em andamento", className: "em-andamento" },
+  { value: "em_validacao", label: "Em validacao", className: "em-validacao" },
+  { value: "parado", label: "Parado", className: "parado" },
+  { value: "atrasado", label: "Atrasado", className: "atrasado" },
+  { value: "concluido", label: "Concluido", className: "concluido" }
+];
+
+const TASK_STATUS_OPTIONS = [
+  { value: "planejado", label: "Nao iniciado", className: "planejado" },
+  { value: "em_andamento", label: "Em andamento", className: "em-andamento" },
+  { value: "em_validacao", label: "Em validacao", className: "em-validacao" },
+  { value: "parado", label: "Parado", className: "parado" },
+  { value: "concluido", label: "Concluido", className: "concluido" }
+];
+
+const DASHBOARD_COLUMNS = [
+  { key: "name", label: "Projeto", type: "text" },
+  { key: "clientName", label: "Cliente", type: "text" },
+  { key: "developer", label: "Responsavel", type: "text" },
+  { key: "status", label: "Status", type: "text" },
+  { key: "schedule", label: "Saúde", type: "text" },
+  { key: "progress", label: "Progresso", type: "number" },
+  { key: "baseline", label: "Previsto", type: "number" },
+  { key: "gap", label: "GAP (pp)", type: "number" },
+  { key: "cost", label: "Custo", type: "number" },
+  { key: "goLive", label: "Go Live previsto", type: "date" }
+];
+
+const MONITOR_FILTERS = [
+  { key: "all", label: "Todos" },
+  { key: "atrasado", label: "Atrasadas" },
+  { key: "proximo", label: "Proximas" }
+];
+
+const DEFAULT_EPICS = ["LEVANTAMENTO", "DESENVOLVIMENTO", "TESTES", "DEPLOY"];
+const PACKAGE_PHASES = ["DESENVOLVIMENTO", "TESTES"];
+
+const PHASE_ORDER = ["LEVANTAMENTO", "DESENVOLVIMENTO", "TESTES", "DEPLOY", "GESTAO", "OUTROS"];
+
+const MOTIVATIONAL_QUOTES = [
+  "Projetos bem gerenciados nao atrasam, eles se adaptam.",
+  "Planejamento claro reduz ruido e acelera entregas.",
+  "Cada marco concluido fortalece o proximo passo.",
+  "Transparencia no progresso evita surpresas no Go Live.",
+  "Equipe alinhada transforma prazo em compromisso."
+];
+
+const byId = (id) => document.getElementById(id);
+
+function normalizeUserKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function currentUserKey(user = auth?.currentUser) {
+  return normalizeUserKey(user?.uid || user?.email || state.currentUserEmail || "");
+}
+
+function localStorageKeyForUser(user = auth?.currentUser) {
+  const key = currentUserKey(user);
+  return key ? `${LOCAL_STORAGE_KEY}_${key}` : LOCAL_STORAGE_KEY;
+}
+
+function persistActiveUserKey(userKey) {
+  try {
+    if (userKey) {
+      localStorage.setItem(LOCAL_STORAGE_USER_KEY, userKey);
+    }
+  } catch (err) {
+    console.warn("Nao foi possivel salvar a chave do usuario.", err);
+  }
+}
+
+function resetUserState() {
+  state.clients = [];
+  state.employees = [];
+  state.improvements = [];
+  state.users = [];
+  state.groups = [];
+  state.selectedClient = null;
+  state.selectedProject = null;
+  state.collapsedPhases = {};
+  state.clientVisibility = {};
+  state.editingProjectId = null;
+  state.editingTaskIndex = null;
+  state.dashboard = { sort: { key: null, direction: "asc" }, filters: {} };
+  state.monitor = { filter: "all", client: "", project: "", responsible: "" };
+  state.currentSection = "inicio";
+  state.lastRenderContext = null;
+}
+
+function clearLocalState(user = auth?.currentUser) {
+  try {
+    localStorage.removeItem(localStorageKeyForUser(user));
+  } catch (err) {
+    console.warn("Nao foi possivel limpar dados locais.", err);
+  }
+}
+
+function formatDateTime(date) {
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const yyyy = date.getFullYear();
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${dd}/${mm}/${yyyy} – ${hh}:${min}`;
+}
+
+function parseTaskDate(value) {
+  if (!value) return null;
+
+  if (typeof value === "number") {
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (iso) {
+    const y = Number(iso[1]);
+    const m = Number(iso[2]);
+    const d = Number(iso[3]);
+    return new Date(y, m - 1, d);
+  }
+
+  const br = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v);
+  if (br) {
+    const d = Number(br[1]);
+    const m = Number(br[2]);
+    const y = Number(br[3]);
+    return new Date(y, m - 1, d);
+  }
+
+  return null;
+}
+
+function formatDateBR(value) {
+  const dt = parseTaskDate(value);
+  if (!dt) return value || "-";
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const yyyy = dt.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function formatDateISO(value) {
+  const dt = value instanceof Date ? value : parseTaskDate(value);
+  if (!dt) return "";
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const yyyy = dt.getFullYear();
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function projectTaskCounts(tasks = []) {
+  const counts = {
+    total: tasks.length,
+    em_andamento: 0,
+    em_validacao: 0,
+    planejado: 0,
+    parado: 0,
+    concluido: 0
+  };
+  tasks.forEach((task) => {
+    const status = normalizeTaskStatus(getTaskStatus(task));
+    if (status === "em_andamento") counts.em_andamento += 1;
+    else if (status === "em_validacao") counts.em_validacao += 1;
+    else if (status === "planejado") counts.planejado += 1;
+    else if (status === "parado") counts.parado += 1;
+    else if (status === "concluido") counts.concluido += 1;
+  });
+  return counts;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function setCrumbPathText(label) {
+  const crumbPath = byId("crumb-path");
+  if (!crumbPath) return;
+  crumbPath.textContent = label;
+}
+
+function setCrumbPathProject(client, project) {
+  const crumbPath = byId("crumb-path");
+  if (!crumbPath) return;
+  const clientLabel = escapeHtml(client?.name || "Cliente");
+  const projectLabel = escapeHtml(project?.name || "Projeto");
+  crumbPath.innerHTML =
+    `<button type="button" class="crumb-link" data-crumb="client">${clientLabel}</button>` +
+    `<span class="crumb-sep">/</span>` +
+    `<button type="button" class="crumb-link current" data-crumb="project">${projectLabel}</button>`;
+}
 
 function isAdminEmail(email) {
   if (!email) return false;
   return ADMIN_EMAILS.has(String(email).trim().toLowerCase());
 }
 
+function isAdminUser(user = auth?.currentUser) {
+  return isAdminEmail(user?.email);
+}
+
+function normalizeUserRole(role) {
+  const value = String(role || "").trim().toLowerCase();
+  if (value === "admin" || value === "administrador") return "admin";
+  if (value === "developer" || value === "dev" || value === "desenvolvedor") return "developer";
+  return "user";
+}
+
+function roleLabel(role) {
+  const normalized = normalizeUserRole(role);
+  if (normalized === "admin") return "Administrador";
+  if (normalized === "developer") return "Desenvolvedor";
+  return "Usuario";
+}
+
+function usesTenantData() {
+  return normalizeUserRole(state.currentUserRole) === "user";
+}
+
 function clientDataRootPath(user = auth?.currentUser) {
-  if (isAdminEmail(user?.email)) return "clients";
-  const uid = user?.uid;
-  return uid ? `tenants/${uid}/clients` : "clients";
+  if (usesTenantData()) {
+    const uid = user?.uid;
+    return uid ? `tenants/${uid}/clients` : null;
+  }
+  return "clients";
 }
 
 function clientDataRootRef(user = auth?.currentUser) {
@@ -260,13 +492,122 @@ function clientDocRef(clientId, user = auth?.currentUser) {
   return root && clientId ? root.child(clientId) : null;
 }
 
-const STATUS_OPTIONS = [
-  { value: "planejado", label: "Planejado", className: "planejado" },
-  { value: "em_andamento", label: "Em andamento", className: "em-andamento" },
-  { value: "em_validacao", label: "Em validacao", className: "em-validacao" },
-  { value: "atrasado", label: "Atrasado", className: "atrasado" },
-  { value: "concluido", label: "Concluido", className: "concluido" }
-];
+function updateRoleNavVisibility() {
+  const role = normalizeUserRole(state.currentUserRole);
+  const isDev = role === "developer";
+  const devLink = byId("nav-dev-board");
+  const navGroup = document.querySelector(".nav-group");
+  const navSections = ["inicio", "dashboard", "monitor", "config"];
+  const topButtons = [
+    document.querySelector('[data-section="relatorio"]'),
+    byId("open-gantt-btn"),
+    byId("open-employee-modal"),
+    byId("edit-project-btn"),
+    byId("open-project-modal")
+  ];
+
+  if (devLink) {
+    devLink.classList.toggle("hidden", !(role === "developer" || role === "admin"));
+  }
+  navSections.forEach((section) => {
+    const link = document.querySelector(`.nav-link[data-section="${section}"]`);
+    if (link) link.classList.toggle("hidden", isDev);
+  });
+  if (navGroup) navGroup.classList.toggle("hidden", isDev);
+  topButtons.forEach((btn) => {
+    if (btn) btn.classList.toggle("hidden", isDev);
+  });
+}
+
+async function loadCurrentUserRole(user = auth?.currentUser) {
+  const fallbackRole = normalizeUserRole(isAdminUser(user) ? "admin" : "user");
+  if (!db || !user?.uid) {
+    state.currentUserRole = fallbackRole;
+    state.currentUserEmail = user?.email || "";
+    updateRoleNavVisibility();
+    return fallbackRole;
+  }
+  try {
+    const snapshot = await db.ref(`users/${user.uid}`).once("value");
+    const data = snapshot.val() || {};
+    const role = normalizeUserRole(data.role || fallbackRole);
+    state.currentUserRole = role;
+    state.currentUserEmail = user?.email || "";
+    updateRoleNavVisibility();
+    return role;
+  } catch (err) {
+    console.warn("Nao foi possivel carregar o perfil do usuario.", err);
+    state.currentUserRole = fallbackRole;
+    state.currentUserEmail = user?.email || "";
+    updateRoleNavVisibility();
+    return fallbackRole;
+  }
+}
+
+function initialsFromName(name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return "U";
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function applyTheme(theme) {
+  const isDark = theme === "dark";
+  document.body.classList.toggle("theme-dark", isDark);
+  document.body.dataset.theme = isDark ? "dark" : "light";
+  const themeText = document.querySelector("[data-theme-text]");
+  if (themeText) themeText.textContent = isDark ? "Dark mode" : "Light mode";
+  const toggle = document.querySelector("[data-theme-toggle]");
+  if (toggle) toggle.setAttribute("aria-pressed", isDark ? "true" : "false");
+}
+
+function getStoredTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY);
+  } catch (err) {
+    return null;
+  }
+}
+
+function storeTheme(theme) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch (err) {
+    // ignore storage errors
+  }
+}
+
+function setupThemeToggle() {
+  const toggle = document.querySelector("[data-theme-toggle]");
+  if (!toggle) return;
+  const stored = getStoredTheme();
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const initial = stored || (prefersDark ? "dark" : "light");
+  applyTheme(initial);
+  toggle.addEventListener("click", () => {
+    const next = document.body.classList.contains("theme-dark") ? "light" : "dark";
+    applyTheme(next);
+    storeTheme(next);
+  });
+}
+
+function updateUserHeader(user) {
+  const nameEl = document.querySelector(".user-name");
+  const avatarEl = document.querySelector(".user-avatar");
+  const sidebarName = document.querySelector("[data-sidebar-name]");
+  const sidebarAvatar = document.querySelector("[data-sidebar-avatar]");
+  const sidebarRole = document.querySelector("[data-sidebar-role]");
+  if (!nameEl && !avatarEl && !sidebarName && !sidebarAvatar && !sidebarRole) return;
+  const label = user?.displayName || user?.email || "Usuario";
+  const initials = initialsFromName(label);
+  const roleLabel = state.currentUserRole === "admin" ? "Administrator" : "Usuario";
+  if (nameEl) nameEl.textContent = label;
+  if (avatarEl) avatarEl.textContent = initials;
+  if (sidebarName) sidebarName.textContent = label;
+  if (sidebarAvatar) sidebarAvatar.textContent = initials;
+  if (sidebarRole) sidebarRole.textContent = roleLabel;
+}
 
 function normStatus(value) {
   return String(value || "")
@@ -304,67 +645,2723 @@ const STATUS_PLANNED = new Set(
   ].map(normStatus)
 );
 
-function normalizeTaskStatus(status) {
-  const value = normStatus(status);
-  if (!value) return "planejado";
-  if (STATUS_DONE.has(value)) return "concluido";
-  if (STATUS_VALIDATION.has(value)) return "em_validacao";
-  if (STATUS_IN_PROGRESS.has(value)) return "em_andamento";
-  if (value === "parado") return "parado";
-  if (STATUS_PLANNED.has(value)) return "planejado";
-  return value.replace(/\s+/g, "_");
+function getTaskStatus(task) {
+  return task?.status ?? task?.state ?? task?.activityStatus ?? task?.situacao ?? "";
 }
 
-const DASHBOARD_COLUMNS = [
-  { key: "name", label: "Projeto", type: "text" },
-  { key: "clientName", label: "Cliente", type: "text" },
-  { key: "developer", label: "Responsavel", type: "text" },
-  { key: "status", label: "Status", type: "text" },
-  { key: "progress", label: "Progresso", type: "number" },
-  { key: "baseline", label: "Previsto", type: "number" },
-  { key: "gap", label: "GAP (pp)", type: "number" },
-  { key: "cost", label: "Custo", type: "number" },
-  { key: "goLive", label: "Go Live previsto", type: "date" }
-];
-
-const DEFAULT_EPICS = ["LEVANTAMENTO", "DESENVOLVIMENTO", "TESTES", "DEPLOY"];
-const PACKAGE_PHASES = ["DESENVOLVIMENTO", "TESTES"];
-
-const PHASE_ORDER = ["LEVANTAMENTO", "DESENVOLVIMENTO", "TESTES", "DEPLOY", "GESTAO", "OUTROS"];
-const CLIENT_COLOR_PALETTE = ["#0f766e", "#1d4ed8", "#b45309", "#0f7660", "#be123c", "#334155"];
-
-const MOTIVATIONAL_QUOTES = [
-  "Projetos bem gerenciados nao atrasam, eles se adaptam.",
-  "Planejamento claro reduz ruido e acelera entregas.",
-  "Cada marco concluido fortalece o proximo passo.",
-  "Transparencia no progresso evita surpresas no Go Live.",
-  "Equipe alinhada transforma prazo em compromisso."
-];
-
-const byId = (id) => document.getElementById(id);
-
-function formatDateTime(date) {
-  const dd = String(date.getDate()).padStart(2, "0");
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  const yyyy = date.getFullYear();
-  const hh = String(date.getHours()).padStart(2, "0");
-  const min = String(date.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} - ${hh}:${min}`;
+function taskTitle(task) {
+  return task?.title || task?.name || task?.item || task?.summary || "(Sem titulo)";
 }
 
-function formatDateBR(value) {
-  if (!value) return "";
-  const dt = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(dt.getTime())) return "";
-  const dd = String(dt.getDate()).padStart(2, "0");
-  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-  const yyyy = dt.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
+function taskOwner(task) {
+  return task?.owner || task?.responsible || task?.responsavel || task?.assignee || "";
+}
+
+function taskProgress(task) {
+  const p = task?.progressPct ?? task?.progress ?? task?.percent ?? null;
+  const n = Number(p);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeTaskProgress(value) {
+  if (value === "" || value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function taskProgressValue(task) {
+  const p = taskProgress(task);
+  if (p != null) return Math.max(0, Math.min(100, Math.round(p)));
+  return isDoneTask(task) ? 100 : 0;
+}
+
+function taskStartStr(task) {
+  return task?.startDate || task?.start || task?.plannedStart || "";
+}
+
+function taskStartKey(task) {
+  if (task?.startDate != null) return "startDate";
+  if (task?.start != null) return "start";
+  if (task?.plannedStart != null) return "plannedStart";
+  return "start";
+}
+
+function taskDateStr(task) {
+  return (
+    task?.startDate ||
+    task?.start ||
+    task?.plannedStart ||
+    task?.dueDate ||
+    task?.due ||
+    task?.endDate ||
+    task?.end ||
+    ""
+  );
+}
+
+function taskDateValueSafe(task) {
+  const dt = parseTaskDate(taskDateStr(task));
+  return dt ? dt.getTime() : Number.POSITIVE_INFINITY;
+}
+
+function isDoneTask(task) {
+  const st = normalizeTaskStatus(getTaskStatus(task));
+  return st === "concluido";
+}
+
+function isInProgressTask(task) {
+  const st = normalizeTaskStatus(getTaskStatus(task));
+  if (st === "em_andamento" || st === "em_validacao") return true;
+  const p = taskProgress(task);
+  return p != null && p > 0 && p < 100 && !isDoneTask(task);
+}
+
+function isPlannedTask(task) {
+  const st = normalizeTaskStatus(getTaskStatus(task));
+  if (!st || st === "planejado") return true;
+  if (st === "em_andamento" || st === "em_validacao" || st === "concluido") return false;
+  const p = taskProgress(task);
+  return p === 0;
+}
+
+function flattenProjectTasks(project) {
+  const epics = project?.epics || project?.epicsList || [];
+  const tasksFromEpics = Array.isArray(epics)
+    ? epics.flatMap((epic) => epic?.tasks || epic?.items || [])
+    : [];
+  const direct = project?.tasks || project?.items || project?.activities || [];
+  const all = [...tasksFromEpics, ...direct];
+  return all.filter(Boolean);
+}
+
+function pickExportLists(project, limit = 5) {
+  const tasks = flattenProjectTasks(project);
+
+  const done = tasks
+    .filter(isDoneTask)
+    .slice()
+    .sort((a, b) => taskDateValueSafe(b) - taskDateValueSafe(a))
+    .slice(0, limit);
+
+  const pending = tasks.filter((task) => !isDoneTask(task));
+
+  const inProgress = pending
+    .filter(isInProgressTask)
+    .slice()
+    .sort((a, b) => {
+      const aRank = taskHealthRank(a);
+      const bRank = taskHealthRank(b);
+      if (aRank !== bRank) return aRank - bRank;
+      const aDue = taskDueValueSafe(a);
+      const bDue = taskDueValueSafe(b);
+      if (aDue !== bDue) return aDue - bDue;
+      return taskTitle(a).localeCompare(taskTitle(b));
+    })
+    .slice(0, limit);
+
+  const nextSteps = pending
+    .filter((task) => !isInProgressTask(task) && isPlannedTask(task))
+    .slice()
+    .sort((a, b) => {
+      const aDue = taskDueValueSafe(a);
+      const bDue = taskDueValueSafe(b);
+      if (aDue !== bDue) return aDue - bDue;
+      return taskTitle(a).localeCompare(taskTitle(b));
+    })
+    .slice(0, limit);
+
+  return { done, inProgress, nextSteps };
+}
+
+function normalizeReportItem(item) {
+  if (!item) return null;
+  if (typeof item === "string" || typeof item === "number") {
+    return { title: String(item), meta: "" };
+  }
+  if (typeof item !== "object") return null;
+  const title = item.title || item.name || item.summary || item.description || item.label;
+  if (!title) return null;
+  const owner = item.owner || item.responsible || item.assignee;
+  const dateRaw = item.date || item.due || item.deadline || item.end;
+  const dateLabel = dateRaw ? formatDateBR(dateRaw) : "";
+  const meta = [owner, dateLabel].filter(Boolean).join(" • ");
+  return { title, meta };
+}
+
+function projectReportItems(project, keys) {
+  const items = [];
+  keys.forEach((key) => {
+    const value = project?.[key];
+    if (!value) return;
+    if (Array.isArray(value)) items.push(...value);
+    else items.push(value);
+  });
+  return items;
+}
+
+function pickProjectReportItems(project, keys, limit) {
+  return projectReportItems(project, keys)
+    .map(normalizeReportItem)
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function renderReportItems(items, emptyLabel) {
+  if (!items.length) {
+    return `<li>${escapeHtml(emptyLabel)}</li>`;
+  }
+  return items
+    .map((item) => `<li>${escapeHtml(item.title)}${item.meta ? ` <span>${escapeHtml(item.meta)}</span>` : ""}</li>`)
+    .join("");
+}
+
+function renderUrgentItems(tasks, todayTs) {
+  if (!tasks.length) {
+    return `<li>${escapeHtml("Sem atrasos no momento.")}</li>`;
+  }
+  const dayMs = 24 * 60 * 60 * 1000;
+  return tasks
+    .map((task) => {
+      const title = taskTitle(task);
+      const dueRaw = taskDueStr(task) || taskDateStr(task);
+      const dueLabel = dueRaw ? formatDateBR(dueRaw) : "-";
+      const dueValue = taskDueValueSafe(task);
+      const daysLate = Number.isFinite(dueValue) ? Math.max(0, Math.ceil((todayTs - dueValue) / dayMs)) : null;
+      const owner = taskOwner(task);
+      const parts = ["Atrasada"];
+      if (daysLate != null) parts.push(`+${daysLate}d`);
+      if (dueLabel && dueLabel !== "-") parts.push(dueLabel);
+      if (owner) parts.push(owner);
+      const meta = parts.join(" \u00b7 ");
+      return `<li>${escapeHtml(title)}${meta ? ` <span>${escapeHtml(meta)}</span>` : ""}</li>`;
+    })
+    .join("");
+}
+
+function taskDueStr(task) {
+  return (
+    task?.dueDate ||
+    task?.due ||
+    task?.plannedEnd ||
+    task?.endDate ||
+    task?.end ||
+    task?.deadline ||
+    ""
+  );
+}
+
+function taskDueKey(task) {
+  if (task?.dueDate != null) return "dueDate";
+  if (task?.due != null) return "due";
+  if (task?.plannedEnd != null) return "plannedEnd";
+  if (task?.endDate != null) return "endDate";
+  if (task?.end != null) return "end";
+  if (task?.deadline != null) return "deadline";
+  return "due";
+}
+
+function taskDueValueSafe(task) {
+  const dt = parseTaskDate(taskDueStr(task));
+  return dt ? dt.getTime() : Number.POSITIVE_INFINITY;
+}
+
+function todayStartTs() {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return d.getTime();
+}
+
+function isOverdueTask(task) {
+  if (isDoneTask(task)) return false;
+  const due = taskDueValueSafe(task);
+  if (!Number.isFinite(due) || due === Number.POSITIVE_INFINITY) return false;
+  return due < todayStartTs();
+}
+
+function nextDeliveryTask(project) {
+  const tasks = flattenProjectTasks(project).filter((task) => !isDoneTask(task));
+  if (!tasks.length) return null;
+  return tasks
+    .slice()
+    .sort((a, b) => {
+      const aDue = taskDueValueSafe(a);
+      const bDue = taskDueValueSafe(b);
+      if (aDue !== bDue) return aDue - bDue;
+      const aDate = taskDateValueSafe(a);
+      const bDate = taskDateValueSafe(b);
+      if (aDate !== bDate) return aDate - bDate;
+      return taskTitle(a).localeCompare(taskTitle(b));
+    })[0];
+}
+
+function computeScheduleSummary(project) {
+  const tasks = flattenProjectTasks(project);
+  const total = tasks.length;
+  const inProgress = tasks.filter((task) => !isDoneTask(task) && isInProgressTask(task)).length;
+  const planned = tasks.filter((task) => !isDoneTask(task) && !isInProgressTask(task) && isPlannedTask(task)).length;
+  const todayTs = todayStartTs();
+  const weekAhead = todayTs + 7 * 24 * 60 * 60 * 1000;
+  let overdue = 0;
+  let dueSoon = 0;
+  tasks.forEach((task) => {
+    if (isDoneTask(task)) return;
+    const due = taskDueValueSafe(task);
+    if (!Number.isFinite(due) || due === Number.POSITIVE_INFINITY) return;
+    if (due < todayTs) overdue += 1;
+    else if (due <= weekAhead) dueSoon += 1;
+  });
+  const scheduleHealthStatus = overdue > 0 ? "em_atraso" : "em_dia";
+  return { total, inProgress, planned, overdue, dueSoon, scheduleHealthStatus };
+}
+
+function pickMostOverdueTasks(project, limit = 5) {
+  const tasks = flattenProjectTasks(project).filter((task) => !isDoneTask(task));
+  const todayTs = todayStartTs();
+  return tasks
+    .filter((task) => {
+      const due = taskDueValueSafe(task);
+      return Number.isFinite(due) && due !== Number.POSITIVE_INFINITY && due < todayTs;
+    })
+    .slice()
+    .sort((a, b) => taskDueValueSafe(a) - taskDueValueSafe(b))
+    .slice(0, limit);
+}
+
+function renderTaskLi(task) {
+  const startRaw = taskStartStr(task);
+  const endRaw = taskDueStr(task) || taskDateStr(task);
+  const startLabel = startRaw ? formatDateBR(startRaw) : "-";
+  const endLabel = endRaw ? formatDateBR(endRaw) : "-";
+  const owner = taskOwner(task);
+  const progressLabel = `${taskProgressValue(task)}%`;
+  const statusLabel = taskStatusInfo(getTaskStatus(task)).label;
+  const healthLabel = taskHealthInfo(task).label;
+  const parts = [];
+  if (owner) parts.push(owner);
+  if (startLabel !== "-" || endLabel !== "-") parts.push(`${startLabel} → ${endLabel}`);
+  parts.push(progressLabel);
+  parts.push(statusLabel);
+  parts.push(healthLabel);
+  const right = parts.join(" • ");
+  return `
+    <li class="op-task">
+      <div class="op-task-title">${escapeHtml(taskTitle(task))}</div>
+      ${right ? `<div class="op-task-meta">${escapeHtml(right)}</div>` : ""}
+    </li>
+  `;
+}
+
+function taskDueLabel(task) {
+  const dueRaw = taskDueStr(task) || taskDateStr(task);
+  return dueRaw ? formatDateBR(dueRaw) : "-";
+}
+
+function taskUrgencyTag(task, todayTs = todayStartTs()) {
+  const dueValue = taskDueValueSafe(task);
+  if (!Number.isFinite(dueValue) || dueValue === Number.POSITIVE_INFINITY) {
+    return { cls: "ok", text: "Sem prazo" };
+  }
+  const diffDays = daysDiff(new Date(todayTs), new Date(dueValue));
+  if (diffDays > 0) return { cls: "bad", text: `Atrasada +${diffDays}d` };
+  if (diffDays === 0) return { cls: "warn", text: "Vence hoje" };
+  const ahead = Math.abs(diffDays);
+  return { cls: "ok", text: `Em dia • ${ahead}d` };
+}
+
+function monitorFilterLabel(filterKey) {
+  const match = MONITOR_FILTERS.find((item) => item.key === filterKey);
+  return match ? match.label : "Todos";
+}
+
+function formatMonitorDateLabel(dueDay, today) {
+  const diff = daysDiff(dueDay, today);
+  if (diff === 0) return "HOJE";
+  if (diff === 1) return "AMANHA";
+  const months = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"];
+  const dd = String(dueDay.getDate()).padStart(2, "0");
+  const mm = months[dueDay.getMonth()] || "";
+  return `${dd} ${mm}`.trim();
+}
+
+function buildMonitorItems() {
+  const today = startOfDay(new Date());
+  const upcomingLimit = startOfDay(addDays(today, 7));
+  const items = [];
+
+  state.clients.forEach((client, clientIndex) => {
+    (client.projects || []).forEach((project, projectIndex) => {
+      (project.tasks || []).forEach((task, taskIndex) => {
+        if (!task) return;
+        if (normalizeTaskStatus(getTaskStatus(task)) === "concluido") return;
+        const dueRaw = taskDueStr(task);
+        const dueDate = parseTaskDate(dueRaw);
+        if (!dueDate) return;
+        const dueDay = startOfDay(dueDate);
+        const isOverdue = dueDay < today;
+        const isUpcoming = dueDay >= today && dueDay <= upcomingLimit;
+        if (!isOverdue && !isUpcoming) return;
+
+        const responsible = taskOwner(task) || project.developer || "A definir";
+        items.push({
+          clientIndex,
+          projectIndex,
+          taskIndex,
+          clientName: client.name,
+          projectName: project.name,
+          projectDeveloper: project.developer || "",
+          taskTitle: taskTitle(task),
+          taskOwner: taskOwner(task),
+          responsible,
+          dueDay,
+          status: isOverdue ? "atrasado" : "proximo",
+          taskId: task.id || "",
+          projectId: project.id || "",
+          clientId: client.id || ""
+        });
+      });
+    });
+  });
+
+  return items;
+}
+
+function renderOnePageItem(task, options = {}) {
+  if (!task) return "";
+  const name = escapeHtml(taskTitle(task));
+  const dueLabel = taskDueLabel(task);
+  const dueText = escapeHtml(dueLabel);
+  const statusLabel = escapeHtml(taskStatusInfo(getTaskStatus(task)).label);
+  const todayTs = options.todayTs ?? todayStartTs();
+  const tag = options.tag || taskUrgencyTag(task, todayTs);
+  const metaParts = [];
+  if (dueLabel && dueLabel !== "-") metaParts.push(`Venc.: <b>${dueText}</b>`);
+  if (statusLabel) metaParts.push(statusLabel);
+  const meta =
+    metaParts.length > 0
+      ? metaParts.map((part) => `<span>${part}</span>`).join("<span>•</span>")
+      : "<span>-</span>";
+  return `
+    <div class="item" title="${name}">
+      <div class="itemTop">
+        <div class="itemName">${name}</div>
+        <span class="tag ${tag.cls}">${escapeHtml(tag.text)}</span>
+      </div>
+      <div class="itemMeta">${meta}</div>
+    </div>
+  `;
+}
+
+function renderOnePageEmptyItem(label) {
+  return `
+    <div class="item empty">
+      <div class="itemName">${escapeHtml(label)}</div>
+    </div>
+  `;
+}
+
+function cssVar(name, fallback, rootEl = document.documentElement) {
+  if (!rootEl || !window.getComputedStyle) return fallback;
+  const value = getComputedStyle(rootEl).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function getSystemColors(rootEl) {
+  return {
+    planned: cssVar("--color-primary", cssVar("--accent-dark", "#245363", rootEl), rootEl),
+    actual: cssVar(
+      "--color-accent",
+      cssVar("--color-warning", cssVar("--warning-text", "#c76b1a", rootEl), rootEl),
+      rootEl
+    ),
+    warn: cssVar("--color-warning", cssVar("--warning-text", "#c76b1a", rootEl), rootEl),
+    ok: cssVar("--color-success", cssVar("--success-text", "#2f8f61", rootEl), rootEl),
+    danger: cssVar("--color-danger", cssVar("--danger-text", "#9b1c23", rootEl), rootEl),
+    grid: cssVar("--color-border", cssVar("--border", "#e5e7eb", rootEl), rootEl),
+    text: cssVar("--color-text", cssVar("--text", "#111827", rootEl), rootEl),
+    muted: cssVar("--color-muted", cssVar("--muted", "#6b7280", rootEl), rootEl),
+    bg: cssVar("--color-bg", cssVar("--panel", "#ffffff", rootEl), rootEl)
+  };
+}
+
+function parseDateSafe(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
+  }
+  if (typeof value === "number") {
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  if (typeof value === "string") {
+    const byFormat = parseTaskDate(value);
+    if (byFormat) return byFormat;
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  return null;
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
+}
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function daysDiff(a, b) {
+  return Math.floor((startOfDay(a).getTime() - startOfDay(b).getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function startOfDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function round1(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 10) / 10;
+}
+
+function formatMetric(value) {
+  if (!Number.isFinite(value)) return "0";
+  const rounded = round1(value);
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function formatSignedMetric(value) {
+  const num = Number(value);
+  const base = formatMetric(value);
+  if (Number.isFinite(num) && num > 0) return `+${base}`;
+  return base;
+}
+
+function parseNumericValue(value) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const raw = String(value).trim();
+  if (!raw) return 0;
+  let normalized = raw.replace(/[^0-9,.-]/g, "");
+  const hasComma = normalized.includes(",");
+  const hasDot = normalized.includes(".");
+  if (hasComma && hasDot) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    normalized = normalized.replace(",", ".");
+  }
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function resolveProjectCost(project) {
+  const budgetBase = resolveProjectBudget(project);
+  if (Number.isFinite(budgetBase) && budgetBase > 0) return budgetBase;
+  const summary = computeFinanceSummary(project);
+  if (Number.isFinite(summary.despesa) && summary.despesa > 0) {
+    return summary.despesa;
+  }
+  return null;
+}
+
+function resolveProjectBudget(project) {
+  if (!project) return null;
+  const candidates = [
+    project.budget,
+    project.cost,
+    project.custo,
+    project.valor,
+    project.valorProjeto
+  ];
+  for (const value of candidates) {
+    const numeric = parseNumericValue(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  }
+  return null;
+}
+
+function formatCurrency(value) {
+  if (!Number.isFinite(value)) return "-";
+  try {
+    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+  } catch (err) {
+    return `R$ ${value.toFixed(2)}`;
+  }
+}
+
+function normalizeFinanceType(value) {
+  const type = String(value || "").trim().toLowerCase();
+  return type === "receita" ? "receita" : "despesa";
+}
+
+function getProjectFinancials(project) {
+  if (!project) return [];
+  if (!Array.isArray(project.financials)) {
+    project.financials = [];
+  }
+  return project.financials;
+}
+
+function sortFinanceEntries(entries) {
+  return entries.slice().sort((a, b) => {
+    const aDate = parseDateSafe(a?.date || a?.createdAt);
+    const bDate = parseDateSafe(b?.date || b?.createdAt);
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    const aTime = aDate.getTime();
+    const bTime = bDate.getTime();
+    if (aTime !== bTime) return aTime - bTime;
+    return (a?.createdAt || 0) - (b?.createdAt || 0);
+  });
+}
+
+function computeFinanceSummary(project) {
+  const entries = getProjectFinancials(project);
+  const budgetBase = resolveProjectBudget(project);
+  let receita = 0;
+  let despesa = 0;
+  entries.forEach((entry) => {
+    const amount = parseNumericValue(entry?.amount);
+    if (normalizeFinanceType(entry?.type) === "receita") {
+      receita += amount;
+    } else {
+      despesa += amount;
+    }
+  });
+  const saldoBase = Number.isFinite(budgetBase) ? budgetBase : 0;
+  return {
+    receita,
+    despesa,
+    saldo: saldoBase + receita - despesa,
+    budgetBase,
+    entries
+  };
+}
+
+function formatFinanceAmount(amount, type) {
+  if (!Number.isFinite(amount)) return "-";
+  const label = formatCurrency(amount);
+  return normalizeFinanceType(type) === "despesa" ? `-${label}` : label;
+}
+
+function baselinePctFromDates(startValue, endValue, now = new Date()) {
+  const start = parseTaskDate(startValue);
+  const end = parseTaskDate(endValue);
+  if (!start || !end) return 0;
+  const startDay = startOfDay(start);
+  const endDay = startOfDay(end);
+  const nowDay = startOfDay(now);
+  const total = endDay.getTime() - startDay.getTime();
+  if (total <= 0) return nowDay >= endDay ? 100 : 0;
+  if (nowDay <= startDay) return 0;
+  if (nowDay >= endDay) return 100;
+  const pct = ((nowDay.getTime() - startDay.getTime()) / total) * 100;
+  return Math.max(0, Math.min(100, round1(pct)));
+}
+
+function gapStatusInfo(gap, baselinePct = null, realizedPct = null) {
+  const base = Number(baselinePct);
+  const real = Number(realizedPct);
+  if (Number.isFinite(base) && Number.isFinite(real)) {
+    const baseRounded = Math.round(base);
+    if (baseRounded >= 100 && real < 100) {
+      return { className: "gap-critical", label: "Critico", color: "#9B1C23" };
+    }
+  }
+  const gapValue = Number(gap);
+  if (gapValue < 0) {
+    return { className: "gap-ok", label: "Adiantado", color: "#2F8F61" };
+  }
+  if (gapValue === 0) {
+    return { className: "gap-ok", label: "Em dia", color: "#2F8F61" };
+  }
+  if (gapValue < 10) {
+    return { className: "gap-low", label: "Sob controle", color: "#64748B" };
+  }
+  if (gapValue < 30) {
+    return { className: "gap-delayed", label: "Alerta", color: "#C76B1A" };
+  }
+  return { className: "gap-critical", label: "Critico", color: "#9B1C23" };
+}
+
+function projectBaselinePct(project, progressPct) {
+  const series = computeSCurveDailyBaseline(project, project?.activities || null, progressPct);
+  if (series && Number.isFinite(series.baselineNow)) {
+    return Math.max(0, Math.min(100, round1(series.baselineNow * 100)));
+  }
+  return baselinePctFromDates(project?.start || project?.startDate, project?.end || project?.goLive || project?.goLiveDate);
+}
+
+function activityDueDate(activity) {
+  return (
+    activity?.dueDate ||
+    activity?.due ||
+    activity?.plannedEnd ||
+    activity?.endDate ||
+    activity?.end ||
+    ""
+  );
+}
+
+function activityDoneDate(activity) {
+  const explicit =
+    activity?.dataConclusao ||
+    activity?.completedAt ||
+    activity?.doneAt ||
+    activity?.finishedAt ||
+    activity?.completed ||
+    "";
+  if (explicit) return explicit;
+  if (normalizeTaskStatus(getTaskStatus(activity)) !== "concluido") return "";
+  return activityDueDate(activity) || "";
+}
+
+function getActivityWeight(activity) {
+  const n = Number(activity?.points ?? activity?.weight ?? 1);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function computeProjectProgress01(project, tasks, progressPct = null) {
+  const list = project ? flattenProjectTasks(project) : Array.isArray(tasks) ? tasks : [];
+  if (list.length) {
+    const metrics = projectMetrics(list);
+    return clamp01((metrics?.progress ?? 0) / 100);
+  }
+  if (typeof progressPct === "number" && Number.isFinite(progressPct)) {
+    return clamp01(progressPct / 100);
+  }
+  return 0;
+}
+
+function computeSCurveFromActivities(project, activities, points = 10) {
+  const list = Array.isArray(activities) ? activities : Array.isArray(project?.activities) ? project.activities : [];
+  const tasks = list.length ? list : flattenProjectTasks(project);
+  if (!tasks.length) return null;
+
+  const start = parseDateSafe(project?.start || project?.startDate);
+  const end = parseDateSafe(project?.end || project?.goLiveDate || project?.goLive);
+  if (!start || !end) return null;
+
+  const S = startOfDay(start);
+  const E = startOfDay(end);
+  if (E.getTime() < S.getTime()) return null;
+
+  const report = startOfDay(parseDateSafe(project?.reportDate) ?? new Date());
+  const N = Math.max(2, points);
+  const totalMs = Math.max(1, E.getTime() - S.getTime());
+  const buckets = Array.from({ length: N }, (_, i) => {
+    const t = S.getTime() + totalMs * (i / (N - 1));
+    return startOfDay(new Date(t));
+  });
+
+  const totalW = tasks.reduce((sum, a) => sum + getActivityWeight(a), 0) || 1;
+
+  const planned = buckets.map((b) => {
+    const w = tasks.reduce((sum, a) => {
+      const due = parseDateSafe(activityDueDate(a));
+      const dueEff = due ? startOfDay(due) : E;
+      return dueEff <= b ? sum + getActivityWeight(a) : sum;
+    }, 0);
+    return clamp01(w / totalW);
+  });
+
+  const actual = buckets.map((b) => {
+    const w = tasks.reduce((sum, a) => {
+      const done = parseDateSafe(activityDoneDate(a));
+      if (!done || normalizeTaskStatus(getTaskStatus(a)) !== "concluido") return sum;
+      const doneEff = startOfDay(done);
+      return doneEff <= b ? sum + getActivityWeight(a) : sum;
+    }, 0);
+    return clamp01(w / totalW);
+  });
+
+  planned[0] = 0;
+  planned[planned.length - 1] = 1;
+
+  for (let i = 1; i < planned.length; i += 1) {
+    planned[i] = Math.max(planned[i], planned[i - 1]);
+  }
+  for (let i = 1; i < actual.length; i += 1) {
+    actual[i] = Math.max(actual[i], actual[i - 1]);
+  }
+
+  const plannedNow = clamp01(
+    tasks.reduce((sum, a) => {
+      const due = parseDateSafe(activityDueDate(a));
+      const dueEff = due ? startOfDay(due) : E;
+      return dueEff <= report ? sum + getActivityWeight(a) : sum;
+    }, 0) / totalW
+  );
+
+  const actualNow = clamp01(
+    tasks.reduce((sum, a) => {
+      const done = parseDateSafe(activityDoneDate(a));
+      if (!done || normalizeTaskStatus(getTaskStatus(a)) !== "concluido") return sum;
+      const doneEff = startOfDay(done);
+      return doneEff <= report ? sum + getActivityWeight(a) : sum;
+    }, 0) / totalW
+  );
+
+  return { buckets, planned, actual, report, plannedNow, actualNow, start: S, end: E };
+}
+
+function buildDailyDates(start, end) {
+  const S = startOfDay(start);
+  const E = startOfDay(end);
+  const out = [];
+  for (let d = S; d <= E; d = addDays(d, 1)) out.push(new Date(d));
+  return out;
+}
+
+function downsampleSeries(dates, a, b, maxPoints = 60) {
+  const n = dates.length;
+  if (n <= maxPoints) return { dates, a, b };
+  const step = Math.ceil(n / maxPoints);
+  const dsD = [];
+  const dsA = [];
+  const dsB = [];
+  for (let i = 0; i < n; i += step) {
+    dsD.push(dates[i]);
+    dsA.push(a[i]);
+    dsB.push(b[i]);
+  }
+  if (dsD[dsD.length - 1].getTime() !== dates[n - 1].getTime()) {
+    dsD.push(dates[n - 1]);
+    dsA.push(a[n - 1]);
+    dsB.push(b[n - 1]);
+  }
+  return { dates: dsD, a: dsA, b: dsB };
+}
+
+function computeSCurveDailyBaseline(project, activities, progressPct = null) {
+  const list = Array.isArray(activities) ? activities : Array.isArray(project?.activities) ? project.activities : [];
+  const tasks = list.length ? list : flattenProjectTasks(project);
+  if (!tasks.length) return null;
+
+  const start = parseDateSafe(project?.start || project?.startDate);
+  const end = parseDateSafe(project?.end || project?.goLiveDate || project?.goLive);
+  if (!start || !end) return null;
+
+  const startDate = startOfDay(start);
+  const endDate = startOfDay(end);
+  const report = startOfDay(parseDateSafe(project?.reportDate) ?? new Date());
+  const clampedReport = report < startDate ? startDate : report > endDate ? endDate : report;
+  const dates = buildDailyDates(startDate, endDate);
+  const totalDays = Math.max(1, dates.length - 1);
+
+  const resolveDoneDate = (task) => {
+    if (normalizeTaskStatus(getTaskStatus(task)) !== "concluido") return null;
+    const explicit = parseDateSafe(
+      task?.dataConclusao ||
+        task?.completedAt ||
+        task?.doneAt ||
+        task?.finishedAt ||
+        task?.completed ||
+        ""
+    );
+    const explicitDay = explicit ? startOfDay(explicit) : null;
+    const due = parseDateSafe(activityDueDate(task));
+    const dueDay = due ? startOfDay(due) : null;
+    const explicitOk = explicitDay && explicitDay <= clampedReport;
+    const dueOk = dueDay && dueDay <= clampedReport;
+    if (explicitOk && dueOk) {
+      return dueDay <= explicitDay ? dueDay : explicitDay;
+    }
+    if (dueOk) return dueDay;
+    if (explicitOk) return explicitDay;
+    const created = parseDateSafe(
+      task?.createdAt ||
+        task?.created_at ||
+        task?.created ||
+        task?.createdOn ||
+        task?.createdDate ||
+        ""
+    );
+    if (created) return created;
+    const updated = parseDateSafe(
+      task?.updatedAt ||
+        task?.updated_at ||
+        task?.updated ||
+        task?.updatedOn ||
+        task?.updatedDate ||
+        ""
+    );
+    if (updated) return updated;
+    return clampedReport;
+  };
+
+  const totalWeight = tasks.length || 1;
+  const doneWeightByDay = new Map();
+  tasks.forEach((task) => {
+    const doneAt = resolveDoneDate(task);
+    if (!doneAt) return;
+    const doneDay = startOfDay(doneAt);
+    if (doneDay > clampedReport) return;
+    const clamped = doneDay < startDate ? startDate : doneDay;
+    const key = clamped.getTime();
+    doneWeightByDay.set(key, (doneWeightByDay.get(key) || 0) + 1);
+  });
+
+  const baseline = dates.map((d) => clamp01(daysDiff(d, startDate) / totalDays));
+  let realizedAcc = 0;
+  const realized = dates.map((d) => {
+    const key = startOfDay(d).getTime();
+    realizedAcc += doneWeightByDay.get(key) || 0;
+    return clamp01(realizedAcc / totalWeight);
+  });
+
+  const idxNow = Math.max(0, Math.min(dates.length - 1, daysDiff(clampedReport, startDate)));
+
+  const baselineNow = baseline[idxNow];
+  for (let i = 1; i < realized.length; i += 1) {
+    realized[i] = Math.max(realized[i], realized[i - 1]);
+  }
+  const realizedNow = realized[idxNow];
+  const ds = downsampleSeries(dates, baseline, realized, 60);
+  const reportIndex = ds.dates.reduce((idx, d, i) => {
+    return d.getTime() <= clampedReport.getTime() ? i : idx;
+  }, 0);
+
+  return {
+    start: startDate,
+    end: endDate,
+    report: clampedReport,
+    dates: ds.dates,
+    baseline: ds.a,
+    realized: ds.b,
+    baselineNow,
+    realizedNow,
+    reportIndex
+  };
+}
+
+function renderSCurveSvgDaily(sc, opts = {}) {
+  if (!sc || !Array.isArray(sc.dates) || sc.dates.length < 2) return "";
+  const W = opts.width ?? 1760;
+  const H = opts.height ?? 240;
+  const footerPad = 18;
+  const svgH = H + footerPad;
+
+  const pad = { l: 96, r: 24, t: 18, b: 40 };
+  const innerW = W - pad.l - pad.r;
+  const innerH = H - pad.t - pad.b;
+
+  const basePalette = {
+    planned: "#cbd5e1",
+    actual: "#10b981",
+    axis: "#e2e8f0",
+    muted: "#94a3b8",
+    text: "#0f172a"
+  };
+  const colors = opts.colors || {};
+  const palette = {
+    planned: colors.planned || basePalette.planned,
+    actual: colors.actual || basePalette.actual,
+    axis: colors.grid || colors.axis || basePalette.axis,
+    muted: colors.muted || basePalette.muted,
+    text: colors.text || basePalette.text
+  };
+
+  const fmtBR = (d) => {
+    if (!d) return "";
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const t0 = sc.start.getTime();
+  const t1 = sc.end.getTime();
+  const xAtDate = (d) => pad.l + innerW * clamp01((d.getTime() - t0) / Math.max(1, t1 - t0));
+  const yAt = (p) => pad.t + innerH * (1 - clamp01(p));
+
+  const pathFrom = (arr, dateList = sc.dates) =>
+    (arr || [])
+      .map((p, i) => {
+        const xx = xAtDate(dateList[i]);
+        const yy = yAt(p);
+        return `${i === 0 ? "M" : "L"} ${xx.toFixed(2)} ${yy.toFixed(2)}`;
+      })
+      .join(" ");
+  const pathFromStep = (arr, dateList = sc.dates) => {
+    if (!arr || !arr.length) return "";
+    let d = `M ${xAtDate(dateList[0]).toFixed(2)} ${yAt(arr[0]).toFixed(2)}`;
+    for (let i = 1; i < arr.length; i += 1) {
+      const xx = xAtDate(dateList[i]).toFixed(2);
+      const yPrev = yAt(arr[i - 1]).toFixed(2);
+      const yy = yAt(arr[i]).toFixed(2);
+      d += ` L ${xx} ${yPrev} L ${xx} ${yy}`;
+    }
+    return d;
+  };
+
+  const basePath = pathFrom(sc.baseline);
+  const realEndIndex = Math.min(
+    sc.realized.length - 1,
+    Number.isFinite(sc.reportIndex) ? sc.reportIndex : sc.realized.length - 1
+  );
+  const realDates = sc.dates.slice(0, realEndIndex + 1);
+  const realValues = sc.realized.slice(0, realEndIndex + 1);
+  const realPath = pathFromStep(realValues, realDates);
+
+  const xNow = xAtDate(sc.report);
+  const yBaseNow = yAt(sc.baselineNow ?? 0);
+  const yRealNow = yAt(sc.realizedNow ?? 0);
+
+  const yTicks = [0, 0.5, 1].map((p) => ({
+    value: Math.round(p * 100),
+    y: yAt(p)
+  }));
+
+  return `
+    <svg width="${W}" height="${svgH}" viewBox="0 0 ${W} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="realGlow" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="rgba(16, 185, 129, 0.35)"/>
+        </filter>
+      </defs>
+
+      <line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${H - pad.b}" stroke="${palette.axis}" stroke-width="1"/>
+      <line x1="${pad.l}" y1="${H - pad.b}" x2="${W - pad.r}" y2="${H - pad.b}" stroke="${palette.axis}" stroke-width="1"/>
+
+      ${yTicks
+        .map(
+          (tick) => `
+        <line x1="${pad.l - 6}" y1="${tick.y}" x2="${pad.l}" y2="${tick.y}" stroke="${palette.axis}" stroke-width="1"/>
+        <text x="${pad.l - 10}" y="${tick.y + 4}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${tick.value}%</text>
+      `
+        )
+        .join("")}
+
+      <line x1="${xNow}" y1="${pad.t}" x2="${xNow}" y2="${H - pad.b}" stroke="${palette.muted}" stroke-width="1" stroke-dasharray="4 6" opacity="0.7"/>
+
+      <path d="${basePath}" fill="none" stroke="${palette.planned}" stroke-width="2"/>
+      <path id="curve-real-path" d="${realPath}" fill="none" stroke="${palette.actual}" stroke-width="4" filter="url(#realGlow)"/>
+      <path id="curve-real-hit" d="${realPath}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"/>
+
+      <circle cx="${xNow}" cy="${yBaseNow}" r="3" fill="${palette.planned}"/>
+      <circle cx="${xNow}" cy="${yRealNow}" r="4" fill="${palette.actual}"/>
+
+      <text x="${pad.l}" y="${H - 18}" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${H - 18}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${fmtBR(sc.end)}</text>
+      <text x="${pad.l}" y="${svgH - 4}" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">Inicio: ${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${svgH - 4}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">Go-Live: ${fmtBR(sc.end)}</text>
+    </svg>
+  `;
+}
+
+function renderSCurveSvg(sc, opts = {}) {
+  if (!sc || !sc.start || !sc.end || !Array.isArray(sc.buckets) || sc.buckets.length < 2) return "";
+  const W = opts.width ?? 1760;
+  const H = opts.height ?? 240;
+  const footerPad = 18;
+  const svgH = H + footerPad;
+
+  const pad = { l: 96, r: 24, t: 18, b: 40 };
+  const innerW = W - pad.l - pad.r;
+  const innerH = H - pad.t - pad.b;
+
+  const palette = {
+    planned: "#cbd5e1",
+    actual: "#10b981",
+    axis: "#e2e8f0",
+    muted: "#94a3b8",
+    text: "#0f172a"
+  };
+
+  const fmtBR = (d) => {
+    if (!d) return "";
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const xAtDate = (d) => {
+    const t = d.getTime();
+    const S = sc.start.getTime();
+    const E = sc.end.getTime();
+    const k = (t - S) / Math.max(1, E - S);
+    return pad.l + innerW * clamp01(k);
+  };
+
+  const yAt = (p) => pad.t + innerH * (1 - clamp01(p));
+
+  const pathFrom = (arr, buckets = sc.buckets) =>
+    (arr || [])
+      .map((p, i) => {
+        const xx = xAtDate(buckets[i]);
+        return `${i === 0 ? "M" : "L"} ${xx.toFixed(2)} ${yAt(p).toFixed(2)}`;
+      })
+      .join(" ");
+  const pathFromStep = (arr, buckets = sc.buckets) => {
+    if (!arr || !arr.length) return "";
+    let d = `M ${xAtDate(buckets[0]).toFixed(2)} ${yAt(arr[0]).toFixed(2)}`;
+    for (let i = 1; i < arr.length; i += 1) {
+      const xx = xAtDate(buckets[i]).toFixed(2);
+      const yPrev = yAt(arr[i - 1]).toFixed(2);
+      const yy = yAt(arr[i]).toFixed(2);
+      d += ` L ${xx} ${yPrev} L ${xx} ${yy}`;
+    }
+    return d;
+  };
+
+  const plannedPath = pathFrom(sc.planned);
+  const reportDate = sc.report || sc.end;
+  const reportIndex = sc.buckets.reduce((idx, d, i) => {
+    return d.getTime() <= reportDate.getTime() ? i : idx;
+  }, 0);
+  const actualBuckets = sc.buckets.slice(0, reportIndex + 1);
+  const actualPath = pathFromStep(sc.actual.slice(0, reportIndex + 1), actualBuckets);
+
+  const xNow = xAtDate(reportDate);
+  const yPlanNow = yAt(sc.plannedNow ?? 0);
+  const yRealNow = yAt(sc.actualNow ?? 0);
+
+  const yTicks = [0, 0.5, 1].map((p) => ({
+    value: Math.round(p * 100),
+    y: yAt(p)
+  }));
+
+  return `
+    <svg width="${W}" height="${svgH}" viewBox="0 0 ${W} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="realGlow" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="rgba(16, 185, 129, 0.35)"/>
+        </filter>
+      </defs>
+
+      <line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${H - pad.b}" stroke="${palette.axis}" stroke-width="1"/>
+      <line x1="${pad.l}" y1="${H - pad.b}" x2="${W - pad.r}" y2="${H - pad.b}" stroke="${palette.axis}" stroke-width="1"/>
+
+      ${yTicks
+        .map(
+          (tick) => `
+        <line x1="${pad.l - 6}" y1="${tick.y}" x2="${pad.l}" y2="${tick.y}" stroke="${palette.axis}" stroke-width="1"/>
+        <text x="${pad.l - 10}" y="${tick.y + 4}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${tick.value}%</text>
+      `
+        )
+        .join("")}
+
+      <path d="${plannedPath}" fill="none" stroke="${palette.planned}" stroke-width="2"/>
+      <path id="curve-real-path" d="${actualPath}" fill="none" stroke="${palette.actual}" stroke-width="4" filter="url(#realGlow)"/>
+      <path id="curve-real-hit" d="${actualPath}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"/>
+
+      <circle cx="${xNow}" cy="${yPlanNow}" r="3" fill="${palette.planned}"/>
+      <circle cx="${xNow}" cy="${yRealNow}" r="4" fill="${palette.actual}"/>
+
+      <text x="${pad.l}" y="${H - 18}" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${H - 18}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">${fmtBR(sc.end)}</text>
+      <text x="${pad.l}" y="${svgH - 4}" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">Inicio: ${fmtBR(sc.start)}</text>
+      <text x="${W - pad.r}" y="${svgH - 4}" text-anchor="end" font-size="10" fill="${palette.muted}" font-family="Inter, system-ui, -apple-system, sans-serif" style="font-variant-numeric: tabular-nums;">Go-Live: ${fmtBR(sc.end)}</text>
+    </svg>
+  `;
+}
+
+function renderOnePageSCurve({ root, project, metrics }) {
+  const mount = root ? root.querySelector("#sCurveMount") : document.getElementById("sCurveMount");
+  if (!mount) return;
+  mount.innerHTML = "";
+  const progressPct = clampPct(project?.progress ?? metrics?.progress ?? 0);
+  const series = computeSCurveDailyBaseline(project, project?.activities || null, progressPct);
+  const height = 260;
+  mount.style.height = `${height}px`;
+  mount.style.overflow = "hidden";
+  const colors = getSystemColors(root || document.documentElement);
+  const width = mount.clientWidth || 1760;
+  if (!series) {
+    mount.innerHTML = `<div class="empty">Curva S: defina Data Inicio e Go Live.</div>`;
+    return;
+  }
+  mount.innerHTML = renderSCurveSvgDaily(series, { width, height, colors });
+}
+
+function latestCompletedTasks(tasks = [], limit = 5) {
+  return tasks
+    .filter((task) => normalizeTaskStatus(getTaskStatus(task)) === "concluido")
+    .slice()
+    .sort((a, b) => {
+      const aTs = dateMetricValue(activityDoneDate(a) || a.due) ?? Number.NEGATIVE_INFINITY;
+      const bTs = dateMetricValue(activityDoneDate(b) || b.due) ?? Number.NEGATIVE_INFINITY;
+      if (aTs !== bTs) return bTs - aTs;
+      return (a.title || "").localeCompare(b.title || "");
+    })
+    .slice(0, limit);
+}
+
+function buildSparklineSeries(endValue, points = 6) {
+  const end = clampPct(endValue);
+  const start = Math.max(0, end - 24);
+  const step = (end - start) / Math.max(1, points - 1);
+  const series = [];
+  for (let i = 0; i < points; i += 1) {
+    const jitter = i % 2 === 0 ? 0 : step * 0.18;
+    series.push(clampPct(start + step * i + jitter));
+  }
+  return series;
+}
+
+function renderSparklineSvg(points, opts = {}) {
+  if (!Array.isArray(points) || points.length < 2) return "";
+  const width = opts.width ?? 120;
+  const height = opts.height ?? 34;
+  const stroke = opts.stroke ?? "var(--accent)";
+  const fill = opts.fill ?? "rgba(16, 185, 129, 0.12)";
+  const pad = 4;
+  const max = 100;
+  const min = 0;
+  const scaleX = (width - pad * 2) / Math.max(1, points.length - 1);
+  const scaleY = (height - pad * 2) / Math.max(1, max - min);
+  const coords = points.map((p, i) => {
+    const x = pad + i * scaleX;
+    const y = height - pad - (p - min) * scaleY;
+    return { x, y };
+  });
+  const linePath = coords
+    .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x.toFixed(2)} ${pt.y.toFixed(2)}`)
+    .join(" ");
+  const fillPath = `${linePath} L ${coords[coords.length - 1].x.toFixed(2)} ${height - pad} L ${coords[0].x.toFixed(
+    2
+  )} ${height - pad} Z`;
+  return `
+    <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="${fillPath}" fill="${fill}"></path>
+      <path d="${linePath}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+    </svg>
+  `;
+}
+
+function upcomingMilestones(tasks = [], limit = 4) {
+  const today = startOfDay(new Date());
+  return (tasks || [])
+    .filter((task) => normalizeTaskStatus(getTaskStatus(task)) !== "concluido")
+    .map((task) => {
+      const due = parseDateSafe(taskDueStr(task));
+      return { task, due };
+    })
+    .filter((entry) => entry.due && entry.due >= today)
+    .sort((a, b) => a.due - b.due)
+    .slice(0, limit);
+}
+
+function buildProjectReportStyles() {
+  return `
+    :root {
+      --bg: #f4f6fb;
+      --card: #ffffff;
+      --panel: #ffffff;
+      --text: #1f252f;
+      --muted: #7b8794;
+      --border: #e4e8f0;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      --radius: 14px;
+
+      --ok: #2f8f61;
+      --warn: #c76b1a;
+      --bad: #9b1c23;
+
+      --primary: #1ca7a6;
+      --primary2: #0b3c5d;
+
+      --baseline: #0f172a;
+      --real: #c76b1a;
+
+      --accent: #1ca7a6;
+      --accent-dark: #0b3c5d;
+      --accent-soft: rgba(28, 167, 166, 0.12);
+      --accent-tint: #e6f6f6;
+      --onepage-width: 1100px;
+      --onepage-height: 0px;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Poppins", system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .report-page {
+      width: min(100%, var(--onepage-width));
+      max-width: var(--onepage-width);
+      min-height: var(--onepage-height);
+      margin: 18px auto;
+      padding: 0 14px 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .report-page .header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .report-page .title {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .report-page .title h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0.2px;
+    }
+
+    .report-page .chips {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .report-page .chip {
+      background: rgba(15, 23, 42, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 8px 10px;
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      line-height: 1;
+    }
+
+    .report-page .chip small {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    .report-page .chip b {
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .report-page .headerRight {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .report-page .badge {
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: 999px;
+      padding: 8px 12px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      box-shadow: var(--shadow);
+      white-space: nowrap;
+    }
+
+    .report-page .badge .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--muted);
+    }
+
+    .report-page .badge strong {
+      font-size: 12px;
+    }
+
+    .report-page .badge span {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .report-page .dot.ok { background: var(--ok); }
+    .report-page .dot.warn { background: var(--warn); }
+    .report-page .dot.bad { background: var(--bad); }
+
+    .report-page .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .report-page .cardHeader {
+      padding: 10px 12px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+    }
+
+    .report-page .cardHeader h2 {
+      margin: 0;
+      font-size: 12px;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .report-page .cardBody {
+      padding: 10px 12px;
+    }
+
+    .report-page .kpis {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 12px;
+    }
+
+    .report-page .progress-card {
+      background: var(--accent-tint);
+      border-color: rgba(28, 167, 166, 0.2);
+    }
+
+    .report-page .progress-card .kpiValue {
+      color: var(--accent-dark);
+    }
+
+    .report-page .kpiTop {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .report-page .kpiValue {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+
+    .report-page .kpiSub {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .report-page .bar {
+      margin-top: 8px;
+      height: 8px;
+      background: rgba(15, 23, 42, 0.06);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .report-page .bar > i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent-dark), var(--accent));
+      border-radius: 999px;
+    }
+
+    .report-page .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.02);
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .report-page .pill b { color: var(--text); }
+
+    .report-page .healthTag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .report-page .healthTag.ok { background: rgba(47, 143, 97, 0.12); color: #1f6b4b; }
+    .report-page .healthTag.warn { background: rgba(199, 107, 26, 0.12); color: #9a5a12; }
+    .report-page .healthTag.bad { background: rgba(155, 28, 35, 0.12); color: #9b1c23; }
+
+    .report-page .gap-card.gap-ok { background: rgba(47, 143, 97, 0.10); border-color: rgba(47, 143, 97, 0.24); }
+    .report-page .gap-card.gap-low { background: rgba(100, 116, 139, 0.12); border-color: rgba(100, 116, 139, 0.28); }
+    .report-page .gap-card.gap-risk { background: rgba(199, 107, 26, 0.12); border-color: rgba(199, 107, 26, 0.28); }
+    .report-page .gap-card.gap-delayed { background: rgba(199, 107, 26, 0.18); border-color: rgba(199, 107, 26, 0.32); }
+    .report-page .gap-card.gap-critical { background: rgba(155, 28, 35, 0.12); border-color: rgba(155, 28, 35, 0.3); }
+    .report-page .gap-card.gap-ok .kpiValue,
+    .report-page .gap-card.gap-ok .kpiSub { color: #2f8f61; }
+    .report-page .gap-card.gap-low .kpiValue,
+    .report-page .gap-card.gap-low .kpiSub { color: #64748b; }
+    .report-page .gap-card.gap-risk .kpiValue,
+    .report-page .gap-card.gap-risk .kpiSub { color: #b06013; }
+    .report-page .gap-card.gap-delayed .kpiValue,
+    .report-page .gap-card.gap-delayed .kpiSub { color: #9c4f0f; }
+    .report-page .gap-card.gap-critical .kpiValue,
+    .report-page .gap-card.gap-critical .kpiSub { color: #9b1c23; }
+
+    .report-page .mid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .report-page .curveMeta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+    }
+
+    .report-page .miniStat {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.02);
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .report-page .miniStat b { color: var(--text); }
+    .report-page .miniStat.gap.gap-ok b { color: #2f8f61; }
+    .report-page .miniStat.gap.gap-low b { color: #64748b; }
+    .report-page .miniStat.gap.gap-risk b { color: #b06013; }
+    .report-page .miniStat.gap.gap-delayed b { color: #9c4f0f; }
+    .report-page .miniStat.gap.gap-critical b { color: #9b1c23; }
+
+    .report-page .legendDot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--muted);
+    }
+
+    .report-page .legendDot.baseline { background: var(--baseline); }
+    .report-page .legendDot.real { background: var(--real); }
+
+    .report-page .items {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .report-page .item {
+      padding: 10px 10px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.015);
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .report-page .item.empty {
+      border-style: dashed;
+      color: var(--muted);
+      background: transparent;
+    }
+
+    .report-page .itemTop {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .report-page .itemName {
+      font-size: 12.5px;
+      font-weight: 700;
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .report-page .itemMeta {
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .report-page .tag {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .report-page .tag.bad { color: #9b1c23; background: rgba(155, 28, 35, 0.12); }
+    .report-page .tag.warn { color: #9a5a12; background: rgba(199, 107, 26, 0.12); }
+    .report-page .tag.ok { color: #1f6b4b; background: rgba(47, 143, 97, 0.12); }
+
+    .report-page .bottom {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .report-page .curve-card {
+      border-radius: 32px;
+      border: 1px solid #eef2f6;
+      padding: 24px;
+    }
+
+    .report-page .curve-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    .report-page .curve-kicker {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: #94a3b8;
+    }
+
+    .report-page .curve-title {
+      margin: 6px 0 0;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: #0f172a;
+    }
+
+    .report-page .curve-dot {
+      color: #10b981;
+    }
+
+    .report-page .curve-head-stats {
+      display: flex;
+      gap: 16px;
+      align-items: flex-end;
+    }
+
+    .report-page .curve-stat {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .report-page .curve-stat-label {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: #94a3b8;
+    }
+
+    .report-page .curve-stat-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .report-page .curve-stat-gap {
+      padding: 8px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      background: rgba(239, 68, 68, 0.1);
+      color: #ef4444;
+    }
+
+    .report-page .curve-stat-gap.gap-ok {
+      background: rgba(16, 185, 129, 0.12);
+      border-color: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+    }
+
+    .report-page .curve-stat-gap.gap-low {
+      background: rgba(100, 116, 139, 0.12);
+      border-color: rgba(100, 116, 139, 0.25);
+      color: #64748b;
+    }
+
+    .report-page .curve-stat-gap.gap-risk {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.2);
+      color: #b45309;
+    }
+
+    .report-page .curve-stat-gap.gap-delayed,
+    .report-page .curve-stat-gap.gap-critical {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.24);
+      color: #ef4444;
+    }
+
+    .report-page .curve-stat-gap .curve-stat-label,
+    .report-page .curve-stat-gap .curve-stat-value {
+      color: inherit;
+    }
+
+    .report-page .curve-legend {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .report-page .legend-card {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid #e2e8f0;
+      background: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: #64748b;
+      white-space: nowrap;
+    }
+
+    .report-page .legend-line {
+      width: 18px;
+      height: 4px;
+      border-radius: 999px;
+      background: #cbd5e1;
+    }
+
+    .report-page .legend-line.actual {
+      background: #10b981;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+    }
+
+    .report-page .svgBox {
+      width: 100%;
+      height: 260px;
+      border-radius: 20px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      overflow: hidden;
+    }
+
+    .report-page .empty {
+      font-size: 12px;
+      color: var(--muted);
+      padding: 12px;
+    }
+
+    @media (max-width: 1100px) {
+      .report-page .kpis { grid-template-columns: 1fr; }
+      .report-page .mid { grid-template-columns: 1fr; }
+      .report-page .bottom { grid-template-columns: 1fr; }
+      .report-page .header { grid-template-columns: 1fr; }
+      .report-page .headerRight { justify-content: flex-start; }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .report-page { margin: 0; padding: 0; }
+      .report-page .card,
+      .report-page .badge {
+        box-shadow: none;
+      }
+    }
+  `;
+}
+
+function buildProjectReportStylesScoped() {
+  return buildProjectReportStyles()
+    .replace(/:root/g, "#export-onepage-root")
+    .replace(/\bbody\b/g, "#export-onepage-root");
+}
+
+function buildOnePageContent({ project, client, metrics, exportMode = false }) {
+  const reportMetrics = metrics || projectMetrics(flattenProjectTasks(project));
+  const listLimit = exportMode ? 4 : 5;
+  const { done, inProgress, nextSteps } = pickExportLists(project, listLimit);
+  const schedule = computeScheduleSummary(project);
+  const statusBadge = statusInfo(projectStatus(project, reportMetrics));
+  const progressPct = clampPct(reportMetrics?.progress ?? project?.progress ?? 0);
+  const goLiveLabel = formatDateBR(project.end || project.goLive || project.goLiveDate || "");
+  const reportDate = formatDateBR(project?.reportDate || Date.now());
+  const developer = project.developer || "A definir";
+  const clientName = client?.name || "Cliente";
+  const sCurveSeries = computeSCurveDailyBaseline(
+    project,
+    project?.activities || null,
+    progressPct
+  );
+  const totalCount = reportMetrics?.total ?? schedule.total ?? 0;
+  const doneCount = reportMetrics?.done ?? 0;
+  const scheduleTone = schedule.overdue > 0 ? "bad" : schedule.dueSoon > 0 ? "warn" : "ok";
+  const scheduleLabel = schedule.overdue > 0 ? "Em atraso" : schedule.dueSoon > 0 ? "Em risco" : "Em dia";
+  const phaseLabel = project?.phaseLabel || project?.phase || statusBadge.label || "Em execucao";
+  const sCurveSvg = sCurveSeries
+    ? renderSCurveSvgDaily(sCurveSeries, { width: 1760, height: 260, colors: getSystemColors() })
+    : `<div class="empty">Curva S: defina Data Inicio e Go Live.</div>`;
+  const baselinePct = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : 0;
+  const realizedPct = sCurveSeries ? round1(sCurveSeries.realizedNow * 100) : 0;
+  const baselineLabel = sCurveSeries ? `${baselinePct.toFixed(1)}%` : "--";
+  const realizedLabel = sCurveSeries ? `${realizedPct.toFixed(1)}%` : "--";
+  const gapPP = sCurveSeries ? round1(baselinePct - realizedPct) : 0;
+  const gapLabel = sCurveSeries ? `${formatSignedMetric(gapPP)}pp` : "--";
+  const gapStatus = sCurveSeries
+    ? gapStatusInfo(gapPP, baselinePct, realizedPct)
+    : { className: "gap-ok", label: "Sem baseline", color: "#2F8F61" };
+  const gapTone = gapStatus.className;
+  const gapStatusLabel = gapStatus.label;
+
+  const todayTs = todayStartTs();
+  const urgentTasks = pickMostOverdueTasks(project, 5);
+  const urgentList = urgentTasks.length
+    ? urgentTasks.map((task) => renderOnePageItem(task, { todayTs })).join("")
+    : renderOnePageEmptyItem("Sem atrasos no momento.");
+  const topUrgent = urgentTasks[0] || null;
+  const topUrgentTag = topUrgent ? taskUrgencyTag(topUrgent, todayTs) : null;
+  const topUrgentDue = topUrgent ? taskDueLabel(topUrgent) : "-";
+  const topUrgentStatus = topUrgent ? taskStatusInfo(getTaskStatus(topUrgent)).label : "-";
+
+  const doneList = done.length
+    ? done.map((task) => renderOnePageItem(task, { todayTs, tag: { cls: "ok", text: "Concluido" } })).join("")
+    : renderOnePageEmptyItem("Sem atividades");
+  const inProgressList = inProgress.length
+    ? inProgress.map((task) => renderOnePageItem(task, { todayTs, tag: { cls: "warn", text: "Em andamento" } })).join("")
+    : renderOnePageEmptyItem("Sem atividades");
+  const nextStepsList = nextSteps.length
+    ? nextSteps.map((task) => renderOnePageItem(task, { todayTs })).join("")
+    : renderOnePageEmptyItem("Sem atividades");
+
+  return `
+    <div class="report-page">
+      <div class="header">
+        <div class="title">
+          <h1>${escapeHtml(project.name || "Projeto")}</h1>
+          <div class="chips">
+            <div class="chip"><small>Cliente</small><b>${escapeHtml(clientName)}</b></div>
+            <div class="chip"><small>Responsavel</small><b>${escapeHtml(developer)}</b></div>
+            <div class="chip"><small>Data report</small><b>${escapeHtml(reportDate)}</b></div>
+          </div>
+        </div>
+
+        <div class="headerRight">
+          <div class="badge">
+            <i class="dot ${scheduleTone}"></i>
+            <strong>Status:</strong>
+            <span>${escapeHtml(statusBadge.label)}</span>
+          </div>
+          <div class="badge">
+            <i class="dot ${scheduleTone}"></i>
+            <strong>Go Live:</strong>
+            <span>${escapeHtml(goLiveLabel || "-")}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="kpis">
+        <div class="card progress-card">
+          <div class="cardHeader">
+            <h2>Progresso</h2>
+            <span class="pill"><b>${doneCount}</b> / ${totalCount} concluidas</span>
+          </div>
+          <div class="cardBody">
+            <div class="kpiTop">
+              <div class="kpiValue">${progressPct}%</div>
+              <span class="healthTag ${scheduleTone}">${scheduleLabel}</span>
+            </div>
+            <div class="bar"><i style="width:${progressPct}%"></i></div>
+            <div class="kpiSub">${escapeHtml(phaseLabel)}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Previsto</h2>
+            <span class="pill">Baseline</span>
+          </div>
+          <div class="cardBody">
+            <div class="kpiTop">
+              <div class="kpiValue">${baselineLabel}</div>
+            </div>
+            <div class="kpiSub">Meta para hoje</div>
+          </div>
+        </div>
+
+        <div class="card gap-card ${gapTone}">
+          <div class="cardHeader">
+            <h2>GAP (pp)</h2>
+            <span class="pill">${gapStatusLabel}</span>
+          </div>
+          <div class="cardBody">
+            <div class="kpiTop">
+              <div class="kpiValue">${gapLabel}</div>
+            </div>
+            <div class="kpiSub">Desvio atual</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Cronograma</h2>
+            <span class="healthTag ${scheduleTone}">${scheduleLabel}</span>
+          </div>
+          <div class="cardBody">
+            <div class="kpiTop">
+              <div class="kpiValue" style="font-size:20px">${schedule.overdue} atrasada(s)</div>
+              <span class="pill">${
+                schedule.dueSoon ? `+ <b>${schedule.dueSoon}</b> vencem em 7 dias` : "Sem vencimentos em 7 dias"
+              }</span>
+            </div>
+            <div class="kpiSub">
+              Total: <b>${schedule.total}</b> • Em andamento: <b>${schedule.inProgress}</b> • Concluidas: <b>${doneCount}</b>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="mid">
+        <div class="card curve-card">
+          <div class="curve-head">
+            <div>
+              <span class="curve-kicker">Desempenho fisico</span>
+              <h2 class="curve-title">Curva S <span class="curve-dot">.</span></h2>
+            </div>
+            <div class="curve-head-stats">
+              <div class="curve-stat">
+                <span class="curve-stat-label">Realizado</span>
+                <span class="curve-stat-value">${realizedLabel}</span>
+              </div>
+              <div class="curve-stat curve-stat-gap ${gapTone}">
+                <span class="curve-stat-label">GAP</span>
+                <span class="curve-stat-value">${gapLabel}</span>
+              </div>
+            </div>
+          </div>
+          <div class="curve-legend">
+            <div class="legend-card">
+              <span class="legend-line planned"></span>
+              Planejado
+            </div>
+            <div class="legend-card">
+              <span class="legend-line actual"></span>
+              Realizado
+            </div>
+          </div>
+          <div id="sCurveMount" class="svgBox curve-canvas">${sCurveSvg}</div>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Mais urgente</h2>
+            <span class="pill">Top <b>${urgentTasks.length}</b></span>
+          </div>
+          <div class="cardBody">
+            <div class="items">${urgentList}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bottom">
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Ultimas concluidas</h2>
+            <span class="pill">Top <b>${done.length}</b></span>
+          </div>
+          <div class="cardBody">
+            <div class="items">${doneList}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Em andamento</h2>
+            <span class="pill">Top <b>${inProgress.length}</b></span>
+          </div>
+          <div class="cardBody">
+            <div class="items">${inProgressList}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardHeader">
+            <h2>Proximos passos</h2>
+            <span class="pill">Top <b>${nextSteps.length}</b></span>
+          </div>
+          <div class="cardBody">
+            <div class="items">${nextStepsList}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function buildProjectReportSection({ project, client, metrics }) {
+  return buildOnePageContent({ project, client, metrics });
+}
+
+function buildProjectReportHtml({ project, client, metrics }) {
+  return `<!DOCTYPE html>
+  <html lang="pt-BR">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Resumo ${project.name || "Projeto"}</title>
+      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
+      <style>${buildProjectReportStyles()}</style>
+    </head>
+    <body>
+      ${buildOnePageContent({ project, client, metrics })}
+    </body>
+  </html>`;
+}
+
+function renderOnePageExportHtml({ project, client, metrics }) {
+  return `<style>${buildProjectReportStylesScoped()}
+    #export-onepage-root {
+      --onepage-width: 1920px;
+      --onepage-height: 1080px;
+      --bg: #ffffff;
+      width: 1920px;
+      height: 1080px;
+    }
+    #export-onepage-root .report-page {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      padding: 24px;
+      box-sizing: border-box;
+      gap: 14px;
+      grid-template-rows: 110px 140px 340px 1fr;
+      overflow: hidden;
+    }
+    #export-onepage-root .report-page > * {
+      min-height: 0;
+    }
+    #export-onepage-root .mid,
+    #export-onepage-root .bottom {
+      min-height: 0;
+    }
+    #export-onepage-root .card {
+      min-height: 0;
+    }
+  </style>
+    ${buildOnePageContent({ project, client, metrics, exportMode: true })}`;
+}
+
+function safeFileName(value, fallback = "projeto") {
+  const raw = String(value || "").toLowerCase();
+  const cleaned = raw.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return cleaned || fallback;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForImages(rootEl) {
+  const imgs = Array.from(rootEl.querySelectorAll("img"));
+  await Promise.all(
+    imgs.map((img) => {
+      if (img.complete) return Promise.resolve();
+      return new Promise((resolve) => {
+        img.onload = () => resolve();
+        img.onerror = () => resolve();
+      });
+    })
+  );
+}
+
+function getJsPDF() {
+  if (window.jspdf?.jsPDF) return window.jspdf.jsPDF;
+  return window.jsPDF;
+}
+
+async function exportProjectReportPdf() {
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+  if (!project || !client) {
+    alert("Nenhum projeto selecionado.");
+    return;
+  }
+  saveLocalState();
+  const filename = `${safeFileName(project.name, "projeto")}-onepage.pdf`;
+
+  if (!window.html2canvas) {
+    alert("html2canvas nao carregou.");
+    return;
+  }
+  const JsPDF = getJsPDF();
+  if (!JsPDF) {
+    alert("jsPDF nao carregou.");
+    return;
+  }
+
+  const priorRoot = document.getElementById("export-onepage-root");
+  if (priorRoot) priorRoot.remove();
+  const priorFrame = document.getElementById("export-onepage-frame");
+  if (priorFrame) priorFrame.remove();
+
+  const reportFrame = document.createElement("iframe");
+  reportFrame.id = "export-onepage-frame";
+  reportFrame.setAttribute("aria-hidden", "true");
+  reportFrame.src = `onepage.html${buildOnePageQuery(project, client)}`;
+  reportFrame.style.position = "fixed";
+  reportFrame.style.left = "-10000px";
+  reportFrame.style.top = "0";
+  reportFrame.style.width = "1280px";
+  reportFrame.style.height = "900px";
+  reportFrame.style.border = "0";
+  reportFrame.style.opacity = "0";
+  reportFrame.style.pointerEvents = "none";
+  document.body.appendChild(reportFrame);
+
+  try {
+    await new Promise((resolve, reject) => {
+      reportFrame.onload = () => resolve();
+      reportFrame.onerror = () => reject(new Error("Falha ao carregar o relatorio."));
+    });
+
+    const frameDoc = reportFrame.contentDocument;
+    const captureEl = frameDoc?.getElementById("onepageRoot") || frameDoc?.body;
+    if (!captureEl) {
+      throw new Error("Conteudo do relatorio nao encontrado.");
+    }
+
+    if (frameDoc?.fonts?.ready) await frameDoc.fonts.ready;
+    await sleep(80);
+    await waitForImages(captureEl);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
+    const rect = captureEl.getBoundingClientRect();
+    let pageW = Math.ceil(rect.width || captureEl.scrollWidth || 1280);
+    let pageH = Math.ceil(rect.height || captureEl.scrollHeight || 900);
+    if (pageW && pageH) {
+      reportFrame.style.width = `${pageW}px`;
+      reportFrame.style.height = `${pageH}px`;
+      await sleep(80);
+    } else {
+      pageW = 1280;
+      pageH = 900;
+    }
+
+    const canvas = await window.html2canvas(captureEl, {
+      scale: 2,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      allowTaint: true,
+      scrollX: 0,
+      scrollY: 0,
+      width: pageW,
+      height: pageH,
+      windowWidth: pageW,
+      windowHeight: pageH,
+      onclone: (clonedDoc) => {
+        const clonedRoot = clonedDoc.getElementById("export-onepage-root");
+        if (clonedRoot) {
+          clonedRoot.style.opacity = "1";
+          clonedRoot.style.visibility = "visible";
+          clonedRoot.style.display = "block";
+        }
+      }
+    });
+
+    const imgData = canvas.toDataURL("image/jpeg", 0.92);
+    const pdf = new JsPDF({
+      orientation: pageW >= pageH ? "landscape" : "portrait",
+      unit: "px",
+      format: [pageW, pageH]
+    });
+    pdf.addImage(imgData, "JPEG", 0, 0, pageW, pageH, undefined, "FAST");
+
+    pdf.save(filename);
+  } catch (err) {
+    console.error(err);
+    alert(`Falha ao exportar PDF: ${err.message || err}`);
+  } finally {
+    reportFrame.remove();
+  }
+}
+
+function exportProjectReportPptx() {
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+  if (!project || !client) {
+    alert("Nenhum projeto selecionado.");
+    return;
+  }
+  if (!window.PptxGenJS) {
+    alert("Biblioteca de exportacao PPTX nao carregada.");
+    return;
+  }
+
+  const metrics = projectMetrics(project.tasks || []);
+  const tasks = Array.isArray(project.tasks) ? project.tasks : [];
+  const latest = latestCompletedTasks(tasks, 5);
+  const counts = projectTaskCounts(tasks);
+  const statusBadge = statusInfo(projectStatus(project, metrics));
+  const scheduleBadge = scheduleStatusInfo(projectScheduleStatus(project));
+  const progress = metrics.progress ?? 0;
+  const goLiveLabel = formatDateBR(project.end || project.goLive || project.goLiveDate || "");
+  const startLabel = formatDateBR(project.start || "");
+  const developer = project.developer || "A definir";
+  const clientName = client?.name || "Cliente";
+
+  const pptx = new window.PptxGenJS();
+  pptx.layout = "LAYOUT_WIDE";
+  const slide = pptx.addSlide();
+
+  slide.addText(project.name || "Projeto", {
+    x: 0.5,
+    y: 0.4,
+    w: 12.5,
+    h: 0.6,
+    fontSize: 28,
+    bold: true,
+    color: "1F252F"
+  });
+  slide.addText(`${clientName} • ${developer}`, {
+    x: 0.5,
+    y: 1.0,
+    w: 7,
+    h: 0.3,
+    fontSize: 14,
+    color: "7B8794"
+  });
+  slide.addText(`Inicio: ${startLabel || "-"} | Go Live: ${goLiveLabel || "-"}`, {
+    x: 0.5,
+    y: 1.35,
+    w: 7,
+    h: 0.3,
+    fontSize: 12,
+    color: "7B8794"
+  });
+
+  slide.addText(`Progresso ${progress}%`, {
+    x: 9.2,
+    y: 0.4,
+    w: 3.5,
+    h: 0.4,
+    fontSize: 18,
+    bold: true,
+    color: "1F252F"
+  });
+  slide.addText(`${statusBadge.label} • Go Live ${goLiveLabel || "-"}`, {
+    x: 9.2,
+    y: 0.85,
+    w: 3.5,
+    h: 0.3,
+    fontSize: 11,
+    color: "7B8794"
+  });
+
+  const statusColorMap = {
+    planejado: { fill: "F1F2F6", text: "6B7280" },
+    "em-andamento": { fill: "E3EDF1", text: "245363" },
+    atrasado: { fill: "F3DEDD", text: "9B1C23" },
+    concluido: { fill: "DFF3E9", text: "1F6B4B" }
+  };
+  const scheduleColorMap = {
+    "em-dia": { fill: "DFF3E9", text: "1F6B4B" },
+    "em-atraso": { fill: "F7E8C9", text: "9A5A12" }
+  };
+  const statusColors = statusColorMap[statusBadge.className] || statusColorMap.planejado;
+  const scheduleColors = scheduleColorMap[scheduleBadge.className] || scheduleColorMap["em-dia"];
+
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x: 9.2,
+    y: 1.3,
+    w: 3.4,
+    h: 0.45,
+    fill: { color: statusColors.fill },
+    line: { color: statusColors.fill },
+    radius: 0.1
+  });
+  slide.addText(`Status: ${statusBadge.label}`, {
+    x: 9.3,
+    y: 1.38,
+    w: 3.2,
+    h: 0.3,
+    fontSize: 11,
+    color: statusColors.text,
+    bold: true
+  });
+
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x: 9.2,
+    y: 1.85,
+    w: 3.4,
+    h: 0.45,
+    fill: { color: scheduleColors.fill },
+    line: { color: scheduleColors.fill },
+    radius: 0.1
+  });
+  slide.addText(`Prazo: ${scheduleBadge.label}`, {
+    x: 9.3,
+    y: 1.93,
+    w: 3.2,
+    h: 0.3,
+    fontSize: 11,
+    color: scheduleColors.text,
+    bold: true
+  });
+
+  slide.addText("Ultimas concluidas", {
+    x: 0.5,
+    y: 2.0,
+    w: 3.8,
+    h: 0.3,
+    fontSize: 12,
+    bold: true,
+    color: "1F252F"
+  });
+  const doneText = done.length
+    ? done.map((task) => `• ${task.title || "Atividade"} (${formatDateBR(taskDateStr(task))})`).join("\n")
+    : "Sem atividades.";
+  slide.addText(doneText, {
+    x: 0.5,
+    y: 2.35,
+    w: 3.8,
+    h: 2.8,
+    fontSize: 11,
+    color: "1F252F"
+  });
+
+  slide.addText("Em andamento", {
+    x: 4.75,
+    y: 2.0,
+    w: 3.8,
+    h: 0.3,
+    fontSize: 12,
+    bold: true,
+    color: "1F252F"
+  });
+  const progressText = inProgress.length
+    ? inProgress.map((task) => `• ${task.title || "Atividade"} (${formatDateBR(taskDateStr(task))})`).join("\n")
+    : "Sem atividades.";
+  slide.addText(progressText, {
+    x: 4.75,
+    y: 2.35,
+    w: 3.8,
+    h: 2.8,
+    fontSize: 11,
+    color: "1F252F"
+  });
+
+  slide.addText("Proximos passos", {
+    x: 9.0,
+    y: 2.0,
+    w: 3.8,
+    h: 0.3,
+    fontSize: 12,
+    bold: true,
+    color: "1F252F"
+  });
+  const nextText = nextSteps.length
+    ? nextSteps.map((task) => `• ${task.title || "Atividade"} (${formatDateBR(taskDateStr(task))})`).join("\n")
+    : "Sem atividades.";
+  slide.addText(nextText, {
+    x: 9.0,
+    y: 2.35,
+    w: 3.8,
+    h: 2.8,
+    fontSize: 11,
+    color: "1F252F"
+  });
+
+  slide.addText("Resumo do Cronograma", {
+    x: 0.5,
+    y: 5.5,
+    w: 6.0,
+    h: 0.3,
+    fontSize: 12,
+    bold: true,
+    color: "1F252F"
+  });
+  const summaryItems = [
+    { label: "Total", value: schedule.total, fill: "F8FAFC", text: "1F252F" },
+    { label: "Em andamento", value: schedule.inProgress, fill: "E3EDF1", text: "245363" },
+    { label: "Nao iniciado", value: schedule.planned, fill: "F1F2F6", text: "6B7280" },
+    { label: "Em atraso", value: schedule.overdue, fill: "F7E8C9", text: "9A5A12" }
+  ];
+  summaryItems.forEach((item, idx) => {
+    const x = 0.5 + idx * 3.1;
+    const y = 5.85;
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x,
+      y,
+      w: 2.9,
+      h: 0.95,
+      fill: { color: item.fill },
+      line: { color: item.fill },
+      radius: 0.08
+    });
+    slide.addText(item.label, {
+      x: x + 0.15,
+      y: y + 0.12,
+      w: 2.6,
+      h: 0.2,
+      fontSize: 10,
+      color: item.text
+    });
+    slide.addText(String(item.value), {
+      x: x + 0.15,
+      y: y + 0.45,
+      w: 2.6,
+      h: 0.3,
+      fontSize: 18,
+      bold: true,
+      color: item.text
+    });
+  });
+
+  pptx.writeFile({ fileName: `projeto-${safeFileName(project.name)}.pptx` });
+}
+
+function exportProjectReport(format = "pdf") {
+  if (format === "pptx") {
+    exportProjectReportPptx();
+    return;
+  }
+  exportProjectReportPdf();
+}
+
+function clampPct(n) {
+  if (Number.isNaN(n) || n == null) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function getAllProjects(clients) {
+  const all = [];
+  (clients || []).forEach((c) => (c.projects || []).forEach((p) => all.push({ client: c, project: p })));
+  return all;
+}
+
+function getProjectStatus(project) {
+  const progress = clampPct(project.progress || 0);
+  if (progress >= 100) return "Concluido";
+
+  const end = project.end || project.goLive || project.goLiveDate || null;
+  const endDt = parseTaskDate(end);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+  if (endDt && endDt.getTime() < today) {
+    return "Atrasado";
+  }
+  if (progress > 0) return "Em andamento";
+  return "Nao iniciado";
+}
+
+function getAllTasksFromProject(project) {
+  return Array.isArray(project.tasks) ? project.tasks : [];
+}
+
+function countTasksNextDays(clients, days = 7) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const end = start + days * 24 * 60 * 60 * 1000;
+
+  let count = 0;
+  const all = getAllProjects(clients);
+
+  for (const { project } of all) {
+    const tasks = getAllTasksFromProject(project);
+
+    for (const t of tasks) {
+      if (normalizeTaskStatus(getTaskStatus(t)) === "concluido") continue;
+
+      const dt = parseTaskDate(t.due);
+      if (!dt) continue;
+      const ts = dt.getTime();
+
+      if (ts >= start && ts <= end) count++;
+    }
+  }
+
+  return count;
+}
+
+function computeHomeMacroStats(clients) {
+  const allProjects = getAllProjects(clients);
+  const activeClients = (clients || []).filter((c) => (c.projects || []).length > 0).length;
+  const projectsActive = allProjects.filter(({ project }) => clampPct(project.progress || 0) < 100).length;
+  const tasksNext7 = countTasksNextDays(clients, 7);
+
+  const avgProgress =
+    allProjects.length === 0
+      ? 0
+      : Math.round(
+          (allProjects.reduce((acc, { project }) => acc + clampPct(project.progress || 0), 0) / allProjects.length) * 10
+        ) / 10;
+
+  const today = startOfDay(new Date());
+  const clientsCards = (clients || [])
+    .filter((c) => (c.projects || []).length > 0)
+    .map((c) => {
+      const projs = c.projects || [];
+      const avg = projs.length
+        ? Math.round((projs.reduce((a, p) => a + clampPct(p.progress || 0), 0) / projs.length) * 10) / 10
+        : 0;
+
+      const counters = { "Nao iniciado": 0, "Em andamento": 0, Atrasado: 0, Concluido: 0 };
+      let overdueCount = 0;
+      let worstOverdueDays = 0;
+      let worstTaskTitle = "";
+      let worstTaskProject = "";
+      projs.forEach((p) => {
+        const st = getProjectStatus(p);
+        counters[st] = (counters[st] || 0) + 1;
+        const tasks = flattenProjectTasks(p);
+        tasks.forEach((task) => {
+          if (!task || isDoneTask(task)) return;
+          const dueValue = taskDueValueSafe(task);
+          if (!Number.isFinite(dueValue) || dueValue === Number.POSITIVE_INFINITY) return;
+          const dueDay = new Date(dueValue);
+          if (dueDay >= today) return;
+          overdueCount += 1;
+          const overdueDays = Math.abs(daysDiff(dueDay, today));
+          if (overdueDays > worstOverdueDays) {
+            worstOverdueDays = overdueDays;
+            worstTaskTitle = taskTitle(task);
+            worstTaskProject = p?.name || "";
+          }
+        });
+      });
+
+      return {
+        name: c.name || c.id || "Cliente",
+        projectsCount: projs.length,
+        avgProgress: avg,
+        counters,
+        overdueCount,
+        worstOverdueDays,
+        worstTaskTitle,
+        worstTaskProject
+      };
+    });
+
+  return { activeClients, projectsActive, tasksNext7, avgProgress, clientsCards };
+}
+
+function renderHomeMacroSummary() {
+  const { activeClients, projectsActive, tasksNext7, avgProgress, clientsCards } = computeHomeMacroStats(state.clients);
+
+  function resolveClientHealth(card) {
+    const delayed = card.counters.Atrasado || 0;
+    if (delayed > 0) {
+      return { label: "Em risco", className: "risk" };
+    }
+    if (card.avgProgress >= 85) {
+      return { label: "Estavel", className: "ok" };
+    }
+    if (card.avgProgress >= 60) {
+      return { label: "Atencao", className: "warn" };
+    }
+    return { label: "Em risco", className: "risk" };
+  }
+
+  function priorityScore(card) {
+    const delayed = card.counters.Atrasado || 0;
+    const progress = Number.isFinite(card.avgProgress) ? card.avgProgress : 0;
+    return delayed * 120 + (100 - progress);
+  }
+
+  function buildCriticalReason(card) {
+    const overdueCount = card.overdueCount || 0;
+    const progressValue = Number.isFinite(card.avgProgress) ? card.avgProgress : 0;
+    if (overdueCount > 0) {
+      if (card.worstOverdueDays > 0 && card.worstTaskTitle) {
+        const projectLabel = card.worstTaskProject ? ` - ${card.worstTaskProject}` : "";
+        return `Maior atraso: ${card.worstOverdueDays}d - ${card.worstTaskTitle}${projectLabel}`;
+      }
+      return `${overdueCount} tarefas atrasadas`;
+    }
+    if (progressValue < 60) {
+      return `Progresso abaixo de ${progressValue.toFixed(1)}%`;
+    }
+    return "Atencao sem atrasos mapeados";
+  }
+
+  function buildBentoCard(card, variant) {
+    const safeName = escapeHtml(card.name || "Cliente");
+    const initials = escapeHtml(initialsFromName(card.name || "C"));
+    const health = resolveClientHealth(card);
+    const progressValue = Number.isFinite(card.avgProgress) ? card.avgProgress : 0;
+    const isCompleted = progressValue >= 100;
+    const statusTone = isCompleted ? "done" : (card.counters.Atrasado || 0) > 0 ? "risk" : "live";
+    const statusLabel = isCompleted ? "CONCLUIDO" : statusTone === "risk" ? "RISCO" : "LIVE";
+    const progressLabel = `${progressValue.toFixed(1)}%`;
+    const progressWidth = Math.max(0, Math.min(100, progressValue));
+    const criticalReason = variant === "featured" ? escapeHtml(buildCriticalReason(card)) : "";
+    const classes = ["bento-card"];
+
+    if (variant === "featured") classes.push("bento-card--featured");
+    if (variant === "wide") classes.push("bento-card--wide");
+    if (variant === "metric") classes.push("bento-card--metric");
+    if (isCompleted) classes.push("bento-card--done");
+    const progressBarClass = isCompleted ? "bento-progress-bar bento-progress-bar--done" : "bento-progress-bar";
+
+    if (variant === "metric") {
+      return `
+        <div class="${classes.join(" ")}">
+          <div class="bento-card-head">
+            <div class="bento-avatar bento-avatar--solid">${initials}</div>
+            <span class="bento-pill bento-pill--${statusTone}">${statusLabel}</span>
+          </div>
+          <div class="bento-metric-only">
+            <div class="bento-metric-value bento-mono">${progressLabel}</div>
+            <div class="bento-metric-label">${safeName}</div>
+            <div class="bento-metric-sub">Saude ${health.label}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    const kicker =
+      variant === "featured" ? (statusTone === "risk" ? "Cliente critico" : "Cliente destaque") : "Cliente";
+    const nameClass = variant === "featured" ? "bento-name bento-name--xl" : "bento-name";
+    const metaClass = variant === "featured" ? "bento-meta bento-meta--grid" : "bento-meta";
+    const showProjects = variant === "featured" || variant === "wide";
+
+    return `
+      <div class="${classes.join(" ")}">
+        <div class="bento-card-head">
+          <div class="bento-title">
+            <div class="bento-kicker">${kicker}</div>
+            <div class="${nameClass}">${safeName}</div>
+          </div>
+          <div class="bento-avatar">${initials}</div>
+        </div>
+
+        <div class="${metaClass}">
+          <div class="bento-meta-block">
+            <div class="bento-label">Saude</div>
+            <div class="bento-value">
+              <span class="bento-dot bento-dot--${health.className}"></span>
+              ${health.label}
+            </div>
+          </div>
+          <div class="bento-meta-block">
+            <div class="bento-label">Progresso</div>
+            <div class="bento-value bento-mono">${progressLabel}</div>
+          </div>
+          ${
+            showProjects
+              ? `
+            <div class="bento-meta-block">
+              <div class="bento-label">Projetos</div>
+              <div class="bento-value">${card.projectsCount}</div>
+            </div>
+          `
+              : ""
+          }
+        </div>
+
+        ${
+          variant === "featured"
+            ? `
+          <div class="bento-reason">
+            <div class="bento-reason-label">Motivo</div>
+            <div class="bento-reason-text">${criticalReason}</div>
+          </div>
+        `
+            : ""
+        }
+
+        <div class="bento-footer">
+          <span class="bento-pill bento-pill--${statusTone}">${statusLabel}</span>
+          <div class="bento-progress">
+            <span class="${progressBarClass}" style="width:${progressWidth}%"></span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  const rankedCards = [...clientsCards].sort((a, b) => priorityScore(b) - priorityScore(a));
+  const featuredCard = rankedCards.shift();
+  const metricSlots = rankedCards.length >= 4 ? 2 : rankedCards.length >= 3 ? 1 : 0;
+  const metricStart = rankedCards.length - metricSlots;
+  const cardsHtml = [];
+
+  if (featuredCard) {
+    cardsHtml.push(buildBentoCard(featuredCard, "featured"));
+  }
+
+  rankedCards.forEach((card, index) => {
+    let variant = "standard";
+    if (metricSlots > 0 && index >= metricStart) {
+      variant = "metric";
+    } else if (index === 0 && rankedCards.length >= 2) {
+      variant = "wide";
+    }
+    cardsHtml.push(buildBentoCard(card, variant));
+  });
+
+  return `
+    <div class="home-macro">
+      <div class="home-macro-grid">
+        <div class="home-stat-card">
+          <div class="home-stat-label">Clientes ativos</div>
+          <div class="home-stat-value">${activeClients}</div>
+        </div>
+
+        <div class="home-stat-card">
+          <div class="home-stat-label">Projetos ativos</div>
+          <div class="home-stat-value">${projectsActive}</div>
+        </div>
+
+        <div class="home-stat-card">
+          <div class="home-stat-label">Atividades prox. 7 dias</div>
+          <div class="home-stat-value">${tasksNext7}</div>
+        </div>
+
+        <div class="home-stat-card">
+          <div class="home-stat-label">Progresso medio</div>
+          <div class="home-stat-value">${avgProgress.toFixed(1)}%</div>
+        </div>
+      </div>
+
+      <div class="home-client-grid">
+        ${cardsHtml.join("")}
+      </div>
+    </div>
+  `;
 }
 
 function normalizePackageLabel(label) {
   if (!label) return "";
   return label.trim().replace(/\s+/g, " ");
+}
+
+function normalizePhaseLabel(label) {
+  const value = String(label || "").trim();
+  return value ? value.toUpperCase() : "OUTROS";
 }
 
 function parsePackageTitle(title) {
@@ -407,12 +3404,13 @@ function loadHomeContext() {
 
 function loadLocalState() {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const raw = localStorage.getItem(localStorageKeyForUser());
     if (!raw) return false;
     const data = JSON.parse(raw);
     if (!data || !Array.isArray(data.clients)) return false;
     state.clients = data.clients;
     state.employees = Array.isArray(data.employees) ? data.employees : [];
+    state.dbAccessDenied = false;
     return true;
   } catch (err) {
     console.warn("Nao foi possivel carregar dados locais.", err);
@@ -426,7 +3424,7 @@ function saveLocalState() {
       clients: state.clients,
       employees: state.employees
     };
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(payload));
+    localStorage.setItem(localStorageKeyForUser(), JSON.stringify(payload));
   } catch (err) {
     console.warn("Nao foi possivel salvar dados locais.", err);
   }
@@ -435,10 +3433,6 @@ function saveLocalState() {
 function ensureFirebaseApp() {
   if (!firebase.apps?.length) {
     firebase.initializeApp(firebaseConfig);
-  }
-  // Initialize Supabase if available
-  if (window.supabase && !supabase) {
-    supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
   }
 }
 
@@ -458,20 +3452,14 @@ async function initFirebase() {
   }
 }
 
-async function loadStateFromDb(keepSelection = null) {
-  if (!db) return;
-  const rootRef = clientDataRootRef();
-  if (!rootRef) return;
-  const snapshot = await rootRef.once("value");
-  const clientsData = snapshot.val() || {};
-  const clients = Object.entries(clientsData).map(([clientId, clientData]) => {
-    const projectsData = clientData.projects || {};
-    const projects = Object.entries(projectsData).map(([projectId, projData]) => {
-      const tasksData = projData.tasks || {};
-      const tasks = Object.entries(tasksData).map(([taskId, taskData]) => ({
-        id: taskId,
-        ...taskData
-      }));
+function mapClientData(clientId, clientData) {
+  const projectsData = clientData.projects || {};
+  const projects = Object.entries(projectsData).map(([projectId, projData]) => {
+    const tasksData = projData.tasks || {};
+    const tasks = Object.entries(tasksData).map(([taskId, taskData]) => ({
+      id: taskId,
+      ...taskData
+    }));
       const progress = computeProgress(tasks);
       const epics = Array.isArray(projData.epics) ? projData.epics : DEFAULT_EPICS.slice();
       const packages = Array.isArray(projData.packages) ? projData.packages : [];
@@ -486,9 +3474,76 @@ async function loadStateFromDb(keepSelection = null) {
         financials,
         tasks
       };
-    });
-    return { id: clientId, ...clientData, projects };
   });
+  return { id: clientId, ...clientData, projects };
+}
+
+  async function loadStateFromDb(keepSelection = null) {
+    if (!db) return false;
+    const role = normalizeUserRole(state.currentUserRole);
+    let snapshot = null;
+    try {
+      if (role === "admin") {
+        snapshot = await db.ref("clients").once("value");
+      } else if (role === "user") {
+        const tenantPath = clientDataRootPath();
+        if (!tenantPath) return false;
+        snapshot = await db.ref(tenantPath).once("value");
+      } else {
+        snapshot = null;
+      }
+    } catch (err) {
+      const message = String(err?.message || "");
+    const code = String(err?.code || "");
+    const denied = code === "PERMISSION_DENIED" || /permission/i.test(message);
+    console.error(err);
+    if (denied) {
+      state.dbAccessDenied = true;
+      resetUserState();
+      clearLocalState();
+      renderClientList();
+      renderMain();
+      hydrateClientSelect();
+      return false;
+    }
+    throw err;
+  }
+    let clients = [];
+    if (role === "admin") {
+      const clientsData = snapshot ? snapshot.val() || {} : {};
+      clients = Object.entries(clientsData).map(([clientId, clientData]) => mapClientData(clientId, clientData));
+      state.dbAccessDenied = false;
+    } else if (role === "user") {
+      const clientsData = snapshot ? snapshot.val() || {} : {};
+      clients = Object.entries(clientsData).map(([clientId, clientData]) => mapClientData(clientId, clientData));
+      state.dbAccessDenied = false;
+      state.groups = [];
+    } else {
+      const groups = await loadGroupsFromDb();
+      state.groups = groups.slice();
+      const uid = auth?.currentUser?.uid;
+      const allowedGroups = uid ? groups.filter((group) => group.members?.[uid]) : [];
+    const clientIds = new Set();
+    allowedGroups.forEach((group) => {
+      Object.keys(group.clients || {}).forEach((clientId) => clientIds.add(clientId));
+    });
+      const clientPromises = Array.from(clientIds).map(async (clientId) => {
+        try {
+          const snap = await db.ref(`clients/${clientId}`).once("value");
+          const clientData = snap.val();
+          if (!clientData) return null;
+          return mapClientData(clientId, clientData);
+        } catch (err) {
+          console.error(err);
+          return null;
+        }
+    });
+    const resolved = await Promise.all(clientPromises);
+    clients = resolved.filter(Boolean);
+    if (!clients.length) {
+      state.dbAccessDenied = true;
+    }
+  }
 
   state.clients = clients;
   if (keepSelection && (keepSelection.clientId || keepSelection.projectId || keepSelection.clientName || keepSelection.projectName)) {
@@ -518,6 +3573,334 @@ async function loadStateFromDb(keepSelection = null) {
   renderClientList();
   renderMain();
   hydrateClientSelect();
+  return true;
+}
+
+async function syncUserProfile(user) {
+  if (!db || !user?.uid) return;
+  const profileRef = db.ref(`users/${user.uid}`);
+  const snapshot = await profileRef.once("value");
+  const existing = snapshot.val() || {};
+  const role = normalizeUserRole(isAdminUser(user) ? "admin" : (existing.role || "user"));
+  const payload = {
+    uid: user.uid,
+    email: user.email || "",
+    displayName: user.displayName || "",
+    role,
+    lastLoginAt: firebase.database.ServerValue.TIMESTAMP
+  };
+  if (!snapshot.exists()) {
+    payload.createdAt = firebase.database.ServerValue.TIMESTAMP;
+  }
+  await profileRef.update(payload);
+}
+
+async function loadUsersFromDb() {
+  if (!db) return [];
+  const snapshot = await db.ref("users").once("value");
+  const raw = snapshot.val() || {};
+  return Object.entries(raw).map(([uid, data]) => ({
+    uid,
+    email: data?.email || "",
+    displayName: data?.displayName || "",
+    role: normalizeUserRole(data?.role || (isAdminEmail(data?.email) ? "admin" : "user")),
+    createdAt: data?.createdAt || null,
+    lastLoginAt: data?.lastLoginAt || null
+  }));
+}
+
+async function loadGroupsFromDb() {
+  if (!db) return [];
+  try {
+    const snapshot = await db.ref("groups").once("value");
+    const raw = snapshot.val() || {};
+    state.dbAccessDenied = false;
+    return Object.entries(raw).map(([groupId, data]) => ({
+      id: groupId,
+      name: data?.name || "Grupo",
+      members: data?.members || {},
+      clients: data?.clients || {}
+    }));
+  } catch (err) {
+    const message = String(err?.message || "");
+    const code = String(err?.code || "");
+    const denied = code === "PERMISSION_DENIED" || /permission/i.test(message);
+    console.error(err);
+    if (denied) {
+      state.dbAccessDenied = true;
+      return [];
+    }
+    throw err;
+  }
+}
+
+async function updateUserProfileInDb(uid, payload) {
+  if (!db || !uid) return;
+  await db.ref(`users/${uid}`).update({
+    ...payload,
+    updatedAt: firebase.database.ServerValue.TIMESTAMP
+  });
+}
+
+async function removeUserFromGroups(uid) {
+  if (!db || !uid) return;
+  const snapshot = await db.ref("groups").once("value");
+  const groups = snapshot.val() || {};
+  const updates = {};
+  Object.entries(groups).forEach(([groupId, data]) => {
+    if (data?.members?.[uid]) {
+      updates[`groups/${groupId}/members/${uid}`] = null;
+    }
+  });
+  if (Object.keys(updates).length) {
+    await db.ref().update(updates);
+  }
+}
+
+async function deleteUserFromDb(uid) {
+  if (!db || !uid) return;
+  await db.ref(`users/${uid}`).remove();
+  await removeUserFromGroups(uid);
+}
+
+async function sendPasswordReset(email) {
+  if (!auth) throw new Error("Auth indisponivel.");
+  if (!email) throw new Error("E-mail invalido.");
+  await auth.sendPasswordResetEmail(email);
+}
+
+let adminAuthApp = null;
+let adminAuthInstance = null;
+
+function getAdminAuth() {
+  if (!firebase?.apps?.length) return null;
+  if (!adminAuthApp) {
+    adminAuthApp = firebase.apps.find((app) => app.name === "admin-create") || firebase.initializeApp(firebaseConfig, "admin-create");
+    adminAuthInstance = adminAuthApp.auth();
+    adminAuthInstance.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(() => null);
+  }
+  return adminAuthInstance;
+}
+
+function generateTempPassword() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  let out = "";
+  for (let i = 0; i < 12; i += 1) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
+}
+
+async function createUserFromAdminInvite({ email, name, role }) {
+  if (!db) throw new Error("Banco indisponivel.");
+  const adminAuth = getAdminAuth();
+  if (!adminAuth) throw new Error("Auth indisponivel.");
+  const tempPassword = generateTempPassword();
+  try {
+    const credential = await adminAuth.createUserWithEmailAndPassword(email, tempPassword);
+    const createdUser = credential?.user;
+    if (!createdUser) throw new Error("Falha ao criar usuario.");
+    if (name) {
+      await createdUser.updateProfile({ displayName: name });
+    }
+    const uid = createdUser.uid;
+    await db.ref(`users/${uid}`).update({
+      uid,
+      email,
+      displayName: name || "",
+      role: normalizeUserRole(role),
+      createdAt: firebase.database.ServerValue.TIMESTAMP
+    });
+    return { uid, tempPassword };
+  } finally {
+    await adminAuth.signOut().catch(() => null);
+  }
+}
+
+async function inviteUserFlow() {
+  const currentRole = normalizeUserRole(state.currentUserRole);
+  if (currentRole !== "admin") {
+    alert("Apenas administradores podem convidar usuarios.");
+    return;
+  }
+  if (!db) {
+    alert("Firebase nao configurado.");
+    return;
+  }
+  const rawEmail = window.prompt("E-mail do usuario:");
+  const email = String(rawEmail || "").trim().toLowerCase();
+  if (!email) return;
+  const rawName = window.prompt("Nome completo (opcional):");
+  const name = String(rawName || "").trim();
+  const role = "admin";
+
+  const confirmed = window.confirm(`Criar usuario ${email} com acesso total?`);
+  if (!confirmed) return;
+
+  try {
+    const result = await createUserFromAdminInvite({ email, name, role });
+    try {
+      await sendPasswordReset(email);
+    } catch (err) {
+      console.warn("Falha ao enviar redefinicao de senha.", err);
+    }
+    await loadAdminUsers();
+    alert(`Usuario criado. Senha temporaria: ${result.tempPassword}`);
+  } catch (err) {
+    console.error(err);
+    if (err?.code === "auth/email-already-in-use") {
+      alert("Este e-mail ja possui conta. Acesse o usuario e defina o perfil como Administrador.");
+      return;
+    }
+    alert("Nao foi possivel criar o usuario.");
+  }
+}
+
+function openCreateUserModal() {
+  const modal = byId("admin-create-user-modal");
+  if (!modal) return;
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+  const status = byId("admin-create-user-status");
+  if (status) {
+    status.textContent = "";
+    status.classList.remove("error", "success");
+  }
+}
+
+function closeCreateUserModal() {
+  const modal = byId("admin-create-user-modal");
+  if (!modal) return;
+  modal.classList.remove("show");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function wireCreateUserModal() {
+  const modal = byId("admin-create-user-modal");
+  if (!modal || modal.dataset.wired) return;
+  modal.dataset.wired = "true";
+
+  modal.addEventListener("click", (event) => {
+    if (event.target.closest("[data-modal-close]")) {
+      closeCreateUserModal();
+    }
+  });
+
+  const form = byId("admin-create-user-form");
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const emailInput = byId("admin-create-user-email");
+      const nameInput = byId("admin-create-user-name");
+      const status = byId("admin-create-user-status");
+      const email = String(emailInput?.value || "").trim().toLowerCase();
+      const name = String(nameInput?.value || "").trim();
+
+      if (status) {
+        status.textContent = "";
+        status.classList.remove("error", "success");
+      }
+
+      if (!email || !email.includes("@")) {
+        if (status) {
+          status.textContent = "Informe um e-mail valido.";
+          status.classList.add("error");
+        }
+        return;
+      }
+
+      try {
+        const result = await createUserFromAdminInvite({ email, name, role: "admin" });
+        try {
+          await sendPasswordReset(email);
+        } catch (err) {
+          console.warn("Falha ao enviar redefinicao de senha.", err);
+        }
+        await loadAdminUsers();
+        if (status) {
+          status.textContent = `Usuario criado. Senha temporaria: ${result.tempPassword}`;
+          status.classList.add("success");
+        }
+        if (emailInput) emailInput.value = "";
+        if (nameInput) nameInput.value = "";
+      } catch (err) {
+        console.error(err);
+        if (status) {
+          status.textContent =
+            err?.code === "auth/email-already-in-use"
+              ? "Este e-mail ja possui conta. Ajuste o perfil para Administrador."
+              : "Nao foi possivel criar o usuario.";
+          status.classList.add("error");
+        }
+      }
+    });
+  }
+}
+
+async function createGroupInDb(name) {
+  if (!db) return null;
+  const groupRef = db.ref("groups").push();
+  await groupRef.set({
+    name: name || "Novo grupo",
+    members: {},
+    clients: {},
+    createdAt: firebase.database.ServerValue.TIMESTAMP
+  });
+  return groupRef.key;
+}
+
+async function updateGroupNameInDb(groupId, name) {
+  if (!db || !groupId) return;
+  await db.ref(`groups/${groupId}`).update({
+    name: name || "Grupo",
+    updatedAt: firebase.database.ServerValue.TIMESTAMP
+  });
+}
+
+async function updateGroupMemberInDb(groupId, uid, enabled) {
+  if (!db || !groupId || !uid) return;
+  const ref = db.ref(`groups/${groupId}/members/${uid}`);
+  if (enabled) {
+    await ref.set(true);
+  } else {
+    await ref.remove();
+  }
+}
+
+async function assignClientToGroup(clientId, groupId) {
+  if (!db || !clientId || !groupId) return;
+  const updates = {
+    [`groups/${groupId}/clients/${clientId}`]: true
+  };
+  (state.groups || []).forEach((group) => {
+    if (group.id !== groupId && group.clients?.[clientId]) {
+      updates[`groups/${group.id}/clients/${clientId}`] = null;
+    }
+  });
+  updates[`clients/${clientId}/groupId`] = groupId;
+  await db.ref().update(updates);
+}
+
+async function removeClientFromGroup(clientId, groupId) {
+  if (!db || !clientId || !groupId) return;
+  const updates = {
+    [`groups/${groupId}/clients/${clientId}`]: null,
+    [`clients/${clientId}/groupId`]: null
+  };
+  await db.ref().update(updates);
+}
+
+async function deleteGroupFromDb(groupId) {
+  if (!db || !groupId) return;
+  const group = (state.groups || []).find((item) => item.id === groupId);
+  const updates = {};
+  if (group?.clients) {
+    Object.keys(group.clients).forEach((clientId) => {
+      updates[`clients/${clientId}/groupId`] = null;
+    });
+  }
+  updates[`groups/${groupId}`] = null;
+  await db.ref().update(updates);
 }
 
 async function initApp() {
@@ -525,8 +3908,8 @@ async function initApp() {
   const firebaseReady = db ? true : await initFirebase();
   if (firebaseReady) {
     try {
-      await loadStateFromDb();
-      if (!state.clients.length && loadLocalState()) {
+      const loaded = await loadStateFromDb();
+      if (!loaded && !state.dbAccessDenied && !state.clients.length && loadLocalState()) {
         state.selectedClient = state.clients[0] || null;
         state.selectedProject = state.clients[0]?.projects?.[0] || null;
         renderClientList();
@@ -536,7 +3919,7 @@ async function initApp() {
       saveLocalState();
     } catch (err) {
       console.error(err);
-      const hasLocal = loadLocalState();
+      const hasLocal = !state.dbAccessDenied && loadLocalState();
       if (hasLocal) {
         state.selectedClient = state.clients[0] || null;
         state.selectedProject = state.clients[0]?.projects?.[0] || null;
@@ -558,20 +3941,28 @@ async function initApp() {
   }
   wireNav();
   wireModals();
+  wireInlineProjectDates();
+  wireInlineTaskDates();
+  setupMonitorActions();
   setupStatusPopover();
+  setupProgressPopover();
   setupTaskActions();
   setupDashboardFilters();
-
-  const user = auth?.currentUser;
-  const auditBtn = byId("nav-audit");
-  if (auditBtn && isAdminEmail(user?.email)) {
-    auditBtn.classList.remove("hidden");
-  }
 }
 
 function renderClientList() {
   const list = byId("client-list");
   list.innerHTML = "";
+
+  if (!state.clients.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = state.dbAccessDenied
+      ? "Sem acesso aos projetos cadastrados."
+      : "Nenhum projeto cadastrado.";
+    list.appendChild(empty);
+    return;
+  }
 
   state.clients.forEach((client) => {
     const wrapper = document.createElement("div");
@@ -584,7 +3975,26 @@ function renderClientList() {
 
     const header = document.createElement("div");
     header.className = "sub-header";
-    header.innerHTML = `<span>${client.name}</span><span class="caret">›</span>`;
+    const title = document.createElement("span");
+    title.className = "client-title";
+    title.textContent = client.name;
+    const actions = document.createElement("div");
+    actions.className = "client-actions";
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "client-edit-btn";
+    editBtn.textContent = "Editar";
+    editBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openClientModal(client);
+    });
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.textContent = "›";
+    actions.appendChild(editBtn);
+    actions.appendChild(caret);
+    header.appendChild(title);
+    header.appendChild(actions);
     header.addEventListener("click", () => {
       const nextOpen = !wrapper.classList.contains("open");
       wrapper.classList.toggle("open", nextOpen);
@@ -612,9 +4022,230 @@ function renderClientList() {
 }
 
 function highlightActiveProject(name) {
-  document.querySelectorAll(".project-chip").forEach((chip) => {
+  document.querySelectorAll("#client-list .project-chip").forEach((chip) => {
     chip.classList.toggle("active", chip.textContent === name);
   });
+}
+
+function ensureSelectedImprovement() {
+  if (!Array.isArray(state.improvements) || !state.improvements.length) {
+    state.selectedImprovement = null;
+    return;
+  }
+  if (!state.selectedImprovement) {
+    state.selectedImprovement = state.improvements[0];
+    return;
+  }
+  const match = state.improvements.find((item) => item.id === state.selectedImprovement.id);
+  state.selectedImprovement = match || state.improvements[0];
+}
+
+function highlightActiveImprovement() {
+  const activeId = state.selectedImprovement?.id;
+  document.querySelectorAll("#improvement-list [data-improvement-id]").forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.improvementId === activeId);
+  });
+}
+
+function renderImprovementList() {
+  const list = byId("improvement-list");
+  if (!list) return;
+  list.innerHTML = "";
+  ensureSelectedImprovement();
+  if (!state.improvements.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Nenhuma melhoria cadastrada.";
+    list.appendChild(empty);
+    return;
+  }
+  state.improvements.forEach((improvement) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "project-chip";
+    btn.dataset.improvementId = improvement.id;
+    btn.textContent = improvement.name;
+    btn.addEventListener("click", () => openImprovement(improvement));
+    list.appendChild(btn);
+  });
+  highlightActiveImprovement();
+}
+
+function openImprovement(improvement) {
+  if (!improvement) return;
+  state.selectedImprovement = improvement;
+  state.currentSection = "minhas-melhorias";
+  setActiveNav(state.currentSection);
+  renderImprovementList();
+  renderMain();
+}
+
+function improvementScheduleStatus(improvement) {
+  const end = parseTaskDate(improvement?.end);
+  if (!end) return "em_dia";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const progress = clampPct(improvement?.progress || 0);
+  if (end.getTime() < today && progress < 100) return "em_atraso";
+  return "em_dia";
+}
+
+function renderImprovementsDashboard(container) {
+  setCrumbPathText("Dashboard Melhorias");
+  const header = document.createElement("div");
+  header.className = "section-header span-all";
+  header.innerHTML = `
+    <div class="header-row">
+      <h2>Resumo de Melhorias</h2>
+    </div>
+    <div class="muted">Demandas menores separadas dos projetos principais.</div>
+  `;
+
+  const table = document.createElement("div");
+  table.className = "table-card span-all";
+  const rows = state.improvements
+    .map((item) => {
+      const statusBadge = statusInfo(item.status);
+      const scheduleBadge = scheduleStatusInfo(improvementScheduleStatus(item));
+      const progress = clampPct(item.progress || 0);
+      return `
+        <tr data-improvement-row="${item.id}">
+          <td>${escapeHtml(item.name)}</td>
+          <td>${escapeHtml(item.client || "-")}</td>
+          <td>${escapeHtml(item.owner || "A definir")}</td>
+          <td><span class="pill ${statusBadge.className}">${statusBadge.label}</span></td>
+          <td>${progress}%</td>
+          <td><span class="pill ${scheduleBadge.className}">${scheduleBadge.label}</span></td>
+        </tr>
+      `;
+    })
+    .join("");
+  table.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Melhoria</th>
+          <th>Cliente</th>
+          <th>Responsavel</th>
+          <th>Status</th>
+          <th>Progresso</th>
+          <th>Prazo</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows || `<tr><td colspan="6">Nenhuma melhoria cadastrada.</td></tr>`}
+      </tbody>
+    </table>
+  `;
+
+  table.querySelectorAll("[data-improvement-row]").forEach((row) => {
+    row.addEventListener("click", () => {
+      const improvement = state.improvements.find((item) => item.id === row.dataset.improvementRow);
+      if (improvement) openImprovement(improvement);
+    });
+  });
+
+  container.appendChild(header);
+  container.appendChild(table);
+}
+
+function renderImprovementDetail(container) {
+  const improvement = state.selectedImprovement;
+  setCrumbPathText(improvement ? `Melhorias / ${improvement.name}` : "Melhorias");
+  if (!improvement) {
+    container.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;">
+      <h2>Nenhuma melhoria selecionada</h2>
+      <p>Selecione uma melhoria na barra lateral para ver os detalhes.</p>
+    </div>`;
+    return;
+  }
+
+  const statusBadge = statusInfo(improvement.status);
+  const scheduleBadge = scheduleStatusInfo(improvementScheduleStatus(improvement));
+  const progress = clampPct(improvement.progress || 0);
+  const baselinePct = baselinePctFromDates(improvement.start, improvement.end);
+  const gap = round1(baselinePct - progress);
+  const gapStatus = gapStatusInfo(gap, baselinePct, progress);
+  const baselineLabel = formatMetric(baselinePct);
+  const gapLabel = formatSignedMetric(gap);
+
+  const headerCard = document.createElement("div");
+  headerCard.className = "card project-header span-all";
+  headerCard.innerHTML = `
+    <div class="project-header-top">
+      <div>
+        <h2>${escapeHtml(improvement.name)}</h2>
+        <div class="project-subtitle">${escapeHtml(improvement.client || "Cliente")}</div>
+      </div>
+      <div class="project-header-badges">
+        <span class="pill project-status ${statusBadge.className}">${statusBadge.label}</span>
+        <span class="pill schedule-status ${scheduleBadge.className}">${scheduleBadge.label}</span>
+      </div>
+    </div>
+    <div class="project-meta-grid">
+      <div class="meta-item">
+        <div class="label">Cliente</div>
+        <div class="value">${escapeHtml(improvement.client || "-")}</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Responsavel</div>
+        <div class="value">${escapeHtml(improvement.owner || "A definir")}</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Data inicio</div>
+        <div class="value">${formatDateBR(improvement.start) || "-"}</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Prazo</div>
+        <div class="value">${formatDateBR(improvement.end) || "-"}</div>
+      </div>
+    </div>
+    <div>
+      <div class="label">Progresso (%)</div>
+      <div class="progress"><div class="progress-bar" style="width: ${progress}%"></div></div>
+      <div class="value" style="margin-top:6px;">${progress}% concluido</div>
+    </div>
+  `;
+
+  const metricsGrid = document.createElement("div");
+  metricsGrid.className = "metrics-grid span-all";
+  metricsGrid.innerHTML = `
+    <div class="metric-card">
+      <div class="label">Status</div>
+      <div class="value">${statusBadge.label}</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Prazo</div>
+      <div class="value">${scheduleBadge.label}</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">% Progresso</div>
+      <div class="value">${progress}%</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Responsavel</div>
+      <div class="value">${escapeHtml(improvement.owner || "A definir")}</div>
+    </div>
+  `;
+
+  const performanceGrid = document.createElement("div");
+  performanceGrid.className = "metrics-grid performance-grid span-all";
+  performanceGrid.innerHTML = `
+    <div class="metric-card">
+      <div class="label">Previsto (baseline)</div>
+      <div class="value">${baselineLabel}%</div>
+      <div class="sub">Meta para hoje</div>
+    </div>
+    <div class="metric-card gap ${gapStatus.className}">
+      <div class="label">GAP (pp)</div>
+      <div class="value">${gapLabel}pp</div>
+      <div class="sub">${gapStatus.label}</div>
+    </div>
+  `;
+
+  container.appendChild(headerCard);
+  container.appendChild(performanceGrid);
+  container.appendChild(metricsGrid);
 }
 
 function setActiveNav(section) {
@@ -643,79 +4274,2025 @@ function openProject(client, project) {
 
 function updateTopActions() {
   const openProjectBtn = byId("open-project-modal");
-  const deleteProjectBtn = byId("delete-project-btn");
   const editProjectBtn = byId("edit-project-btn");
   const openEmployeeBtn = byId("open-employee-modal");
+  const openGanttBtn = byId("open-gantt-btn");
   const isHome = state.currentSection === "inicio";
+  const isConfig = state.currentSection === "config";
+  const isDevBoard = state.currentSection === "dev-board";
   const isProject = state.currentSection === "meus-projetos";
-  if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome);
-  if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome);
-  if (deleteProjectBtn) deleteProjectBtn.classList.toggle("hidden", !isProject);
+  if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome || isConfig || isDevBoard);
+  if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome || isConfig || isDevBoard);
   if (editProjectBtn) editProjectBtn.classList.toggle("hidden", !isProject);
+  if (openGanttBtn) {
+    openGanttBtn.classList.toggle("hidden", isDevBoard);
+    openGanttBtn.disabled = !state.selectedProject;
+  }
 }
 
 function renderHome(container) {
-  byId("crumb-path").textContent = "Inicio";
+  setCrumbPathText("Inicio");
+  container.innerHTML = renderHomeMacroSummary();
+}
 
-  const welcome = document.createElement("div");
-  welcome.className = "welcome-card span-all";
-  welcome.innerHTML = `
-    <div class="welcome-header">
-      <div class="welcome-icon">👋</div>
-      <div>
-        <p class="welcome-title">Bem-vindo ao AXON - Projects</p>
-        <div class="welcome-meta">📅 Ultimo acesso: ${state.home.lastAccess}</div>
+function removeRelatorioStyles() {
+  const priorStyles = document.getElementById("onepage-styles");
+  if (priorStyles) {
+    priorStyles.remove();
+  }
+}
+
+function buildOnePageQuery(project, client) {
+  const params = new URLSearchParams();
+  if (client?.id) {
+    params.set("clientId", client.id);
+  } else if (client?.name) {
+    params.set("client", client.name);
+  }
+  if (project?.id) {
+    params.set("projectId", project.id);
+  } else if (project?.name) {
+    params.set("project", project.name);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function renderRelatorioSection() {
+  const contentArea = byId("dashboard-panels");
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+
+  setCrumbPathText("Relatório do Projeto");
+
+  if (!project || !client) {
+    contentArea.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;">
+      <h2>Nenhum projeto selecionado</h2>
+      <p>Por favor, selecione um projeto na barra lateral ou no dashboard para gerar um relatório.</p>
+    </div>`;
+    return;
+  }
+
+  const reportWrapper = document.createElement("div");
+  reportWrapper.className = "span-all report-embed";
+
+  saveLocalState();
+
+  const reportFrame = document.createElement("iframe");
+  reportFrame.className = "onepage-frame";
+  reportFrame.title = "Relatorio do Projeto";
+  reportFrame.loading = "lazy";
+  reportFrame.src = `onepage.html${buildOnePageQuery(project, client)}`;
+  reportWrapper.appendChild(reportFrame);
+
+  contentArea.innerHTML = "";
+  contentArea.appendChild(reportWrapper);
+}
+
+function renderMonitorActivities(container) {
+  setCrumbPathText("Monitor de Atividades");
+  const filter = state.monitor?.filter || "all";
+  const clientFilter = state.monitor?.client || "";
+  const projectFilter = state.monitor?.project || "";
+  const responsibleFilter = state.monitor?.responsible || "";
+  const items = buildMonitorItems();
+  const statusFiltered = items.filter((item) => {
+    if (filter === "atrasado") return item.status === "atrasado";
+    if (filter === "proximo") return item.status === "proximo";
+    return true;
+  });
+  const clientOptions = Array.from(new Set(statusFiltered.map((item) => item.clientName))).sort();
+  if (clientFilter && !clientOptions.includes(clientFilter)) {
+    state.monitor.client = "";
+  }
+  const projectPool = (state.monitor.client || clientFilter)
+    ? statusFiltered.filter((item) => item.clientName === (state.monitor.client || clientFilter))
+    : statusFiltered;
+  const projectOptions = Array.from(new Set(projectPool.map((item) => item.projectName))).sort();
+  if (projectFilter && !projectOptions.includes(projectFilter)) {
+    state.monitor.project = "";
+  }
+  const responsiblePool = statusFiltered.filter((item) => {
+    if (state.monitor.client && item.clientName !== state.monitor.client) return false;
+    if (state.monitor.project && item.projectName !== state.monitor.project) return false;
+    return true;
+  });
+  const responsibleOptions = Array.from(new Set(responsiblePool.map((item) => item.responsible))).sort();
+  if (responsibleFilter && !responsibleOptions.includes(responsibleFilter)) {
+    state.monitor.responsible = "";
+  }
+
+  const filtered = statusFiltered.filter((item) => {
+    if (state.monitor.client && item.clientName !== state.monitor.client) return false;
+    if (state.monitor.project && item.projectName !== state.monitor.project) return false;
+    if (state.monitor.responsible && item.responsible !== state.monitor.responsible) return false;
+    return true;
+  });
+
+  const header = document.createElement("div");
+  header.className = "monitor-container span-all";
+  header.innerHTML = `
+    <div class="monitor-header">
+      <h2>Monitor de Atividades</h2>
+      <div class="monitor-filter">
+        <div class="monitor-chip-bar" role="tablist" aria-label="Filtros do monitor">
+          ${MONITOR_FILTERS.map((option) => {
+            const active = option.key === filter ? "active" : "";
+            const selected = option.key === filter ? "true" : "false";
+            return `<button type="button" class="monitor-chip ${active}" data-monitor-filter="${option.key}" aria-selected="${selected}">${option.label}</button>`;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+    <div class="monitor-filters">
+      <label class="monitor-select">
+        <span>Cliente</span>
+        <select data-monitor-select="client">
+          <option value="">Todos</option>
+          ${clientOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.client === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="monitor-select">
+        <span>Projeto</span>
+        <select data-monitor-select="project">
+          <option value="">Todos</option>
+          ${projectOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.project === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="monitor-select">
+        <span>Responsavel</span>
+        <select data-monitor-select="responsible">
+          <option value="">Todos</option>
+          ${responsibleOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.responsible === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+  `;
+
+  const list = document.createElement("div");
+  list.className = "monitor-container span-all monitor-bento-grid";
+
+  const today = startOfDay(new Date());
+  const overdueItems = [];
+  const todayItems = [];
+  const upcomingItems = [];
+
+  filtered.forEach((item) => {
+    const diff = daysDiff(item.dueDay, today);
+    if (diff < 0 || item.status === "atrasado") {
+      overdueItems.push(item);
+    } else if (diff === 0) {
+      todayItems.push(item);
+    } else {
+      upcomingItems.push(item);
+    }
+  });
+
+  const sortByDue = (a, b) => a.dueDay.getTime() - b.dueDay.getTime();
+  overdueItems.sort(sortByDue);
+  todayItems.sort(sortByDue);
+  upcomingItems.sort(sortByDue);
+
+  const iconSvg = (name) => {
+    const icons = {
+      alert: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`,
+      calendarCheck: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><polyline points="9 16 11 18 15 14"></polyline></svg>`,
+      calendar: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`,
+      users: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`,
+      trend: `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>`,
+      code: `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
+      review: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9 12l2 2 4-4"></path></svg>`,
+      meeting: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="5" width="15" height="14" rx="2"></rect><polygon points="23 7 16 12 23 17 23 7"></polygon></svg>`
+    };
+    return icons[name] || icons.code;
+  };
+
+  const pickMonitorIcon = (item) => {
+    const rawTitle = String(item.taskTitle || "").toLowerCase();
+    const normalized = rawTitle.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (normalized.includes("revis") || normalized.includes("review") || normalized.includes("valid")) {
+      return "review";
+    }
+    if (
+      normalized.includes("reun") ||
+      normalized.includes("meeting") ||
+      normalized.includes("call") ||
+      normalized.includes("reuniao")
+    ) {
+      return "meeting";
+    }
+    return "code";
+  };
+
+  const renderTaskMiniCard = (item) => {
+    const diff = daysDiff(item.dueDay, today);
+    const tone = diff < 0 ? "overdue" : diff === 0 ? "today" : "upcoming";
+    const labelBase = formatMonitorDateLabel(item.dueDay, today);
+    const badgeLabel = diff < 0 ? "ATRASADO" : diff === 0 ? "HOJE" : "PROXIMO";
+    const deltaLabel =
+      diff < 0 ? `Atraso: ${Math.abs(diff)}d` : diff === 0 ? "Vence hoje" : `Em ${diff}d`;
+    const responsible = item.responsible || "A definir";
+    const icon = pickMonitorIcon(item);
+    return `
+      <div class="monitor-mini-card monitor-mini-card--${tone}" data-monitor-card="true" data-client-index="${item.clientIndex}" data-project-index="${item.projectIndex}" data-task-index="${item.taskIndex}">
+        <div class="monitor-mini-left">
+          <label class="monitor-mini-check" data-monitor-toggle="true" title="Concluir">
+            <input type="checkbox" aria-label="Concluir atividade">
+          </label>
+          <div class="monitor-mini-icon">${iconSvg(icon)}</div>
+          <div class="monitor-mini-info">
+            <div class="monitor-mini-title">${escapeHtml(item.taskTitle)}</div>
+            <div class="monitor-mini-meta">
+              <span class="monitor-mini-client">${escapeHtml(item.clientName)}</span>
+              <span class="monitor-mini-sep">|</span>
+              <span>${escapeHtml(item.projectName)}</span>
+              <span class="monitor-mini-sep">|</span>
+              <span>${escapeHtml(responsible)}</span>
+            </div>
+          </div>
+        </div>
+        <div class="monitor-mini-right">
+          <div class="monitor-mini-date">${labelBase}</div>
+          <div class="monitor-mini-status monitor-mini-status--${tone}">${badgeLabel}</div>
+          <div class="monitor-mini-gap">${deltaLabel}</div>
+        </div>
+      </div>
+    `;
+  };
+
+  const renderMiniList = (items) => {
+    if (!items.length) {
+      return `<div class="monitor-mini-empty">Sem atividades.</div>`;
+    }
+    const limit = 12;
+    const sliced = items.slice(0, limit);
+    const extra = items.length - sliced.length;
+    return `${sliced.map(renderTaskMiniCard).join("")}${
+      extra > 0 ? `<div class="monitor-mini-more">+${extra} restantes</div>` : ""
+    }`;
+  };
+
+  const teamMap = new Map();
+  filtered.forEach((item) => {
+    const name = item.responsible || "A definir";
+    const entry = teamMap.get(name) || { name, total: 0, overdue: 0 };
+    entry.total += 1;
+    if (daysDiff(item.dueDay, today) < 0) entry.overdue += 1;
+    teamMap.set(name, entry);
+  });
+  const teamItems = Array.from(teamMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 4);
+
+  const bottleneckMap = new Map();
+  overdueItems.forEach((item) => {
+    const key = item.projectName || "Projeto";
+    const entry = bottleneckMap.get(key) || { project: key, client: item.clientName || "", total: 0 };
+    entry.total += 1;
+    bottleneckMap.set(key, entry);
+  });
+  const bottlenecks = Array.from(bottleneckMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 4);
+
+  const renderTeamList = () => {
+    if (!teamItems.length) {
+      return `<div class="monitor-mini-empty">Sem dados de time.</div>`;
+    }
+    return teamItems
+      .map((member) => {
+        const initials = escapeHtml(initialsFromName(member.name || "T"));
+        const name = escapeHtml(member.name || "A definir");
+        return `
+          <div class="monitor-mini-card monitor-mini-card--neutral">
+            <div class="monitor-mini-left">
+              <div class="monitor-mini-avatar">${initials}</div>
+              <div class="monitor-mini-info">
+                <div class="monitor-mini-title">${name}</div>
+                <div class="monitor-mini-meta">
+                  <span>${member.total} atividades</span>
+                </div>
+              </div>
+            </div>
+            <div class="monitor-mini-right">
+              <div class="monitor-mini-gap monitor-mini-gap--warn">${member.overdue} atrasadas</div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+  };
+
+  const renderBottleneckList = () => {
+    if (!bottlenecks.length) {
+      return `<div class="monitor-mini-empty">Sem gargalos.</div>`;
+    }
+    return bottlenecks
+      .map((entry) => {
+        const project = escapeHtml(entry.project || "Projeto");
+        const client = escapeHtml(entry.client || "");
+        return `
+          <div class="monitor-mini-card monitor-mini-card--risk">
+            <div class="monitor-mini-left">
+              <div class="monitor-mini-icon">${iconSvg("trend")}</div>
+              <div class="monitor-mini-info">
+                <div class="monitor-mini-title">${project}</div>
+                <div class="monitor-mini-meta">${client ? `${client}` : "Sem cliente"}</div>
+              </div>
+            </div>
+            <div class="monitor-mini-right">
+              <div class="monitor-mini-gap monitor-mini-gap--danger">${entry.total} atrasos</div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+  };
+
+  const cardsHtml = `
+    <div class="monitor-bento-col monitor-bento-col--primary">
+      <div class="monitor-bento-card monitor-bento-card--critical monitor-bento-card--xl">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Acoes Criticas</div>
+            <div class="monitor-bento-sub">Intervencao imediata</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--critical">${iconSvg("alert")}</div>
+        </div>
+        <div class="monitor-bento-count">${overdueItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(overdueItems)}</div>
+      </div>
+    </div>
+
+    <div class="monitor-bento-col monitor-bento-col--secondary">
+      <div class="monitor-bento-card monitor-bento-card--today monitor-bento-card--wide">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Cronograma do Dia</div>
+            <div class="monitor-bento-sub">Entrega e follow-up</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--today">${iconSvg("calendarCheck")}</div>
+        </div>
+        <div class="monitor-bento-count">${todayItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(todayItems)}</div>
+      </div>
+
+      <div class="monitor-bento-card monitor-bento-card--team">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Metricas de Time</div>
+            <div class="monitor-bento-sub">Carga por responsavel</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--team">${iconSvg("users")}</div>
+        </div>
+        <div class="monitor-bento-list">${renderTeamList()}</div>
+      </div>
+
+      <div class="monitor-bento-card monitor-bento-card--upcoming">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Proximos 7 dias</div>
+            <div class="monitor-bento-sub">Planejamento</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--upcoming">${iconSvg("calendar")}</div>
+        </div>
+        <div class="monitor-bento-count">${upcomingItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(upcomingItems)}</div>
+      </div>
+
+      <div class="monitor-bento-card monitor-bento-card--bottleneck">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Gargalos</div>
+            <div class="monitor-bento-sub">Projetos com atraso</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--risk">${iconSvg("trend")}</div>
+        </div>
+        <div class="monitor-bento-list">${renderBottleneckList()}</div>
       </div>
     </div>
   `;
 
-  const quote = document.createElement("div");
-  quote.className = "quote-card span-all";
-  quote.innerHTML = `
-    <div class="muted">💡 Frase do dia</div>
-    <div class="quote-text">"${state.home.quote}"</div>
+  list.innerHTML = cardsHtml;
+  container.appendChild(header);
+  container.appendChild(list);
+}
+
+function normalizePersonKey(value) {
+  if (!value) return "";
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w@.\s-]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function developerIdentityKeys() {
+  const keys = new Set();
+  const user = auth?.currentUser || null;
+  const email = (state.currentUserEmail || user?.email || "").trim();
+  const name = (user?.displayName || "").trim();
+  [name, email].forEach((value) => {
+    const key = normalizePersonKey(value);
+    if (key) keys.add(key);
+  });
+  if (email.includes("@")) {
+    const base = email.split("@")[0].replace(/[._-]+/g, " ");
+    const key = normalizePersonKey(base);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+function devColumnKey(task) {
+  const normalized = normalizeTaskStatus(getTaskStatus(task));
+  if (normalized === "concluido") return "done";
+  if (normalized === "em_validacao") return "review";
+  if (normalized === "em_andamento" || normalized === "parado") return "doing";
+  return "todo";
+}
+
+function collectDeveloperTasks(identityKeys) {
+  const items = [];
+  const unassignedKeys = new Set(["a definir", "nao definido", "sem responsavel"]);
+  state.clients.forEach((client) => {
+    (client.projects || []).forEach((project) => {
+      const projectKey = normalizePersonKey(project?.developer || "");
+      const projectMatch = projectKey && identityKeys.has(projectKey);
+      (project.tasks || []).forEach((task, taskIndex) => {
+        const ownerKey = normalizePersonKey(taskOwner(task));
+        const hasOwner = ownerKey && !unassignedKeys.has(ownerKey);
+        const matches = (hasOwner && identityKeys.has(ownerKey)) || (!hasOwner && projectMatch);
+        if (!matches) return;
+        const dueLabel = formatDateBR(taskDueStr(task) || "");
+        const progress = taskProgressValue(task);
+        const statusInfoData = taskStatusInfo(getTaskStatus(task));
+        items.push({
+          client,
+          project,
+          task,
+          taskIndex,
+          column: devColumnKey(task),
+          dueLabel,
+          progress,
+          statusLabel: statusInfoData.label,
+          statusClass: statusInfoData.className || "planejado"
+        });
+      });
+    });
+  });
+  return items;
+}
+
+function resolveDevTaskRef(dataset) {
+  const clientId = dataset.clientId || "";
+  const clientName = dataset.clientName || "";
+  const projectId = dataset.projectId || "";
+  const projectName = dataset.projectName || "";
+  const taskId = dataset.taskId || "";
+  const taskIndexRaw = dataset.taskIndex;
+  const taskIndex = taskIndexRaw === "" || taskIndexRaw == null ? null : Number(taskIndexRaw);
+  const client =
+    state.clients.find((item) => (clientId && item.id === clientId) || (clientName && item.name === clientName)) || null;
+  if (!client) return null;
+  const project =
+    (client.projects || []).find(
+      (item) => (projectId && item.id === projectId) || (projectName && item.name === projectName)
+    ) || null;
+  if (!project) return null;
+  let task = null;
+  if (Number.isFinite(taskIndex) && project.tasks?.[taskIndex]) {
+    task = project.tasks[taskIndex];
+  } else if (taskId) {
+    task = (project.tasks || []).find((item) => item.id === taskId) || null;
+  }
+  if (!task) return null;
+  return { client, project, task, taskIndex };
+}
+
+function updateDeveloperTaskStatus(dataset, columnKey) {
+  const ref = resolveDevTaskRef(dataset);
+  if (!ref) return;
+  const statusMap = {
+    todo: "planejado",
+    doing: "em_andamento",
+    review: "em_validacao",
+    done: "concluido"
+  };
+  const nextStatus = statusMap[columnKey] || "planejado";
+  if (normalizeTaskStatus(ref.task.status) === normalizeTaskStatus(nextStatus)) {
+    return;
+  }
+  const previousStatus = ref.task.status;
+  applyTaskStatus(ref.task, nextStatus);
+  if (db && ref.client.id && ref.project.id && ref.task.id) {
+    updateTaskStatusOnDb(ref.client.id, ref.project.id, ref.task.id, {
+      status: ref.task.status,
+      dataConclusao: ref.task.dataConclusao || null
+    })
+      .then(() => {
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        ref.task.status = previousStatus;
+        applyTaskStatus(ref.task, previousStatus);
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  renderMain();
+}
+
+function updateDeveloperTaskProgress(dataset, progressValue) {
+  const ref = resolveDevTaskRef(dataset);
+  if (!ref) return;
+  const prevProgress = ref.task.progress;
+  const prevStatus = ref.task.status;
+  const nextProgress = Math.max(0, Math.min(100, Number(progressValue)));
+  ref.task.progress = Number.isFinite(nextProgress) ? nextProgress : 0;
+  if (ref.task.progress >= 100) {
+    applyTaskStatus(ref.task, "concluido");
+  } else if (normalizeTaskStatus(ref.task.status) === "concluido") {
+    applyTaskStatus(ref.task, "em_andamento");
+  }
+  const payload = {
+    progress: ref.task.progress,
+    status: ref.task.status,
+    dataConclusao: ref.task.dataConclusao || null
+  };
+  if (db && ref.client.id && ref.project.id && ref.task.id) {
+    updateTaskOnDb(ref.client.id, ref.project.id, ref.task.id, payload)
+      .then(() => {
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        ref.task.progress = prevProgress;
+        ref.task.status = prevStatus;
+        applyTaskStatus(ref.task, prevStatus);
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  renderMain();
+}
+
+function setupDeveloperBoard() {
+  if (document.body.dataset.devBoardWired) return;
+  document.body.dataset.devBoardWired = "true";
+
+  document.body.addEventListener("dragstart", (e) => {
+    const card = e.target.closest("[data-dev-task]");
+    if (!card) return;
+    const payload = {
+      clientId: card.dataset.clientId || "",
+      clientName: card.dataset.clientName || "",
+      projectId: card.dataset.projectId || "",
+      projectName: card.dataset.projectName || "",
+      taskId: card.dataset.taskId || "",
+      taskIndex: card.dataset.taskIndex || ""
+    };
+    card.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", JSON.stringify(payload));
+  });
+
+  document.body.addEventListener("dragend", (e) => {
+    const card = e.target.closest("[data-dev-task]");
+    if (card) card.classList.remove("dragging");
+  });
+
+  document.body.addEventListener("dragover", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  });
+
+  document.body.addEventListener("dragenter", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (column) column.classList.add("over");
+  });
+
+  document.body.addEventListener("dragleave", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    if (!column.contains(e.relatedTarget)) {
+      column.classList.remove("over");
+    }
+  });
+
+  document.body.addEventListener("drop", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    e.preventDefault();
+    column.classList.remove("over");
+    const payloadRaw = e.dataTransfer.getData("text/plain");
+    if (!payloadRaw) return;
+    let payload = null;
+    try {
+      payload = JSON.parse(payloadRaw);
+    } catch (err) {
+      return;
+    }
+    const columnKey = column.dataset.devColumn || "";
+    if (!columnKey) return;
+    updateDeveloperTaskStatus(payload, columnKey);
+  });
+
+  document.body.addEventListener("input", (e) => {
+    const slider = e.target.closest("[data-progress-input]");
+    if (!slider) return;
+    const wrapper = slider.closest(".dev-progress");
+    const valueEl = wrapper?.querySelector("[data-progress-label]");
+    if (valueEl) valueEl.textContent = `${slider.value}%`;
+  });
+
+  document.body.addEventListener("change", (e) => {
+    const slider = e.target.closest("[data-progress-input]");
+    if (!slider) return;
+    updateDeveloperTaskProgress(slider.dataset, slider.value);
+  });
+}
+
+function renderDeveloperBoard(container) {
+  setCrumbPathText("Painel Desenvolvedor");
+  const role = normalizeUserRole(state.currentUserRole);
+  if (role !== "developer" && role !== "admin") {
+    container.innerHTML = `
+      <div class="empty-state span-all" style="text-align: center; padding: 40px;">
+        <h2>Acesso restrito</h2>
+        <p>Esta tela esta disponivel apenas para usuarios com perfil Desenvolvedor.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const identityKeys = developerIdentityKeys();
+  const tasks = collectDeveloperTasks(identityKeys);
+  if (!tasks.length) {
+    container.innerHTML = `
+      <div class="empty-state span-all" style="text-align: center; padding: 40px;">
+        <h2>Sem atividades</h2>
+        <p>Nenhuma atividade atribuida a voce no momento.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const columns = [
+    { key: "todo", label: "A fazer" },
+    { key: "doing", label: "Em andamento" },
+    { key: "review", label: "Revisao / QA" },
+    { key: "done", label: "Concluido" }
+  ];
+  const grouped = columns.reduce((acc, col) => {
+    acc[col.key] = [];
+    return acc;
+  }, {});
+  tasks.forEach((item) => {
+    const columnKey = grouped[item.column] ? item.column : "todo";
+    grouped[columnKey].push(item);
+  });
+
+  const columnsHtml = columns
+    .map((col) => {
+      const ordered = grouped[col.key].slice().sort((a, b) => taskDueValueSafe(a.task) - taskDueValueSafe(b.task));
+      const cards = ordered
+        .map((item) => {
+          const projectLabel = item.project?.name || "Projeto";
+          const clientLabel = item.client?.name || "Cliente";
+          const taskTitleText = escapeHtml(taskTitle(item.task));
+          const phaseLabel = normalizePhaseLabel(item.task?.phase || "OUTROS");
+          const dueText = item.dueLabel && item.dueLabel !== "-" ? item.dueLabel : "Sem prazo";
+          const progress = Math.max(0, Math.min(100, Math.round(item.progress || 0)));
+          const taskId = item.task?.id || "";
+          const clientId = item.client?.id || "";
+          const projectId = item.project?.id || "";
+          return `
+            <article class="dev-card" draggable="true" data-dev-task data-client-id="${escapeHtml(clientId)}" data-client-name="${escapeHtml(clientLabel)}" data-project-id="${escapeHtml(projectId)}" data-project-name="${escapeHtml(projectLabel)}" data-task-id="${escapeHtml(taskId)}" data-task-index="${item.taskIndex}">
+              <div class="dev-card-meta">
+                <span class="dev-card-project">${escapeHtml(projectLabel)} • ${escapeHtml(clientLabel)}</span>
+                <span class="pill ${item.statusClass}">${item.statusLabel}</span>
+              </div>
+              <div class="dev-card-title">${taskTitleText}</div>
+              <div class="dev-card-sub">Epico: ${escapeHtml(phaseLabel)}</div>
+              <div class="dev-card-sub">Prazo: ${escapeHtml(dueText)}</div>
+              <div class="dev-progress">
+                <div class="dev-progress-label">
+                  <span>Progresso</span>
+                  <span class="dev-progress-value" data-progress-label>${progress}%</span>
+                </div>
+                <input type="range" min="0" max="100" value="${progress}" data-progress-input data-client-id="${escapeHtml(clientId)}" data-client-name="${escapeHtml(clientLabel)}" data-project-id="${escapeHtml(projectId)}" data-project-name="${escapeHtml(projectLabel)}" data-task-id="${escapeHtml(taskId)}" data-task-index="${item.taskIndex}">
+              </div>
+            </article>
+          `;
+        })
+        .join("");
+      return `
+        <section class="dev-column" data-dev-column="${col.key}">
+          <div class="dev-column-header">
+            <div class="dev-column-title">${col.label}</div>
+            <span class="dev-column-count">${grouped[col.key].length}</span>
+          </div>
+          <div class="dev-column-body">
+            ${cards || "<div class=\"dev-empty\">Sem atividades</div>"}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <div class="dev-board span-all">
+      <div class="section-header">
+        <div class="header-row">
+          <h2>Atividades do Desenvolvedor</h2>
+        </div>
+        <div class="muted">Arraste os cards entre colunas e atualize o progresso.</div>
+      </div>
+      <div class="dev-board-grid">
+        ${columnsHtml}
+      </div>
+    </div>
   `;
 
-  container.appendChild(welcome);
-  container.appendChild(quote);
+  setupDeveloperBoard();
+}
+
+function openGanttModal() {
+  const modal = byId("gantt-modal");
+  if (!modal) return;
+  renderGanttModal();
+  showModal(modal);
+}
+
+function renderGanttModal() {
+  const container = byId("gantt-content");
+  if (!container) return;
+  const titleEl = byId("gantt-title");
+  const subtitleEl = byId("gantt-subtitle");
+  const footerRight = byId("gantt-footer-right");
+
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+
+  if (!project) {
+    if (titleEl) titleEl.textContent = "Cronograma do Projeto";
+    if (subtitleEl) subtitleEl.textContent = "Selecione um projeto para visualizar o Gantt.";
+    if (footerRight) footerRight.textContent = "";
+    container.innerHTML = `<div class="gantt-empty">Selecione um projeto para gerar o Gantt.</div>`;
+    return;
+  }
+
+  if (titleEl) titleEl.textContent = project.name || "Cronograma do Projeto";
+  if (subtitleEl) {
+    const clientLabel = client?.name ? `Cliente: ${client.name}` : "Projeto selecionado";
+    subtitleEl.textContent = clientLabel;
+  }
+
+  const tasks = flattenProjectTasks(project);
+  if (!tasks.length) {
+    if (footerRight) footerRight.textContent = "";
+    container.innerHTML = `<div class="gantt-empty">Nenhuma atividade cadastrada.</div>`;
+    return;
+  }
+
+  const normalizedTasks = tasks.map((task, idx) => {
+    const title = taskTitle(task);
+    const phase = normalizePhaseLabel(task.phase || task.epic || task.stage || "OUTROS");
+    const startRaw = taskStartStr(task) || taskDateStr(task);
+    const endRaw = taskDueStr(task) || taskDateStr(task);
+    let startDate = parseTaskDate(startRaw);
+    let endDate = parseTaskDate(endRaw);
+    if (!startDate && endDate) startDate = endDate;
+    if (!endDate && startDate) endDate = startDate;
+    const noDate = !startDate && !endDate;
+    if (startDate && endDate && endDate < startDate) {
+      const tmp = startDate;
+      startDate = endDate;
+      endDate = tmp;
+    }
+    const progress = taskProgressValue(task);
+    const gapValue = Number(
+      task?.gap ?? task?.gapPP ?? task?.gapPct ?? task?.gapPercent ?? task?.gapValue ?? Number.NaN
+    );
+    const done = progress >= 100 || isDoneTask(task);
+    const overdue = Number.isFinite(gapValue) ? gapValue > 0 : isOverdueTask(task);
+    const statusClass = done ? "is-done" : overdue ? "is-late" : "is-ok";
+    return {
+      id: task?.id || `task-${idx}`,
+      title,
+      phase,
+      startDate,
+      endDate,
+      startRaw,
+      endRaw,
+      progress,
+      statusClass,
+      noDate
+    };
+  });
+
+  const datedTasks = normalizedTasks.filter((task) => !task.noDate);
+  const taskMinTs = datedTasks.length ? Math.min(...datedTasks.map((task) => task.startDate.getTime())) : null;
+  const taskMaxTs = datedTasks.length ? Math.max(...datedTasks.map((task) => task.endDate.getTime())) : null;
+  const projectStart = parseDateSafe(project?.start || project?.startDate);
+  const projectEnd = parseDateSafe(project?.end || project?.goLive || project?.goLiveDate);
+  let rangeStart = projectStart
+    ? startOfDay(projectStart)
+    : taskMinTs
+      ? startOfDay(new Date(taskMinTs))
+      : startOfDay(new Date());
+  let rangeEnd = projectEnd
+    ? startOfDay(projectEnd)
+    : taskMaxTs
+      ? startOfDay(new Date(taskMaxTs))
+      : addDays(rangeStart, 1);
+  if (taskMinTs != null && taskMinTs < rangeStart.getTime()) {
+    rangeStart = startOfDay(new Date(taskMinTs));
+  }
+  if (taskMaxTs != null && taskMaxTs > rangeEnd.getTime()) {
+    rangeEnd = startOfDay(new Date(taskMaxTs));
+  }
+  if (rangeEnd.getTime() < rangeStart.getTime()) {
+    const tmp = rangeStart;
+    rangeStart = rangeEnd;
+    rangeEnd = tmp;
+  }
+  if (rangeEnd.getTime() === rangeStart.getTime()) {
+    rangeEnd = addDays(rangeStart, 1);
+  }
+  const minTs = rangeStart.getTime();
+  const maxTs = rangeEnd.getTime();
+  const rangeMs = Math.max(1, maxTs - minTs);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const formatTsBR = (ts) => {
+    const dt = new Date(ts);
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    const yyyy = dt.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const timelineTicks = [];
+  const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+  const tickStart = new Date(new Date(minTs).getFullYear(), new Date(minTs).getMonth(), 1);
+  const tickEnd = new Date(new Date(maxTs).getFullYear(), new Date(maxTs).getMonth(), 1);
+  for (let d = new Date(tickStart); d <= tickEnd; d.setMonth(d.getMonth() + 1)) {
+    const left = ((d.getTime() - minTs) / rangeMs) * 100;
+    timelineTicks.push({
+      label: `${months[d.getMonth()]} ${d.getFullYear()}`,
+      left: Math.max(0, Math.min(100, left))
+    });
+  }
+
+  const todayTs = todayStartTs();
+  const todayLeft = todayTs >= minTs && todayTs <= maxTs ? ((todayTs - minTs) / rangeMs) * 100 : null;
+  const startLabel = formatTsBR(minTs);
+  const endLabel = formatTsBR(maxTs);
+
+  const groupMap = new Map();
+  normalizedTasks.forEach((task) => {
+    if (!groupMap.has(task.phase)) groupMap.set(task.phase, []);
+    groupMap.get(task.phase).push(task);
+  });
+
+  const ganttPhaseOrder = new Map([
+    ["LEVANTAMENTO", 0],
+    ["DESENVOLVIMENTO", 1],
+    ["TESTES", 3],
+    ["DEPLOY", 4]
+  ]);
+  const groups = Array.from(groupMap.entries()).sort((a, b) => {
+    const aRank = ganttPhaseOrder.has(a[0]) ? ganttPhaseOrder.get(a[0]) : 2;
+    const bRank = ganttPhaseOrder.has(b[0]) ? ganttPhaseOrder.get(b[0]) : 2;
+    if (aRank !== bRank) return aRank - bRank;
+    return a[0].localeCompare(b[0]);
+  });
+
+  const groupsHtml = groups
+    .map(([phase, groupTasks]) => {
+      const anyLate = groupTasks.some((task) => task.statusClass === "is-late");
+      const allDone = groupTasks.every((task) => task.statusClass === "is-done");
+      const epicColor = allDone ? "#2f8f61" : anyLate ? "#9b1c23" : "#245363";
+      const progressAvg = groupTasks.length
+        ? Math.round(groupTasks.reduce((acc, task) => acc + (task.progress || 0), 0) / groupTasks.length)
+        : 0;
+      const tasksHtml = groupTasks
+        .sort((a, b) => {
+          if (a.noDate && b.noDate) return a.title.localeCompare(b.title);
+          if (a.noDate) return 1;
+          if (b.noDate) return -1;
+          return a.startDate.getTime() - b.startDate.getTime();
+        })
+        .map((task) => {
+          if (task.noDate) {
+            return `
+              <div class="gantt-row">
+                <div class="gantt-task-info">
+                  <div class="gantt-task-title">${escapeHtml(task.title)}</div>
+                </div>
+                <div class="gantt-task-bar no-date">
+                  <span class="gantt-task-meta">Sem datas definidas</span>
+                </div>
+              </div>
+            `;
+          }
+          const startTs = task.startDate.getTime();
+          const endTs = task.endDate.getTime();
+          const spanMs = Math.max(dayMs, endTs - startTs);
+          let leftPct = ((startTs - minTs) / rangeMs) * 100;
+          let widthPct = (spanMs / rangeMs) * 100;
+          if (!Number.isFinite(leftPct)) leftPct = 0;
+          if (!Number.isFinite(widthPct)) widthPct = 1.5;
+          widthPct = Math.max(widthPct, 1.5);
+          if (widthPct > 100) widthPct = 100;
+          leftPct = Math.max(0, Math.min(100 - widthPct, leftPct));
+          const progressValue = Number.isFinite(task.progress) ? task.progress : 0;
+          const progressPct = Math.max(0, Math.min(100, Math.round(progressValue)));
+          const isCompact = widthPct < 5;
+          const labelSide = leftPct + widthPct > 92 ? "label-left" : "label-right";
+          const compactClass = isCompact ? "is-compact" : "";
+          const labelClass = isCompact ? labelSide : "";
+          return `
+            <div class="gantt-row">
+              <div class="gantt-task-info">
+                <div class="gantt-task-title">${escapeHtml(task.title)}</div>
+              </div>
+              <div class="gantt-task-bar">
+                <div class="gantt-bar ${task.statusClass} ${compactClass}" style="left:${leftPct.toFixed(2)}%; width:${widthPct.toFixed(2)}%;">
+                  <div class="gantt-bar-fill" style="width:${progressPct}%;"></div>
+                  <span class="gantt-bar-label ${labelClass}">${progressPct}%</span>
+                </div>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+      return `
+        <section class="gantt-group">
+          <div class="gantt-group-header">
+            <span>${escapeHtml(phase)}</span>
+            <div class="gantt-epic-track">
+              <span style="width:${progressAvg}%; background:${epicColor};"></span>
+            </div>
+          </div>
+          ${tasksHtml || "<div class=\"gantt-empty\">Nenhuma atividade neste grupo.</div>"}
+        </section>
+      `;
+    })
+    .join("");
+
+  const ticksHtml = timelineTicks
+    .map((tick) => `<div class="gantt-tick" style="left:${tick.left.toFixed(2)}%"><span>${tick.label}</span></div>`)
+    .join("");
+  const todayHtml = todayLeft == null ? "" : `<div class="gantt-today" style="left:${todayLeft.toFixed(2)}%"></div>`;
+
+  container.innerHTML = `
+    <div class="gantt-canvas">
+      <div class="gantt-timeline">
+        ${ticksHtml}
+        ${todayHtml}
+      </div>
+      <div class="gantt-content">
+        <div class="gantt-top-row">
+          <div class="gantt-top-label">Estrutura / Epicos</div>
+          <div class="gantt-top-timeline">
+            <span>Inicio: ${startLabel}</span>
+            <span>Go Live: ${endLabel}</span>
+            <div class="gantt-top-line"></div>
+          </div>
+        </div>
+        ${groupsHtml}
+      </div>
+    </div>
+  `;
+
+  if (footerRight) {
+    footerRight.textContent = "";
+  }
+}
+
+function renderConfig(container) {
+  setCrumbPathText("Configuracoes");
+  const user = auth?.currentUser || null;
+  const displayName = user?.displayName || "";
+  const email = state.currentUserEmail || user?.email || "";
+  const role = normalizeUserRole(state.currentUserRole);
+  const admin = role === "admin";
+  const roleName = roleLabel(role);
+
+  container.innerHTML = `
+    <div class="config-page span-all">
+      <div class="section-header">
+        <div class="header-row">
+          <h2>Configuracoes da conta</h2>
+        </div>
+        <div class="muted">Atualize seu nome, e-mail ou senha de acesso.</div>
+      </div>
+
+      <div class="config-grid">
+        <div class="config-card">
+          <form id="account-form" class="form">
+            <label>
+              Nome completo
+              <input id="account-name" type="text" value="${escapeHtml(displayName)}" placeholder="Seu nome completo">
+            </label>
+            <label>
+              E-mail
+              <input id="account-email" type="email" value="${escapeHtml(email)}" placeholder="seu@email.com">
+            </label>
+            <label>
+              Senha atual
+              <input id="account-current-password" type="password" placeholder="Obrigatoria para trocar e-mail ou senha" autocomplete="current-password">
+            </label>
+            <div class="form-grid">
+              <label>
+                Nova senha
+                <input id="account-new-password" type="password" placeholder="Nova senha" autocomplete="new-password">
+              </label>
+              <label>
+                Confirmar senha
+                <input id="account-confirm-password" type="password" placeholder="Repita a nova senha" autocomplete="new-password">
+              </label>
+            </div>
+            <div class="config-hint">Para alterar e-mail ou senha, confirme sua senha atual.</div>
+            <div class="config-actions">
+              <button class="btn primary" type="submit">Salvar alteracoes</button>
+            </div>
+            <p id="account-error" class="config-message error hidden"></p>
+            <p id="account-success" class="config-message success hidden"></p>
+          </form>
+        </div>
+
+        <div class="config-card">
+          <div class="config-card-title">Dados da conta</div>
+          <div class="config-info">
+            <div>
+              <div class="config-info-label">Usuario</div>
+              <div class="config-info-value" id="config-info-name">${escapeHtml(displayName || "Nao informado")}</div>
+            </div>
+            <div>
+              <div class="config-info-label">E-mail</div>
+              <div class="config-info-value" id="config-info-email">${escapeHtml(email || "-")}</div>
+            </div>
+            <div>
+              <div class="config-info-label">Perfil</div>
+              <div class="config-info-value">${roleName}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      ${admin ? `
+        <div class="config-users-shell" id="admin-users-section">
+          <div class="config-users-toolbar">
+            <div>
+              <h2>Gerenciamento de equipe</h2>
+              <div class="muted">Controle de acessos, convites e permissoes do workspace.</div>
+            </div>
+            <div class="config-users-actions">
+              <label class="config-users-search">
+                <i data-lucide="search"></i>
+                <input id="admin-users-search" type="search" placeholder="Buscar usuario ou e-mail">
+              </label>
+              <button class="btn primary" type="button" id="admin-invite-btn">Criar usuario</button>
+            </div>
+          </div>
+          <div class="config-users-filters">
+            <label>
+              Perfil
+              <select id="admin-role-filter" class="config-input">
+                <option value="all">Todos</option>
+                <option value="admin">Administrador</option>
+                <option value="developer">Desenvolvedor</option>
+                <option value="user">Usuario</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <select id="admin-status-filter" class="config-input">
+                <option value="all">Todos</option>
+                <option value="active">Ativo</option>
+                <option value="pending">Pendente</option>
+                <option value="inactive">Inativo</option>
+              </select>
+            </label>
+            <button class="btn sm ghost" type="button" id="admin-clear-filters">Limpar filtros</button>
+          </div>
+          <div class="config-users-table">
+            <div class="config-users-head">
+              <div>Usuario</div>
+              <div>Perfil</div>
+              <div>Status</div>
+              <div>Ultimo login</div>
+              <div></div>
+            </div>
+            <div id="admin-users-list" class="config-users-body">Carregando usuarios...</div>
+          </div>
+          <div class="config-hint">Use "Resetar senha" para enviar o e-mail de redefinicao ao usuario.</div>
+        </div>
+
+        <div class="config-user-drawer" id="admin-user-drawer" aria-hidden="true">
+          <div class="config-user-drawer-backdrop" data-drawer-close></div>
+          <div class="config-user-drawer-panel">
+            <div class="drawer-header">
+              <div>
+                <div class="drawer-title">Usuario selecionado</div>
+                <div class="drawer-subtitle" id="drawer-user-email">-</div>
+              </div>
+              <button class="btn sm ghost" type="button" data-drawer-close>
+                <i data-lucide="x"></i>
+              </button>
+            </div>
+            <div class="drawer-body">
+              <label>
+                Nome
+                <input id="drawer-user-name" class="config-input" type="text" placeholder="Nome do usuario">
+              </label>
+              <label>
+                Perfil
+                <select id="drawer-user-role" class="config-input">
+                  <option value="user">Usuario</option>
+                  <option value="developer">Desenvolvedor</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </label>
+              <div class="drawer-permissions">
+                <div class="drawer-permissions-title">Permissoes rapidas</div>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Pode criar tarefas</span>
+                </label>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Ve orcamentos</span>
+                </label>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Gerencia usuarios</span>
+                </label>
+              </div>
+            </div>
+            <div class="drawer-actions">
+              <button class="btn sm ghost" type="button" id="drawer-reset-btn">Resetar senha</button>
+              <button class="btn sm primary" type="button" id="drawer-save-btn">Salvar alteracoes</button>
+            </div>
+            <p id="drawer-status" class="config-message"></p>
+          </div>
+        </div>
+
+        <div class="section-header">
+          <div class="header-row">
+            <h2>Grupos de acesso</h2>
+          </div>
+          <div class="muted">Defina quais usuarios visualizam cada cliente.</div>
+        </div>
+        <div class="config-card" id="admin-groups-section">
+          <div class="group-create">
+            <input class="config-input" id="group-name-input" type="text" placeholder="Nome do grupo">
+            <button class="btn sm primary" type="button" id="group-create-btn">Criar grupo</button>
+          </div>
+          <div id="admin-groups-list" class="config-groups">Carregando grupos...</div>
+        </div>
+
+        <div class="modal" id="admin-create-user-modal" aria-hidden="true">
+          <div class="modal-backdrop" data-modal-close></div>
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3>Criar usuario</h3>
+              <button class="btn sm ghost" type="button" data-modal-close>Fechar</button>
+            </div>
+            <form id="admin-create-user-form" class="form">
+              <label>
+                Nome completo
+                <input id="admin-create-user-name" type="text" placeholder="Nome do usuario">
+              </label>
+              <label>
+                E-mail
+                <input id="admin-create-user-email" type="email" placeholder="usuario@email.com" required>
+              </label>
+              <div class="config-hint">O usuario sera criado como Administrador e vera os mesmos projetos.</div>
+              <div class="modal-actions">
+                <button class="btn ghost" type="button" data-modal-close>Cancelar</button>
+                <button class="btn primary" type="submit">Criar usuario</button>
+              </div>
+              <p id="admin-create-user-status" class="config-message"></p>
+            </form>
+          </div>
+        </div>
+      ` : ""}
+    </div>
+  `;
+
+  const form = byId("account-form");
+  if (form) {
+    form.addEventListener("submit", handleAccountUpdate);
+  }
+
+  if (window.lucide) {
+    window.lucide.createIcons();
+  }
+
+  if (admin) {
+    if (!state.adminUserFilters) {
+      state.adminUserFilters = { query: "", role: "all", status: "all" };
+    }
+
+    const searchInput = byId("admin-users-search");
+    if (searchInput) {
+      searchInput.value = state.adminUserFilters.query || "";
+      if (!searchInput.dataset.wired) {
+        searchInput.addEventListener("input", () => {
+          state.adminUserFilters.query = searchInput.value;
+          applyAdminUserFilters();
+        });
+        searchInput.dataset.wired = "true";
+      }
+    }
+
+    const roleFilter = byId("admin-role-filter");
+    if (roleFilter) {
+      roleFilter.value = state.adminUserFilters.role || "all";
+      if (!roleFilter.dataset.wired) {
+        roleFilter.addEventListener("change", () => {
+          state.adminUserFilters.role = roleFilter.value;
+          applyAdminUserFilters();
+        });
+        roleFilter.dataset.wired = "true";
+      }
+    }
+
+    const statusFilter = byId("admin-status-filter");
+    if (statusFilter) {
+      statusFilter.value = state.adminUserFilters.status || "all";
+      if (!statusFilter.dataset.wired) {
+        statusFilter.addEventListener("change", () => {
+          state.adminUserFilters.status = statusFilter.value;
+          applyAdminUserFilters();
+        });
+        statusFilter.dataset.wired = "true";
+      }
+    }
+
+    const clearFiltersBtn = byId("admin-clear-filters");
+    if (clearFiltersBtn && !clearFiltersBtn.dataset.wired) {
+      clearFiltersBtn.addEventListener("click", () => {
+        state.adminUserFilters = { query: "", role: "all", status: "all" };
+        if (searchInput) searchInput.value = "";
+        if (roleFilter) roleFilter.value = "all";
+        if (statusFilter) statusFilter.value = "all";
+        applyAdminUserFilters();
+      });
+      clearFiltersBtn.dataset.wired = "true";
+    }
+
+    const inviteBtn = byId("admin-invite-btn");
+    if (inviteBtn && !inviteBtn.dataset.wired) {
+      inviteBtn.addEventListener("click", () => {
+        openCreateUserModal();
+      });
+      inviteBtn.dataset.wired = "true";
+    }
+
+    loadAdminUsers();
+    loadAdminGroups();
+    wireAdminUserDrawer();
+    wireCreateUserModal();
+
+    const groupCreateBtn = byId("group-create-btn");
+    if (groupCreateBtn && !groupCreateBtn.dataset.wired) {
+      groupCreateBtn.addEventListener("click", async () => {
+        const input = byId("group-name-input");
+        const name = input?.value.trim() || "";
+        if (!name) {
+          alert("Informe o nome do grupo.");
+          return;
+        }
+        try {
+          await createGroupInDb(name);
+          if (input) input.value = "";
+          await loadAdminGroups();
+        } catch (err) {
+          console.error(err);
+          alert("Nao foi possivel criar o grupo.");
+        }
+      });
+      groupCreateBtn.dataset.wired = "true";
+    }
+  }
+}
+
+async function handleAccountUpdate(e) {
+  e.preventDefault();
+  const user = auth?.currentUser;
+  if (!user) {
+    setAccountMessage("error", "Usuario nao autenticado.");
+    return;
+  }
+  const nameInput = byId("account-name");
+  const emailInput = byId("account-email");
+  const currentPassInput = byId("account-current-password");
+  const newPassInput = byId("account-new-password");
+  const confirmPassInput = byId("account-confirm-password");
+
+  const newName = nameInput?.value.trim() || "";
+  const newEmail = emailInput?.value.trim() || "";
+  const currentPassword = currentPassInput?.value || "";
+  const newPassword = newPassInput?.value || "";
+  const confirmPassword = confirmPassInput?.value || "";
+
+  setAccountMessage("", "");
+
+  if (!newEmail) {
+    setAccountMessage("error", "Informe um e-mail valido.");
+    return;
+  }
+  if (newPassword && newPassword.length < 6) {
+    setAccountMessage("error", "A nova senha precisa ter ao menos 6 caracteres.");
+    return;
+  }
+  if (newPassword && newPassword !== confirmPassword) {
+    setAccountMessage("error", "As novas senhas nao conferem.");
+    return;
+  }
+
+  const needsEmailUpdate = newEmail && newEmail !== user.email;
+  const needsPasswordUpdate = Boolean(newPassword);
+
+  try {
+    if (needsEmailUpdate || needsPasswordUpdate) {
+      await reauthenticateUser(user, currentPassword);
+    }
+    if (newName && newName !== user.displayName) {
+      await user.updateProfile({ displayName: newName });
+    }
+    if (needsEmailUpdate) {
+      await user.updateEmail(newEmail);
+    }
+    if (needsPasswordUpdate) {
+      await user.updatePassword(newPassword);
+    }
+    await syncUserProfile(user);
+    await loadCurrentUserRole(user);
+    updateUserHeader(user);
+    setAccountMessage("success", "Dados atualizados com sucesso.");
+    if (currentPassInput) currentPassInput.value = "";
+    if (newPassInput) newPassInput.value = "";
+    if (confirmPassInput) confirmPassInput.value = "";
+    const infoName = byId("config-info-name");
+    if (infoName && newName) infoName.textContent = newName;
+    const infoEmail = byId("config-info-email");
+    if (infoEmail && needsEmailUpdate) infoEmail.textContent = newEmail;
+    if (needsEmailUpdate) state.currentUserEmail = newEmail;
+  } catch (err) {
+    console.error(err);
+    if (err?.code === "auth/requires-recent-login") {
+      setAccountMessage("error", "Confirme sua autenticacao para atualizar dados sensiveis.");
+      return;
+    }
+    if (err?.code === "auth/wrong-password") {
+      setAccountMessage("error", "Senha atual incorreta.");
+      return;
+    }
+    if (err?.code === "auth/invalid-email") {
+      setAccountMessage("error", "E-mail invalido.");
+      return;
+    }
+    if (err?.code === "auth/email-already-in-use") {
+      setAccountMessage("error", "E-mail ja esta em uso.");
+      return;
+    }
+    if (err?.message) {
+      setAccountMessage("error", err.message);
+      return;
+    }
+    setAccountMessage("error", "Nao foi possivel atualizar os dados.");
+  }
+}
+
+async function loadAdminUsers() {
+  const list = byId("admin-users-list");
+  if (!list) return;
+  if (!db) {
+    list.textContent = "Usuarios indisponiveis sem Firebase configurado.";
+    return;
+  }
+  try {
+    const users = await loadUsersFromDb();
+    state.users = users.slice();
+    renderAdminUsers(list, getFilteredAdminUsers(users));
+  } catch (err) {
+    console.error(err);
+    list.textContent = "Falha ao carregar usuarios.";
+  }
+}
+
+async function loadAdminGroups() {
+  const list = byId("admin-groups-list");
+  if (!list) return;
+  if (!db) {
+    list.textContent = "Grupos indisponiveis sem Firebase configurado.";
+    return;
+  }
+  try {
+    const groups = await loadGroupsFromDb();
+    state.groups = groups.slice();
+    if (!state.users.length) {
+      state.users = await loadUsersFromDb();
+    }
+    renderAdminGroups(list, groups, state.users);
+  } catch (err) {
+    console.error(err);
+    list.textContent = "Falha ao carregar grupos.";
+  }
+}
+
+function getAdminUserStatus(user) {
+  if (user?.lastLoginAt) {
+    return { key: "active", label: "Ativo", className: "status-active" };
+  }
+  if (user?.createdAt) {
+    return { key: "pending", label: "Pendente", className: "status-pending" };
+  }
+  return { key: "inactive", label: "Inativo", className: "status-inactive" };
+}
+
+function getAdminUserLastLoginLabel(user) {
+  if (!user?.lastLoginAt) return "Nunca";
+  const raw = typeof user.lastLoginAt === "number" ? user.lastLoginAt : Number(user.lastLoginAt);
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return "-";
+  return formatDateTime(dt);
+}
+
+function getFilteredAdminUsers(users) {
+  const filters = state.adminUserFilters || { query: "", role: "all", status: "all" };
+  const query = String(filters.query || "").trim().toLowerCase();
+  return (users || []).filter((user) => {
+    const name = String(user.displayName || "").toLowerCase();
+    const email = String(user.email || "").toLowerCase();
+    const role = normalizeUserRole(user.role);
+    const status = getAdminUserStatus(user).key;
+    const matchesQuery = !query || name.includes(query) || email.includes(query);
+    const matchesRole = filters.role === "all" || role === filters.role;
+    const matchesStatus = filters.status === "all" || status === filters.status;
+    return matchesQuery && matchesRole && matchesStatus;
+  });
+}
+
+function applyAdminUserFilters() {
+  const list = byId("admin-users-list");
+  if (!list) return;
+  renderAdminUsers(list, getFilteredAdminUsers(state.users || []));
+}
+
+function openAdminUserDrawer(user) {
+  if (!user) return;
+  const drawer = byId("admin-user-drawer");
+  if (!drawer) return;
+  drawer.classList.add("open");
+  drawer.setAttribute("aria-hidden", "false");
+  drawer.dataset.userId = user.uid || "";
+  drawer.dataset.userEmail = user.email || "";
+  const nameInput = byId("drawer-user-name");
+  if (nameInput) nameInput.value = user.displayName || "";
+  const roleSelect = byId("drawer-user-role");
+  if (roleSelect) roleSelect.value = normalizeUserRole(user.role);
+  const emailLabel = byId("drawer-user-email");
+  if (emailLabel) emailLabel.textContent = user.email || "-";
+  const statusMsg = byId("drawer-status");
+  if (statusMsg) {
+    statusMsg.textContent = "";
+    statusMsg.classList.remove("error", "success");
+  }
+}
+
+function closeAdminUserDrawer() {
+  const drawer = byId("admin-user-drawer");
+  if (!drawer) return;
+  drawer.classList.remove("open");
+  drawer.setAttribute("aria-hidden", "true");
+  drawer.dataset.userId = "";
+  drawer.dataset.userEmail = "";
+}
+
+function wireAdminUserDrawer() {
+  const drawer = byId("admin-user-drawer");
+  if (!drawer || drawer.dataset.wired) return;
+
+  drawer.addEventListener("click", (event) => {
+    if (event.target.closest("[data-drawer-close]")) {
+      closeAdminUserDrawer();
+    }
+  });
+
+  const saveBtn = byId("drawer-save-btn");
+  if (saveBtn) {
+    saveBtn.addEventListener("click", async () => {
+      const uid = drawer.dataset.userId || "";
+      if (!uid) return;
+      const nameInput = byId("drawer-user-name");
+      const roleSelect = byId("drawer-user-role");
+      const newName = nameInput?.value.trim() || "";
+      const newRole = normalizeUserRole(roleSelect?.value);
+      const statusMsg = byId("drawer-status");
+      if (statusMsg) {
+        statusMsg.textContent = "Salvando...";
+        statusMsg.classList.remove("error", "success");
+      }
+      try {
+        await updateUserProfileInDb(uid, { displayName: newName, role: newRole });
+        if (auth?.currentUser?.uid === uid) {
+          await loadCurrentUserRole(auth.currentUser);
+          renderMain();
+        }
+        const idx = (state.users || []).findIndex((user) => user.uid === uid);
+        if (idx >= 0) {
+          state.users[idx] = { ...state.users[idx], displayName: newName, role: newRole };
+        }
+        applyAdminUserFilters();
+        if (statusMsg) {
+          statusMsg.textContent = "Salvo.";
+          statusMsg.classList.add("success");
+        }
+      } catch (err) {
+        console.error(err);
+        if (statusMsg) {
+          statusMsg.textContent = "Erro ao salvar.";
+          statusMsg.classList.add("error");
+        }
+      }
+    });
+  }
+
+  const resetBtn = byId("drawer-reset-btn");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", async () => {
+      const email = drawer.dataset.userEmail || "";
+      const statusMsg = byId("drawer-status");
+      if (!email) {
+        if (statusMsg) {
+          statusMsg.textContent = "E-mail indisponivel.";
+          statusMsg.classList.add("error");
+        }
+        return;
+      }
+      const confirmed = window.confirm(`Enviar redefinicao de senha para ${email}?`);
+      if (!confirmed) return;
+      if (statusMsg) {
+        statusMsg.textContent = "Enviando...";
+        statusMsg.classList.remove("error", "success");
+      }
+      try {
+        await sendPasswordReset(email);
+        if (statusMsg) {
+          statusMsg.textContent = "E-mail enviado.";
+          statusMsg.classList.add("success");
+        }
+      } catch (err) {
+        console.error(err);
+        if (statusMsg) {
+          statusMsg.textContent = "Erro ao enviar.";
+          statusMsg.classList.add("error");
+        }
+      }
+    });
+  }
+
+  drawer.dataset.wired = "true";
+}
+
+function renderAdminUsers(container, users) {
+  const rows = users
+    .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
+    .map((user) => {
+      const email = escapeHtml(user.email || "");
+      const name = escapeHtml(user.displayName || user.email || "Usuario");
+      const role = normalizeUserRole(user.role);
+      const roleClass = role === "admin" ? "role-admin" : role === "developer" ? "role-dev" : "role-user";
+      const status = getAdminUserStatus(user);
+      const lastLoginLabel = getAdminUserLastLoginLabel(user);
+      return `
+        <div class="config-user-row" data-user-id="${escapeHtml(user.uid)}" data-user-email="${email}">
+          <div class="config-user-main">
+            <div class="config-user-name">${name}</div>
+            <div class="config-user-email">${email || "-"}</div>
+          </div>
+          <div>
+            <span class="config-badge ${roleClass}">${roleLabel(role)}</span>
+          </div>
+          <div>
+            <span class="config-badge ${status.className}">${status.label}</span>
+          </div>
+          <div class="config-user-last">${lastLoginLabel}</div>
+          <div class="config-user-actions">
+            <button class="btn sm ghost" type="button" data-user-open title="Detalhes">
+              <i data-lucide="more-horizontal"></i>
+            </button>
+            <button class="btn sm danger" type="button" data-user-delete title="Excluir perfil">
+              <i data-lucide="trash-2"></i>
+            </button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = rows || "<div class=\"muted\">Nenhum usuario encontrado.</div>";
+
+  if (!container.dataset.wired) {
+    container.addEventListener("click", async (e) => {
+      const deleteBtn = e.target.closest("[data-user-delete]");
+      if (deleteBtn) {
+        const row = deleteBtn.closest("[data-user-id]");
+        if (!row) return;
+        const uid = row.dataset.userId || "";
+        const email = row.dataset.userEmail || "";
+        if (!uid) return;
+        if (auth?.currentUser?.uid === uid) {
+          alert("Nao e possivel excluir o proprio perfil.");
+          return;
+        }
+        if (isAdminEmail(email)) {
+          alert("Nao e possivel excluir o administrador principal.");
+          return;
+        }
+        const confirmed = window.confirm(`Excluir o perfil de ${email || "este usuario"}?`);
+        if (!confirmed) return;
+        deleteBtn.disabled = true;
+        try {
+          await deleteUserFromDb(uid);
+          state.users = (state.users || []).filter((item) => item.uid !== uid);
+          applyAdminUserFilters();
+          await loadAdminGroups();
+          closeAdminUserDrawer();
+        } catch (err) {
+          console.error(err);
+          alert("Erro ao excluir usuario.");
+        } finally {
+          deleteBtn.disabled = false;
+        }
+        return;
+      }
+
+      const row = e.target.closest("[data-user-id]");
+      if (!row) return;
+      const isOpen = e.target.closest("[data-user-open]") || e.target.closest(".config-user-row");
+      if (!isOpen) return;
+      const uid = row.dataset.userId || "";
+      const user = (state.users || []).find((item) => item.uid === uid);
+      openAdminUserDrawer(user);
+    });
+    container.dataset.wired = "true";
+  }
+
+  if (window.lucide) {
+    window.lucide.createIcons();
+  }
+}
+
+function renderAdminGroups(container, groups, users) {
+  const clients = state.clients || [];
+  const groupHtml = groups
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((group) => {
+      const membersHtml = users
+        .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
+        .map((user) => {
+          const name = escapeHtml(user.displayName || user.email || "Usuario");
+          const email = escapeHtml(user.email || "");
+          const isMember = Boolean(group.members?.[user.uid]);
+          return `
+            <label class="config-group-item">
+              <input type="checkbox" data-group-member data-user-id="${escapeHtml(user.uid)}"${isMember ? " checked" : ""}>
+              <span>${name}</span>
+              <small>${email}</small>
+            </label>
+          `;
+        })
+        .join("");
+
+      const clientsHtml = clients
+        .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+        .map((client) => {
+          const isAssigned = Boolean(group.clients?.[client.id]);
+          const clientName = escapeHtml(client.name || "Cliente");
+          return `
+            <label class="config-group-item">
+              <input type="checkbox" data-group-client data-client-id="${escapeHtml(client.id)}"${isAssigned ? " checked" : ""}>
+              <span>${clientName}</span>
+            </label>
+          `;
+        })
+        .join("");
+
+      return `
+        <div class="config-group" data-group-id="${escapeHtml(group.id)}">
+          <div class="config-group-header">
+            <input class="config-input" type="text" value="${escapeHtml(group.name)}" data-group-name>
+            <div class="config-group-actions">
+              <button class="btn sm ghost" type="button" data-group-save>Salvar</button>
+              <button class="btn sm ghost danger" type="button" data-group-delete>Excluir</button>
+            </div>
+          </div>
+          <div class="config-group-columns">
+            <div class="config-group-col">
+              <div class="config-group-title">Usuarios</div>
+              <div class="config-group-list">${membersHtml || "<div class=\"muted\">Sem usuarios</div>"}</div>
+            </div>
+            <div class="config-group-col">
+              <div class="config-group-title">Clientes</div>
+              <div class="config-group-list">${clientsHtml || "<div class=\"muted\">Sem clientes</div>"}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = groupHtml || "<div class=\"muted\">Nenhum grupo cadastrado.</div>";
+
+  if (container.dataset.wired) return;
+  container.dataset.wired = "true";
+
+  container.addEventListener("click", async (e) => {
+    const groupRow = e.target.closest("[data-group-id]");
+    if (!groupRow) return;
+    const groupId = groupRow.dataset.groupId;
+    if (e.target.closest("[data-group-save]")) {
+      const nameInput = groupRow.querySelector("[data-group-name]");
+      const name = nameInput?.value.trim() || "Grupo";
+      try {
+        await updateGroupNameInDb(groupId, name);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    if (e.target.closest("[data-group-delete]")) {
+      const confirmed = window.confirm("Excluir este grupo? Os clientes vinculados ficarao sem grupo.");
+      if (!confirmed) return;
+      try {
+        await deleteGroupFromDb(groupId);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  });
+
+  container.addEventListener("change", async (e) => {
+    const groupRow = e.target.closest("[data-group-id]");
+    if (!groupRow) return;
+    const groupId = groupRow.dataset.groupId;
+    const memberInput = e.target.closest("[data-group-member]");
+    if (memberInput) {
+      const uid = memberInput.dataset.userId;
+      const enabled = memberInput.checked;
+      try {
+        await updateGroupMemberInDb(groupId, uid, enabled);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
+    const clientInput = e.target.closest("[data-group-client]");
+    if (clientInput) {
+      const clientId = clientInput.dataset.clientId;
+      const enabled = clientInput.checked;
+      try {
+        if (enabled) {
+          await assignClientToGroup(clientId, groupId);
+        } else {
+          await removeClientFromGroup(clientId, groupId);
+        }
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  });
+}
+
+function captureScrollPositions() {
+  const positions = {};
+  document.querySelectorAll("[data-preserve-scroll]").forEach((el) => {
+    const key = el.dataset.preserveScroll;
+    if (!key) return;
+    positions[key] = el.scrollTop;
+  });
+  return positions;
+}
+
+function restoreScrollPositions(positions) {
+  if (!positions) return;
+  document.querySelectorAll("[data-preserve-scroll]").forEach((el) => {
+    const key = el.dataset.preserveScroll;
+    if (!key) return;
+    if (!(key in positions)) return;
+    el.scrollTop = positions[key];
+  });
 }
 
 function renderMain() {
+  removeRelatorioStyles(); 
+
+  if (normalizeUserRole(state.currentUserRole) === "developer" && state.currentSection !== "dev-board") {
+    state.currentSection = "dev-board";
+  }
+
+  const prevContext = state.lastRenderContext || null;
+  const nextContext = {
+    section: state.currentSection,
+    clientId: state.selectedClient?.id || state.selectedClient?.name || null,
+    projectId: state.selectedProject?.id || state.selectedProject?.name || null
+  };
+  const preserveScroll =
+    prevContext &&
+    prevContext.section === nextContext.section &&
+    prevContext.clientId === nextContext.clientId &&
+    prevContext.projectId === nextContext.projectId;
+  const scrollX = preserveScroll ? window.scrollX : 0;
+  const scrollY = preserveScroll ? window.scrollY : 0;
+  const scrollPositions = preserveScroll ? captureScrollPositions() : null;
+
   const { selectedClient, selectedProject } = state;
   const panels = byId("dashboard-panels");
   panels.innerHTML = "";
   setActiveNav(state.currentSection);
   updateTopActions();
 
+  if (state.currentSection === "dashboard-melhorias" || state.currentSection === "minhas-melhorias") {
+    state.currentSection = "dashboard";
+  }
+
+  const finalizeRender = () => {
+    state.lastRenderContext = nextContext;
+    if (preserveScroll) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.scrollTo(scrollX, scrollY);
+          restoreScrollPositions(scrollPositions);
+        });
+      });
+    }
+  };
+
   if (state.currentSection === "inicio") {
     renderHome(panels);
+    finalizeRender();
     return;
   }
 
   if (state.currentSection === "dashboard") {
     renderDashboard(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "relatorio") {
+    renderRelatorioSection();
+    finalizeRender();
     return;
   }
 
   if (state.currentSection === "monitor") {
-    renderMonitor(panels);
+    renderMonitorActivities(panels);
+    finalizeRender();
     return;
   }
 
-  if (state.currentSection === "audit") {
-    renderAuditTrail(panels);
+  if (state.currentSection === "dev-board") {
+    renderDeveloperBoard(panels);
+    finalizeRender();
     return;
   }
 
-  if (!selectedClient || !selectedProject) return;
+  if (state.currentSection === "config") {
+    renderConfig(panels);
+    finalizeRender();
+    return;
+  }
 
-  byId("crumb-path").textContent = `${selectedClient.name} / ${selectedProject.name}`;
+  if (!selectedClient || !selectedProject) {
+    if (!state.clients.length) {
+      const message = state.dbAccessDenied
+        ? "Sem acesso aos projetos cadastrados. Solicite liberacao ao administrador."
+        : "Nenhum projeto cadastrado no momento.";
+      panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Projetos indisponiveis</h2><p>${message}</p></div>`;
+    } else {
+      panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Bem-vindo!</h2><p>Selecione um cliente e um projeto na barra lateral para começar.</p></div>`;
+    }
+    finalizeRender();
+    return;
+  }
+
+  setCrumbPathProject(selectedClient, selectedProject);
 
   const metrics = projectMetrics(selectedProject.tasks || []);
   const status = projectStatus(selectedProject, metrics);
   const statusBadge = statusInfo(status);
+  const scheduleBadge = scheduleStatusInfo(projectScheduleStatus(selectedProject));
+  const progressPct = clampPct(metrics.progress ?? selectedProject.progress ?? 0);
+  const sCurveSeries = computeSCurveDailyBaseline(selectedProject, selectedProject?.tasks || null, progressPct);
+  const baselinePct = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(selectedProject, progressPct);
+  const realizedPct = progressPct;
+  const gap = round1(baselinePct - realizedPct);
+  const gapStart = round1(Math.min(realizedPct, baselinePct));
+  const gapWidth = round1(Math.abs(realizedPct - baselinePct));
+  const gapStatus = gapStatusInfo(gap, baselinePct, realizedPct);
+  const progressTrendClass = realizedPct > baselinePct ? "is-ahead" : realizedPct < baselinePct ? "is-behind" : "";
+  const progressTrackClass = [
+    "progress-track",
+    progressTrendClass,
+    gapStatus.className === "gap-critical" ? "is-critical" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const baselineLabel = formatMetric(baselinePct);
+  const gapLabel = formatSignedMetric(gap);
   const projectCost = resolveProjectCost(selectedProject);
   const costLabel = formatCurrency(projectCost);
+  const tasks = selectedProject.tasks || [];
+  const sparkRealized = renderSparklineSvg(buildSparklineSeries(progressPct), {
+    stroke: "var(--accent)",
+    fill: "var(--accent-soft)"
+  });
+  const sparkBaseline = renderSparklineSvg(buildSparklineSeries(baselinePct), {
+    stroke: "var(--muted)",
+    fill: "rgba(148, 163, 184, 0.14)"
+  });
+  const gapSparkPalette = {
+    "gap-ok": { stroke: "#16a34a", fill: "rgba(22, 163, 74, 0.12)" },
+    "gap-low": { stroke: "#64748b", fill: "rgba(100, 116, 139, 0.12)" },
+    "gap-risk": { stroke: "#b06013", fill: "rgba(199, 107, 26, 0.14)" },
+    "gap-delayed": { stroke: "#9c4f0f", fill: "rgba(199, 107, 26, 0.16)" },
+    "gap-critical": { stroke: "#9b1c23", fill: "rgba(155, 28, 35, 0.14)" }
+  };
+  const gapSparkTone = gapSparkPalette[gapStatus.className] || gapSparkPalette["gap-risk"];
+  const gapSparkBase = 100 - Math.min(Math.abs(gap) * 2, 60);
+  const sparkGap = renderSparklineSvg(buildSparklineSeries(gapSparkBase), gapSparkTone);
+  const curveColors = getSystemColors();
+  const curveSvg = sCurveSeries
+    ? renderSCurveSvgDaily(sCurveSeries, {
+        width: 960,
+        height: 190,
+        colors: {
+          planned: curveColors.planned,
+          actual: curveColors.actual,
+          axis: curveColors.grid,
+          muted: curveColors.muted,
+          text: curveColors.text
+        }
+      })
+    : "";
+  const emptyIllustration = `
+    <svg class="empty-illustration" viewBox="0 0 64 40" role="img" aria-hidden="true">
+      <rect x="4" y="8" width="56" height="24" rx="6" fill="none" stroke="currentColor" stroke-width="2"></rect>
+      <line x1="16" y1="18" x2="48" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+      <line x1="16" y1="26" x2="38" y2="26" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+    </svg>
+  `;
+  const renderSideEmpty = (label) => `
+    <div class="side-empty">
+      ${emptyIllustration}
+      <span>${label}</span>
+    </div>
+  `;
+  const milestoneItems = upcomingMilestones(tasks, 4);
+  const milestoneList = milestoneItems.length
+    ? `<ul class="side-list">
+        ${milestoneItems
+          .map(({ task, due }) => {
+            const title = escapeHtml(task?.title || "Atividade");
+            const phase = normalizePhaseLabel(task?.phase || "");
+            const dueLabel = due ? formatDateBR(due) : "-";
+            return `<li><span class="side-item-title">${title}</span><span class="side-item-meta">${phase} | ${dueLabel}</span></li>`;
+          })
+          .join("")}
+      </ul>`
+    : renderSideEmpty("Sem marcos proximos.");
+  const logItems = latestCompletedTasks(tasks, 4);
+  const logList = logItems.length
+    ? `<ul class="side-list">
+        ${logItems
+          .map((task) => {
+            const title = escapeHtml(task?.title || "Atividade");
+            const doneLabel = formatDateBR(activityDoneDate(task) || taskDueStr(task)) || "-";
+            return `<li><span class="side-item-title">${title}</span><span class="side-item-meta">Concluido | ${doneLabel}</span></li>`;
+          })
+          .join("")}
+      </ul>`
+    : renderSideEmpty("Sem logs recentes.");
 
   const headerCard = document.createElement("div");
   headerCard.className = "card project-header span-all";
@@ -725,74 +6302,2093 @@ function renderMain() {
         <h2>${selectedProject.name}</h2>
         <div class="project-subtitle">${selectedClient.name}</div>
       </div>
-      <div class="project-header-actions">
+      <div class="project-header-badges">
         <span class="pill project-status ${statusBadge.className}">${statusBadge.label}</span>
+        <span class="pill schedule-status ${scheduleBadge.className}">${scheduleBadge.label}</span>
+        <button class="btn sm ghost" type="button" data-export-project>Exportar</button>
         <button class="btn sm primary" type="button" data-open-expense>Adicionar despesa</button>
       </div>
     </div>
-    <div class="project-meta-grid">
-      <div class="meta-item">
-        <div class="label">Cliente</div>
-        <div class="value">${selectedClient.name}</div>
+    <div class="project-meta-row">
+      <div class="project-meta-item">
+        <span class="label">Cliente</span>
+        <span class="value">${selectedClient.name}</span>
       </div>
-      <div class="meta-item">
-        <div class="label">Responsavel</div>
-        <div class="value">${selectedProject.developer || "A definir"}</div>
+      <div class="project-meta-item">
+        <span class="label">Responsavel</span>
+        <span class="value">${selectedProject.developer || "A definir"}</span>
       </div>
-      <div class="meta-item">
-        <div class="label">Data inicio</div>
-        <div class="value">${selectedProject.start || "-"}</div>
+      <div class="project-meta-item">
+        <span class="label">Inicio</span>
+        <span class="value is-editable" data-edit-project-date="start" tabindex="0" role="button" aria-label="Editar data inicio">
+          ${formatDateBR(selectedProject.start) || "-"}
+        </span>
       </div>
-      <div class="meta-item">
-        <div class="label">Go Live previsto</div>
-        <div class="value">${selectedProject.end || "-"}</div>
+      <div class="project-meta-item">
+        <span class="label">Go Live</span>
+        <span class="value is-editable" data-edit-project-date="end" tabindex="0" role="button" aria-label="Editar data fim">
+          ${formatDateBR(selectedProject.end) || "-"}
+        </span>
       </div>
     </div>
-    <div>
-      <div class="label">Progresso (%)</div>
-      <div class="progress"><div class="progress-bar" style="width: ${metrics.progress}%"></div></div>
-      <div class="value" style="margin-top:6px;">${metrics.progress}% concluido</div>
+  `;
+
+  const performanceGrid = document.createElement("div");
+  performanceGrid.className = "metrics-grid performance-grid project-performance-grid";
+  performanceGrid.innerHTML = `
+    <div class="metric-card card--kpi performance-card realizado">
+      <div class="label">Realizado (%)</div>
+      <div class="value">${progressPct}%</div>
+      <div class="sub">Atividades concluidas</div>
+      <div class="kpi-sparkline">${sparkRealized}</div>
+    </div>
+    <div class="metric-card card--kpi performance-card previsto">
+      <div class="label">Previsto (Baseline)</div>
+      <div class="value">${baselineLabel}%</div>
+      <div class="sub">Meta para hoje</div>
+      <div class="kpi-sparkline">${sparkBaseline}</div>
+    </div>
+    <div class="metric-card card--kpi performance-card gap ${gapStatus.className}">
+      <div class="label">GAP (Desvio)</div>
+      <div class="value">${gapLabel}pp</div>
+      <div class="sub">${gapStatus.label}</div>
+      <div class="kpi-sparkline">${sparkGap}</div>
+    </div>
+  `;
+
+  const progressCompare = document.createElement("div");
+  progressCompare.className = "card progress-compare card--progress";
+  progressCompare.innerHTML = `
+    <div class="progress-head">
+      <div class="progress-title">Avanco vs meta</div>
+      <div class="progress-legend">
+        <span class="leg"><b>Realizado</b> <span>${progressPct}%</span></span>
+        <span class="dot">|</span>
+        <span class="leg"><b>Previsto</b> <span>${baselineLabel}%</span></span>
+      </div>
+      <div class="delta-badge ${gapStatus.className}">${gapLabel}pp</div>
+    </div>
+    <div class="progress-curve">
+      ${curveSvg || `<div class="side-empty">Curva S: defina Data Inicio e Go Live.</div>`}
+    </div>
+  `;
+}
+
+function setActiveNav(section) {
+  document.querySelectorAll(".nav-link").forEach((el) => el.classList.remove("active"));
+  const active = document.querySelector(`.nav-link[data-section="${section}"]`);
+  if (active) active.classList.add("active");
+  if (section === "meus-projetos") {
+    ensureProjectsNavOpen();
+  }
+}
+
+function ensureProjectsNavOpen() {
+  const link = document.querySelector('.nav-link[data-section="meus-projetos"]');
+  if (link) link.classList.add("open");
+}
+
+function openProject(client, project) {
+  state.selectedClient = client;
+  state.selectedProject = project;
+  state.clientVisibility[client.name] = true;
+  state.currentSection = "meus-projetos";
+  highlightActiveProject(project.name);
+  setActiveNav("meus-projetos");
+  renderMain();
+}
+
+function updateTopActions() {
+  const openProjectBtn = byId("open-project-modal");
+  const editProjectBtn = byId("edit-project-btn");
+  const openEmployeeBtn = byId("open-employee-modal");
+  const openGanttBtn = byId("open-gantt-btn");
+  const isHome = state.currentSection === "inicio";
+  const isConfig = state.currentSection === "config";
+  const isDevBoard = state.currentSection === "dev-board";
+  const isProject = state.currentSection === "meus-projetos";
+  if (openProjectBtn) openProjectBtn.classList.toggle("hidden", isHome || isConfig || isDevBoard);
+  if (openEmployeeBtn) openEmployeeBtn.classList.toggle("hidden", isHome || isConfig || isDevBoard);
+  if (editProjectBtn) editProjectBtn.classList.toggle("hidden", !isProject);
+  if (openGanttBtn) {
+    openGanttBtn.classList.toggle("hidden", isDevBoard);
+    openGanttBtn.disabled = !state.selectedProject;
+  }
+}
+
+function renderHome(container) {
+  setCrumbPathText("Inicio");
+  container.innerHTML = renderHomeMacroSummary();
+}
+
+function removeRelatorioStyles() {
+  const priorStyles = document.getElementById("onepage-styles");
+  if (priorStyles) {
+    priorStyles.remove();
+  }
+}
+
+function buildOnePageQuery(project, client) {
+  const params = new URLSearchParams();
+  if (client?.id) {
+    params.set("clientId", client.id);
+  } else if (client?.name) {
+    params.set("client", client.name);
+  }
+  if (project?.id) {
+    params.set("projectId", project.id);
+  } else if (project?.name) {
+    params.set("project", project.name);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function renderRelatorioSection() {
+  const contentArea = byId("dashboard-panels");
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+
+  setCrumbPathText("Relatório do Projeto");
+
+  if (!project || !client) {
+    contentArea.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;">
+      <h2>Nenhum projeto selecionado</h2>
+      <p>Por favor, selecione um projeto na barra lateral ou no dashboard para gerar um relatório.</p>
+    </div>`;
+    return;
+  }
+
+  const reportWrapper = document.createElement("div");
+  reportWrapper.className = "span-all report-embed";
+
+  saveLocalState();
+
+  const reportFrame = document.createElement("iframe");
+  reportFrame.className = "onepage-frame";
+  reportFrame.title = "Relatorio do Projeto";
+  reportFrame.loading = "lazy";
+  reportFrame.src = `onepage.html${buildOnePageQuery(project, client)}`;
+  reportWrapper.appendChild(reportFrame);
+
+  contentArea.innerHTML = "";
+  contentArea.appendChild(reportWrapper);
+}
+
+function renderMonitorActivities(container) {
+  setCrumbPathText("Monitor de Atividades");
+  const filter = state.monitor?.filter || "all";
+  const clientFilter = state.monitor?.client || "";
+  const projectFilter = state.monitor?.project || "";
+  const responsibleFilter = state.monitor?.responsible || "";
+  const items = buildMonitorItems();
+  const statusFiltered = items.filter((item) => {
+    if (filter === "atrasado") return item.status === "atrasado";
+    if (filter === "proximo") return item.status === "proximo";
+    return true;
+  });
+  const clientOptions = Array.from(new Set(statusFiltered.map((item) => item.clientName))).sort();
+  if (clientFilter && !clientOptions.includes(clientFilter)) {
+    state.monitor.client = "";
+  }
+  const projectPool = (state.monitor.client || clientFilter)
+    ? statusFiltered.filter((item) => item.clientName === (state.monitor.client || clientFilter))
+    : statusFiltered;
+  const projectOptions = Array.from(new Set(projectPool.map((item) => item.projectName))).sort();
+  if (projectFilter && !projectOptions.includes(projectFilter)) {
+    state.monitor.project = "";
+  }
+  const responsiblePool = statusFiltered.filter((item) => {
+    if (state.monitor.client && item.clientName !== state.monitor.client) return false;
+    if (state.monitor.project && item.projectName !== state.monitor.project) return false;
+    return true;
+  });
+  const responsibleOptions = Array.from(new Set(responsiblePool.map((item) => item.responsible))).sort();
+  if (responsibleFilter && !responsibleOptions.includes(responsibleFilter)) {
+    state.monitor.responsible = "";
+  }
+
+  const filtered = statusFiltered.filter((item) => {
+    if (state.monitor.client && item.clientName !== state.monitor.client) return false;
+    if (state.monitor.project && item.projectName !== state.monitor.project) return false;
+    if (state.monitor.responsible && item.responsible !== state.monitor.responsible) return false;
+    return true;
+  });
+
+  const header = document.createElement("div");
+  header.className = "monitor-container span-all";
+  header.innerHTML = `
+    <div class="monitor-header">
+      <h2>Monitor de Atividades</h2>
+      <div class="monitor-filter">
+        <div class="monitor-chip-bar" role="tablist" aria-label="Filtros do monitor">
+          ${MONITOR_FILTERS.map((option) => {
+            const active = option.key === filter ? "active" : "";
+            const selected = option.key === filter ? "true" : "false";
+            return `<button type="button" class="monitor-chip ${active}" data-monitor-filter="${option.key}" aria-selected="${selected}">${option.label}</button>`;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+    <div class="monitor-filters">
+      <label class="monitor-select">
+        <span>Cliente</span>
+        <select data-monitor-select="client">
+          <option value="">Todos</option>
+          ${clientOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.client === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="monitor-select">
+        <span>Projeto</span>
+        <select data-monitor-select="project">
+          <option value="">Todos</option>
+          ${projectOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.project === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="monitor-select">
+        <span>Responsavel</span>
+        <select data-monitor-select="responsible">
+          <option value="">Todos</option>
+          ${responsibleOptions.map((name) => `<option value="${escapeHtml(name)}"${state.monitor.responsible === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+  `;
+
+  const list = document.createElement("div");
+  list.className = "monitor-container span-all monitor-bento-grid";
+
+  const today = startOfDay(new Date());
+  const overdueItems = [];
+  const todayItems = [];
+  const upcomingItems = [];
+
+  filtered.forEach((item) => {
+    const diff = daysDiff(item.dueDay, today);
+    if (diff < 0 || item.status === "atrasado") {
+      overdueItems.push(item);
+    } else if (diff === 0) {
+      todayItems.push(item);
+    } else {
+      upcomingItems.push(item);
+    }
+  });
+
+  const sortByDue = (a, b) => a.dueDay.getTime() - b.dueDay.getTime();
+  overdueItems.sort(sortByDue);
+  todayItems.sort(sortByDue);
+  upcomingItems.sort(sortByDue);
+
+  const iconSvg = (name) => {
+    const icons = {
+      alert: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`,
+      calendarCheck: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><polyline points="9 16 11 18 15 14"></polyline></svg>`,
+      calendar: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`,
+      users: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`,
+      trend: `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>`,
+      code: `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
+      review: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9 12l2 2 4-4"></path></svg>`,
+      meeting: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="5" width="15" height="14" rx="2"></rect><polygon points="23 7 16 12 23 17 23 7"></polygon></svg>`
+    };
+    return icons[name] || icons.code;
+  };
+
+  const pickMonitorIcon = (item) => {
+    const rawTitle = String(item.taskTitle || "").toLowerCase();
+    const normalized = rawTitle.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (normalized.includes("revis") || normalized.includes("review") || normalized.includes("valid")) {
+      return "review";
+    }
+    if (
+      normalized.includes("reun") ||
+      normalized.includes("meeting") ||
+      normalized.includes("call") ||
+      normalized.includes("reuniao")
+    ) {
+      return "meeting";
+    }
+    return "code";
+  };
+
+  const renderTaskMiniCard = (item) => {
+    const diff = daysDiff(item.dueDay, today);
+    const tone = diff < 0 ? "overdue" : diff === 0 ? "today" : "upcoming";
+    const labelBase = formatMonitorDateLabel(item.dueDay, today);
+    const badgeLabel = diff < 0 ? "ATRASADO" : diff === 0 ? "HOJE" : "PROXIMO";
+    const deltaLabel =
+      diff < 0 ? `Atraso: ${Math.abs(diff)}d` : diff === 0 ? "Vence hoje" : `Em ${diff}d`;
+    const responsible = item.responsible || "A definir";
+    const icon = pickMonitorIcon(item);
+    return `
+      <div class="monitor-mini-card monitor-mini-card--${tone}" data-monitor-card="true" data-client-index="${item.clientIndex}" data-project-index="${item.projectIndex}" data-task-index="${item.taskIndex}">
+        <div class="monitor-mini-left">
+          <label class="monitor-mini-check" data-monitor-toggle="true" title="Concluir">
+            <input type="checkbox" aria-label="Concluir atividade">
+          </label>
+          <div class="monitor-mini-icon">${iconSvg(icon)}</div>
+          <div class="monitor-mini-info">
+            <div class="monitor-mini-title">${escapeHtml(item.taskTitle)}</div>
+            <div class="monitor-mini-meta">
+              <span class="monitor-mini-client">${escapeHtml(item.clientName)}</span>
+              <span class="monitor-mini-sep">|</span>
+              <span>${escapeHtml(item.projectName)}</span>
+              <span class="monitor-mini-sep">|</span>
+              <span>${escapeHtml(responsible)}</span>
+            </div>
+          </div>
+        </div>
+        <div class="monitor-mini-right">
+          <div class="monitor-mini-date">${labelBase}</div>
+          <div class="monitor-mini-status monitor-mini-status--${tone}">${badgeLabel}</div>
+          <div class="monitor-mini-gap">${deltaLabel}</div>
+        </div>
+      </div>
+    `;
+  };
+
+  const renderMiniList = (items) => {
+    if (!items.length) {
+      return `<div class="monitor-mini-empty">Sem atividades.</div>`;
+    }
+    const limit = 12;
+    const sliced = items.slice(0, limit);
+    const extra = items.length - sliced.length;
+    return `${sliced.map(renderTaskMiniCard).join("")}${
+      extra > 0 ? `<div class="monitor-mini-more">+${extra} restantes</div>` : ""
+    }`;
+  };
+
+  const teamMap = new Map();
+  filtered.forEach((item) => {
+    const name = item.responsible || "A definir";
+    const entry = teamMap.get(name) || { name, total: 0, overdue: 0 };
+    entry.total += 1;
+    if (daysDiff(item.dueDay, today) < 0) entry.overdue += 1;
+    teamMap.set(name, entry);
+  });
+  const teamItems = Array.from(teamMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 4);
+
+  const bottleneckMap = new Map();
+  overdueItems.forEach((item) => {
+    const key = item.projectName || "Projeto";
+    const entry = bottleneckMap.get(key) || { project: key, client: item.clientName || "", total: 0 };
+    entry.total += 1;
+    bottleneckMap.set(key, entry);
+  });
+  const bottlenecks = Array.from(bottleneckMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 4);
+
+  const renderTeamList = () => {
+    if (!teamItems.length) {
+      return `<div class="monitor-mini-empty">Sem dados de time.</div>`;
+    }
+    return teamItems
+      .map((member) => {
+        const initials = escapeHtml(initialsFromName(member.name || "T"));
+        const name = escapeHtml(member.name || "A definir");
+        return `
+          <div class="monitor-mini-card monitor-mini-card--neutral">
+            <div class="monitor-mini-left">
+              <div class="monitor-mini-avatar">${initials}</div>
+              <div class="monitor-mini-info">
+                <div class="monitor-mini-title">${name}</div>
+                <div class="monitor-mini-meta">
+                  <span>${member.total} atividades</span>
+                </div>
+              </div>
+            </div>
+            <div class="monitor-mini-right">
+              <div class="monitor-mini-gap monitor-mini-gap--warn">${member.overdue} atrasadas</div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+  };
+
+  const renderBottleneckList = () => {
+    if (!bottlenecks.length) {
+      return `<div class="monitor-mini-empty">Sem gargalos.</div>`;
+    }
+    return bottlenecks
+      .map((entry) => {
+        const project = escapeHtml(entry.project || "Projeto");
+        const client = escapeHtml(entry.client || "");
+        return `
+          <div class="monitor-mini-card monitor-mini-card--risk">
+            <div class="monitor-mini-left">
+              <div class="monitor-mini-icon">${iconSvg("trend")}</div>
+              <div class="monitor-mini-info">
+                <div class="monitor-mini-title">${project}</div>
+                <div class="monitor-mini-meta">${client ? `${client}` : "Sem cliente"}</div>
+              </div>
+            </div>
+            <div class="monitor-mini-right">
+              <div class="monitor-mini-gap monitor-mini-gap--danger">${entry.total} atrasos</div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+  };
+
+  const cardsHtml = `
+    <div class="monitor-bento-col monitor-bento-col--primary">
+      <div class="monitor-bento-card monitor-bento-card--critical monitor-bento-card--xl">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Acoes Criticas</div>
+            <div class="monitor-bento-sub">Intervencao imediata</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--critical">${iconSvg("alert")}</div>
+        </div>
+        <div class="monitor-bento-count">${overdueItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(overdueItems)}</div>
+      </div>
+    </div>
+
+    <div class="monitor-bento-col monitor-bento-col--secondary">
+      <div class="monitor-bento-card monitor-bento-card--today monitor-bento-card--wide">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Cronograma do Dia</div>
+            <div class="monitor-bento-sub">Entrega e follow-up</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--today">${iconSvg("calendarCheck")}</div>
+        </div>
+        <div class="monitor-bento-count">${todayItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(todayItems)}</div>
+      </div>
+
+      <div class="monitor-bento-card monitor-bento-card--team">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Metricas de Time</div>
+            <div class="monitor-bento-sub">Carga por responsavel</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--team">${iconSvg("users")}</div>
+        </div>
+        <div class="monitor-bento-list">${renderTeamList()}</div>
+      </div>
+
+      <div class="monitor-bento-card monitor-bento-card--upcoming">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Proximos 7 dias</div>
+            <div class="monitor-bento-sub">Planejamento</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--upcoming">${iconSvg("calendar")}</div>
+        </div>
+        <div class="monitor-bento-count">${upcomingItems.length} atividades</div>
+        <div class="monitor-bento-list">${renderMiniList(upcomingItems)}</div>
+      </div>
+
+      <div class="monitor-bento-card monitor-bento-card--bottleneck">
+        <div class="monitor-bento-head">
+          <div>
+            <div class="monitor-bento-title">Gargalos</div>
+            <div class="monitor-bento-sub">Projetos com atraso</div>
+          </div>
+          <div class="monitor-bento-icon monitor-bento-icon--risk">${iconSvg("trend")}</div>
+        </div>
+        <div class="monitor-bento-list">${renderBottleneckList()}</div>
+      </div>
+    </div>
+  `;
+
+  list.innerHTML = cardsHtml;
+  container.appendChild(header);
+  container.appendChild(list);
+}
+
+function normalizePersonKey(value) {
+  if (!value) return "";
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w@.\s-]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function developerIdentityKeys() {
+  const keys = new Set();
+  const user = auth?.currentUser || null;
+  const email = (state.currentUserEmail || user?.email || "").trim();
+  const name = (user?.displayName || "").trim();
+  [name, email].forEach((value) => {
+    const key = normalizePersonKey(value);
+    if (key) keys.add(key);
+  });
+  if (email.includes("@")) {
+    const base = email.split("@")[0].replace(/[._-]+/g, " ");
+    const key = normalizePersonKey(base);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+function devColumnKey(task) {
+  const normalized = normalizeTaskStatus(getTaskStatus(task));
+  if (normalized === "concluido") return "done";
+  if (normalized === "em_validacao") return "review";
+  if (normalized === "em_andamento" || normalized === "parado") return "doing";
+  return "todo";
+}
+
+function collectDeveloperTasks(identityKeys) {
+  const items = [];
+  const unassignedKeys = new Set(["a definir", "nao definido", "sem responsavel"]);
+  state.clients.forEach((client) => {
+    (client.projects || []).forEach((project) => {
+      const projectKey = normalizePersonKey(project?.developer || "");
+      const projectMatch = projectKey && identityKeys.has(projectKey);
+      (project.tasks || []).forEach((task, taskIndex) => {
+        const ownerKey = normalizePersonKey(taskOwner(task));
+        const hasOwner = ownerKey && !unassignedKeys.has(ownerKey);
+        const matches = (hasOwner && identityKeys.has(ownerKey)) || (!hasOwner && projectMatch);
+        if (!matches) return;
+        const dueLabel = formatDateBR(taskDueStr(task) || "");
+        const progress = taskProgressValue(task);
+        const statusInfoData = taskStatusInfo(getTaskStatus(task));
+        items.push({
+          client,
+          project,
+          task,
+          taskIndex,
+          column: devColumnKey(task),
+          dueLabel,
+          progress,
+          statusLabel: statusInfoData.label,
+          statusClass: statusInfoData.className || "planejado"
+        });
+      });
+    });
+  });
+  return items;
+}
+
+function resolveDevTaskRef(dataset) {
+  const clientId = dataset.clientId || "";
+  const clientName = dataset.clientName || "";
+  const projectId = dataset.projectId || "";
+  const projectName = dataset.projectName || "";
+  const taskId = dataset.taskId || "";
+  const taskIndexRaw = dataset.taskIndex;
+  const taskIndex = taskIndexRaw === "" || taskIndexRaw == null ? null : Number(taskIndexRaw);
+  const client =
+    state.clients.find((item) => (clientId && item.id === clientId) || (clientName && item.name === clientName)) || null;
+  if (!client) return null;
+  const project =
+    (client.projects || []).find(
+      (item) => (projectId && item.id === projectId) || (projectName && item.name === projectName)
+    ) || null;
+  if (!project) return null;
+  let task = null;
+  if (Number.isFinite(taskIndex) && project.tasks?.[taskIndex]) {
+    task = project.tasks[taskIndex];
+  } else if (taskId) {
+    task = (project.tasks || []).find((item) => item.id === taskId) || null;
+  }
+  if (!task) return null;
+  return { client, project, task, taskIndex };
+}
+
+function updateDeveloperTaskStatus(dataset, columnKey) {
+  const ref = resolveDevTaskRef(dataset);
+  if (!ref) return;
+  const statusMap = {
+    todo: "planejado",
+    doing: "em_andamento",
+    review: "em_validacao",
+    done: "concluido"
+  };
+  const nextStatus = statusMap[columnKey] || "planejado";
+  if (normalizeTaskStatus(ref.task.status) === normalizeTaskStatus(nextStatus)) {
+    return;
+  }
+  const previousStatus = ref.task.status;
+  applyTaskStatus(ref.task, nextStatus);
+  if (db && ref.client.id && ref.project.id && ref.task.id) {
+    updateTaskStatusOnDb(ref.client.id, ref.project.id, ref.task.id, {
+      status: ref.task.status,
+      dataConclusao: ref.task.dataConclusao || null
+    })
+      .then(() => {
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        ref.task.status = previousStatus;
+        applyTaskStatus(ref.task, previousStatus);
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  renderMain();
+}
+
+function updateDeveloperTaskProgress(dataset, progressValue) {
+  const ref = resolveDevTaskRef(dataset);
+  if (!ref) return;
+  const prevProgress = ref.task.progress;
+  const prevStatus = ref.task.status;
+  const nextProgress = Math.max(0, Math.min(100, Number(progressValue)));
+  ref.task.progress = Number.isFinite(nextProgress) ? nextProgress : 0;
+  if (ref.task.progress >= 100) {
+    applyTaskStatus(ref.task, "concluido");
+  } else if (normalizeTaskStatus(ref.task.status) === "concluido") {
+    applyTaskStatus(ref.task, "em_andamento");
+  }
+  const payload = {
+    progress: ref.task.progress,
+    status: ref.task.status,
+    dataConclusao: ref.task.dataConclusao || null
+  };
+  if (db && ref.client.id && ref.project.id && ref.task.id) {
+    updateTaskOnDb(ref.client.id, ref.project.id, ref.task.id, payload)
+      .then(() => {
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        ref.task.progress = prevProgress;
+        ref.task.status = prevStatus;
+        applyTaskStatus(ref.task, prevStatus);
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  renderMain();
+}
+
+function setupDeveloperBoard() {
+  if (document.body.dataset.devBoardWired) return;
+  document.body.dataset.devBoardWired = "true";
+
+  document.body.addEventListener("dragstart", (e) => {
+    const card = e.target.closest("[data-dev-task]");
+    if (!card) return;
+    const payload = {
+      clientId: card.dataset.clientId || "",
+      clientName: card.dataset.clientName || "",
+      projectId: card.dataset.projectId || "",
+      projectName: card.dataset.projectName || "",
+      taskId: card.dataset.taskId || "",
+      taskIndex: card.dataset.taskIndex || ""
+    };
+    card.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", JSON.stringify(payload));
+  });
+
+  document.body.addEventListener("dragend", (e) => {
+    const card = e.target.closest("[data-dev-task]");
+    if (card) card.classList.remove("dragging");
+  });
+
+  document.body.addEventListener("dragover", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  });
+
+  document.body.addEventListener("dragenter", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (column) column.classList.add("over");
+  });
+
+  document.body.addEventListener("dragleave", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    if (!column.contains(e.relatedTarget)) {
+      column.classList.remove("over");
+    }
+  });
+
+  document.body.addEventListener("drop", (e) => {
+    const column = e.target.closest("[data-dev-column]");
+    if (!column) return;
+    e.preventDefault();
+    column.classList.remove("over");
+    const payloadRaw = e.dataTransfer.getData("text/plain");
+    if (!payloadRaw) return;
+    let payload = null;
+    try {
+      payload = JSON.parse(payloadRaw);
+    } catch (err) {
+      return;
+    }
+    const columnKey = column.dataset.devColumn || "";
+    if (!columnKey) return;
+    updateDeveloperTaskStatus(payload, columnKey);
+  });
+
+  document.body.addEventListener("input", (e) => {
+    const slider = e.target.closest("[data-progress-input]");
+    if (!slider) return;
+    const wrapper = slider.closest(".dev-progress");
+    const valueEl = wrapper?.querySelector("[data-progress-label]");
+    if (valueEl) valueEl.textContent = `${slider.value}%`;
+  });
+
+  document.body.addEventListener("change", (e) => {
+    const slider = e.target.closest("[data-progress-input]");
+    if (!slider) return;
+    updateDeveloperTaskProgress(slider.dataset, slider.value);
+  });
+}
+
+function renderDeveloperBoard(container) {
+  setCrumbPathText("Painel Desenvolvedor");
+  const role = normalizeUserRole(state.currentUserRole);
+  if (role !== "developer" && role !== "admin") {
+    container.innerHTML = `
+      <div class="empty-state span-all" style="text-align: center; padding: 40px;">
+        <h2>Acesso restrito</h2>
+        <p>Esta tela esta disponivel apenas para usuarios com perfil Desenvolvedor.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const identityKeys = developerIdentityKeys();
+  const tasks = collectDeveloperTasks(identityKeys);
+  if (!tasks.length) {
+    container.innerHTML = `
+      <div class="empty-state span-all" style="text-align: center; padding: 40px;">
+        <h2>Sem atividades</h2>
+        <p>Nenhuma atividade atribuida a voce no momento.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const columns = [
+    { key: "todo", label: "A fazer" },
+    { key: "doing", label: "Em andamento" },
+    { key: "review", label: "Revisao / QA" },
+    { key: "done", label: "Concluido" }
+  ];
+  const grouped = columns.reduce((acc, col) => {
+    acc[col.key] = [];
+    return acc;
+  }, {});
+  tasks.forEach((item) => {
+    const columnKey = grouped[item.column] ? item.column : "todo";
+    grouped[columnKey].push(item);
+  });
+
+  const columnsHtml = columns
+    .map((col) => {
+      const ordered = grouped[col.key].slice().sort((a, b) => taskDueValueSafe(a.task) - taskDueValueSafe(b.task));
+      const cards = ordered
+        .map((item) => {
+          const projectLabel = item.project?.name || "Projeto";
+          const clientLabel = item.client?.name || "Cliente";
+          const taskTitleText = escapeHtml(taskTitle(item.task));
+          const phaseLabel = normalizePhaseLabel(item.task?.phase || "OUTROS");
+          const dueText = item.dueLabel && item.dueLabel !== "-" ? item.dueLabel : "Sem prazo";
+          const progress = Math.max(0, Math.min(100, Math.round(item.progress || 0)));
+          const taskId = item.task?.id || "";
+          const clientId = item.client?.id || "";
+          const projectId = item.project?.id || "";
+          return `
+            <article class="dev-card" draggable="true" data-dev-task data-client-id="${escapeHtml(clientId)}" data-client-name="${escapeHtml(clientLabel)}" data-project-id="${escapeHtml(projectId)}" data-project-name="${escapeHtml(projectLabel)}" data-task-id="${escapeHtml(taskId)}" data-task-index="${item.taskIndex}">
+              <div class="dev-card-meta">
+                <span class="dev-card-project">${escapeHtml(projectLabel)} • ${escapeHtml(clientLabel)}</span>
+                <span class="pill ${item.statusClass}">${item.statusLabel}</span>
+              </div>
+              <div class="dev-card-title">${taskTitleText}</div>
+              <div class="dev-card-sub">Epico: ${escapeHtml(phaseLabel)}</div>
+              <div class="dev-card-sub">Prazo: ${escapeHtml(dueText)}</div>
+              <div class="dev-progress">
+                <div class="dev-progress-label">
+                  <span>Progresso</span>
+                  <span class="dev-progress-value" data-progress-label>${progress}%</span>
+                </div>
+                <input type="range" min="0" max="100" value="${progress}" data-progress-input data-client-id="${escapeHtml(clientId)}" data-client-name="${escapeHtml(clientLabel)}" data-project-id="${escapeHtml(projectId)}" data-project-name="${escapeHtml(projectLabel)}" data-task-id="${escapeHtml(taskId)}" data-task-index="${item.taskIndex}">
+              </div>
+            </article>
+          `;
+        })
+        .join("");
+      return `
+        <section class="dev-column" data-dev-column="${col.key}">
+          <div class="dev-column-header">
+            <div class="dev-column-title">${col.label}</div>
+            <span class="dev-column-count">${grouped[col.key].length}</span>
+          </div>
+          <div class="dev-column-body">
+            ${cards || "<div class=\"dev-empty\">Sem atividades</div>"}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <div class="dev-board span-all">
+      <div class="section-header">
+        <div class="header-row">
+          <h2>Atividades do Desenvolvedor</h2>
+        </div>
+        <div class="muted">Arraste os cards entre colunas e atualize o progresso.</div>
+      </div>
+      <div class="dev-board-grid">
+        ${columnsHtml}
+      </div>
+    </div>
+  `;
+
+  setupDeveloperBoard();
+}
+
+function openGanttModal() {
+  const modal = byId("gantt-modal");
+  if (!modal) return;
+  renderGanttModal();
+  showModal(modal);
+}
+
+function renderGanttModal() {
+  const container = byId("gantt-content");
+  if (!container) return;
+  const titleEl = byId("gantt-title");
+  const subtitleEl = byId("gantt-subtitle");
+  const footerRight = byId("gantt-footer-right");
+
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+
+  if (!project) {
+    if (titleEl) titleEl.textContent = "Cronograma do Projeto";
+    if (subtitleEl) subtitleEl.textContent = "Selecione um projeto para visualizar o Gantt.";
+    if (footerRight) footerRight.textContent = "";
+    container.innerHTML = `<div class="gantt-empty">Selecione um projeto para gerar o Gantt.</div>`;
+    return;
+  }
+
+  if (titleEl) titleEl.textContent = project.name || "Cronograma do Projeto";
+  if (subtitleEl) {
+    const clientLabel = client?.name ? `Cliente: ${client.name}` : "Projeto selecionado";
+    subtitleEl.textContent = clientLabel;
+  }
+
+  const tasks = flattenProjectTasks(project);
+  if (!tasks.length) {
+    if (footerRight) footerRight.textContent = "";
+    container.innerHTML = `<div class="gantt-empty">Nenhuma atividade cadastrada.</div>`;
+    return;
+  }
+
+  const normalizedTasks = tasks.map((task, idx) => {
+    const title = taskTitle(task);
+    const phase = normalizePhaseLabel(task.phase || task.epic || task.stage || "OUTROS");
+    const startRaw = taskStartStr(task) || taskDateStr(task);
+    const endRaw = taskDueStr(task) || taskDateStr(task);
+    let startDate = parseTaskDate(startRaw);
+    let endDate = parseTaskDate(endRaw);
+    if (!startDate && endDate) startDate = endDate;
+    if (!endDate && startDate) endDate = startDate;
+    const noDate = !startDate && !endDate;
+    if (startDate && endDate && endDate < startDate) {
+      const tmp = startDate;
+      startDate = endDate;
+      endDate = tmp;
+    }
+    const progress = taskProgressValue(task);
+    const gapValue = Number(
+      task?.gap ?? task?.gapPP ?? task?.gapPct ?? task?.gapPercent ?? task?.gapValue ?? Number.NaN
+    );
+    const done = progress >= 100 || isDoneTask(task);
+    const overdue = Number.isFinite(gapValue) ? gapValue > 0 : isOverdueTask(task);
+    const statusClass = done ? "is-done" : overdue ? "is-late" : "is-ok";
+    return {
+      id: task?.id || `task-${idx}`,
+      title,
+      phase,
+      startDate,
+      endDate,
+      startRaw,
+      endRaw,
+      progress,
+      statusClass,
+      noDate
+    };
+  });
+
+  const datedTasks = normalizedTasks.filter((task) => !task.noDate);
+  const taskMinTs = datedTasks.length ? Math.min(...datedTasks.map((task) => task.startDate.getTime())) : null;
+  const taskMaxTs = datedTasks.length ? Math.max(...datedTasks.map((task) => task.endDate.getTime())) : null;
+  const projectStart = parseDateSafe(project?.start || project?.startDate);
+  const projectEnd = parseDateSafe(project?.end || project?.goLive || project?.goLiveDate);
+  let rangeStart = projectStart
+    ? startOfDay(projectStart)
+    : taskMinTs
+      ? startOfDay(new Date(taskMinTs))
+      : startOfDay(new Date());
+  let rangeEnd = projectEnd
+    ? startOfDay(projectEnd)
+    : taskMaxTs
+      ? startOfDay(new Date(taskMaxTs))
+      : addDays(rangeStart, 1);
+  if (taskMinTs != null && taskMinTs < rangeStart.getTime()) {
+    rangeStart = startOfDay(new Date(taskMinTs));
+  }
+  if (taskMaxTs != null && taskMaxTs > rangeEnd.getTime()) {
+    rangeEnd = startOfDay(new Date(taskMaxTs));
+  }
+  if (rangeEnd.getTime() < rangeStart.getTime()) {
+    const tmp = rangeStart;
+    rangeStart = rangeEnd;
+    rangeEnd = tmp;
+  }
+  if (rangeEnd.getTime() === rangeStart.getTime()) {
+    rangeEnd = addDays(rangeStart, 1);
+  }
+  const minTs = rangeStart.getTime();
+  const maxTs = rangeEnd.getTime();
+  const rangeMs = Math.max(1, maxTs - minTs);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const formatTsBR = (ts) => {
+    const dt = new Date(ts);
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    const yyyy = dt.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const timelineTicks = [];
+  const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+  const tickStart = new Date(new Date(minTs).getFullYear(), new Date(minTs).getMonth(), 1);
+  const tickEnd = new Date(new Date(maxTs).getFullYear(), new Date(maxTs).getMonth(), 1);
+  for (let d = new Date(tickStart); d <= tickEnd; d.setMonth(d.getMonth() + 1)) {
+    const left = ((d.getTime() - minTs) / rangeMs) * 100;
+    timelineTicks.push({
+      label: `${months[d.getMonth()]} ${d.getFullYear()}`,
+      left: Math.max(0, Math.min(100, left))
+    });
+  }
+
+  const todayTs = todayStartTs();
+  const todayLeft = todayTs >= minTs && todayTs <= maxTs ? ((todayTs - minTs) / rangeMs) * 100 : null;
+  const startLabel = formatTsBR(minTs);
+  const endLabel = formatTsBR(maxTs);
+
+  const groupMap = new Map();
+  normalizedTasks.forEach((task) => {
+    if (!groupMap.has(task.phase)) groupMap.set(task.phase, []);
+    groupMap.get(task.phase).push(task);
+  });
+
+  const ganttPhaseOrder = new Map([
+    ["LEVANTAMENTO", 0],
+    ["DESENVOLVIMENTO", 1],
+    ["TESTES", 3],
+    ["DEPLOY", 4]
+  ]);
+  const groups = Array.from(groupMap.entries()).sort((a, b) => {
+    const aRank = ganttPhaseOrder.has(a[0]) ? ganttPhaseOrder.get(a[0]) : 2;
+    const bRank = ganttPhaseOrder.has(b[0]) ? ganttPhaseOrder.get(b[0]) : 2;
+    if (aRank !== bRank) return aRank - bRank;
+    return a[0].localeCompare(b[0]);
+  });
+
+  const groupsHtml = groups
+    .map(([phase, groupTasks]) => {
+      const anyLate = groupTasks.some((task) => task.statusClass === "is-late");
+      const allDone = groupTasks.every((task) => task.statusClass === "is-done");
+      const epicColor = allDone ? "#2f8f61" : anyLate ? "#9b1c23" : "#245363";
+      const progressAvg = groupTasks.length
+        ? Math.round(groupTasks.reduce((acc, task) => acc + (task.progress || 0), 0) / groupTasks.length)
+        : 0;
+      const tasksHtml = groupTasks
+        .sort((a, b) => {
+          if (a.noDate && b.noDate) return a.title.localeCompare(b.title);
+          if (a.noDate) return 1;
+          if (b.noDate) return -1;
+          return a.startDate.getTime() - b.startDate.getTime();
+        })
+        .map((task) => {
+          if (task.noDate) {
+            return `
+              <div class="gantt-row">
+                <div class="gantt-task-info">
+                  <div class="gantt-task-title">${escapeHtml(task.title)}</div>
+                </div>
+                <div class="gantt-task-bar no-date">
+                  <span class="gantt-task-meta">Sem datas definidas</span>
+                </div>
+              </div>
+            `;
+          }
+          const startTs = task.startDate.getTime();
+          const endTs = task.endDate.getTime();
+          const spanMs = Math.max(dayMs, endTs - startTs);
+          let leftPct = ((startTs - minTs) / rangeMs) * 100;
+          let widthPct = (spanMs / rangeMs) * 100;
+          if (!Number.isFinite(leftPct)) leftPct = 0;
+          if (!Number.isFinite(widthPct)) widthPct = 1.5;
+          widthPct = Math.max(widthPct, 1.5);
+          if (widthPct > 100) widthPct = 100;
+          leftPct = Math.max(0, Math.min(100 - widthPct, leftPct));
+          const progressValue = Number.isFinite(task.progress) ? task.progress : 0;
+          const progressPct = Math.max(0, Math.min(100, Math.round(progressValue)));
+          const isCompact = widthPct < 5;
+          const labelSide = leftPct + widthPct > 92 ? "label-left" : "label-right";
+          const compactClass = isCompact ? "is-compact" : "";
+          const labelClass = isCompact ? labelSide : "";
+          return `
+            <div class="gantt-row">
+              <div class="gantt-task-info">
+                <div class="gantt-task-title">${escapeHtml(task.title)}</div>
+              </div>
+              <div class="gantt-task-bar">
+                <div class="gantt-bar ${task.statusClass} ${compactClass}" style="left:${leftPct.toFixed(2)}%; width:${widthPct.toFixed(2)}%;">
+                  <div class="gantt-bar-fill" style="width:${progressPct}%;"></div>
+                  <span class="gantt-bar-label ${labelClass}">${progressPct}%</span>
+                </div>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+      return `
+        <section class="gantt-group">
+          <div class="gantt-group-header">
+            <span>${escapeHtml(phase)}</span>
+            <div class="gantt-epic-track">
+              <span style="width:${progressAvg}%; background:${epicColor};"></span>
+            </div>
+          </div>
+          ${tasksHtml || "<div class=\"gantt-empty\">Nenhuma atividade neste grupo.</div>"}
+        </section>
+      `;
+    })
+    .join("");
+
+  const ticksHtml = timelineTicks
+    .map((tick) => `<div class="gantt-tick" style="left:${tick.left.toFixed(2)}%"><span>${tick.label}</span></div>`)
+    .join("");
+  const todayHtml = todayLeft == null ? "" : `<div class="gantt-today" style="left:${todayLeft.toFixed(2)}%"></div>`;
+
+  container.innerHTML = `
+    <div class="gantt-canvas">
+      <div class="gantt-timeline">
+        ${ticksHtml}
+        ${todayHtml}
+      </div>
+      <div class="gantt-content">
+        <div class="gantt-top-row">
+          <div class="gantt-top-label">Estrutura / Epicos</div>
+          <div class="gantt-top-timeline">
+            <span>Inicio: ${startLabel}</span>
+            <span>Go Live: ${endLabel}</span>
+            <div class="gantt-top-line"></div>
+          </div>
+        </div>
+        ${groupsHtml}
+      </div>
+    </div>
+  `;
+
+  if (footerRight) {
+    footerRight.textContent = "";
+  }
+}
+
+function renderConfig(container) {
+  setCrumbPathText("Configuracoes");
+  const user = auth?.currentUser || null;
+  const displayName = user?.displayName || "";
+  const email = state.currentUserEmail || user?.email || "";
+  const role = normalizeUserRole(state.currentUserRole);
+  const admin = role === "admin";
+  const roleName = roleLabel(role);
+
+  container.innerHTML = `
+    <div class="config-page span-all">
+      <div class="section-header">
+        <div class="header-row">
+          <h2>Configuracoes da conta</h2>
+        </div>
+        <div class="muted">Atualize seu nome, e-mail ou senha de acesso.</div>
+      </div>
+
+      <div class="config-grid">
+        <div class="config-card">
+          <form id="account-form" class="form">
+            <label>
+              Nome completo
+              <input id="account-name" type="text" value="${escapeHtml(displayName)}" placeholder="Seu nome completo">
+            </label>
+            <label>
+              E-mail
+              <input id="account-email" type="email" value="${escapeHtml(email)}" placeholder="seu@email.com">
+            </label>
+            <label>
+              Senha atual
+              <input id="account-current-password" type="password" placeholder="Obrigatoria para trocar e-mail ou senha" autocomplete="current-password">
+            </label>
+            <div class="form-grid">
+              <label>
+                Nova senha
+                <input id="account-new-password" type="password" placeholder="Nova senha" autocomplete="new-password">
+              </label>
+              <label>
+                Confirmar senha
+                <input id="account-confirm-password" type="password" placeholder="Repita a nova senha" autocomplete="new-password">
+              </label>
+            </div>
+            <div class="config-hint">Para alterar e-mail ou senha, confirme sua senha atual.</div>
+            <div class="config-actions">
+              <button class="btn primary" type="submit">Salvar alteracoes</button>
+            </div>
+            <p id="account-error" class="config-message error hidden"></p>
+            <p id="account-success" class="config-message success hidden"></p>
+          </form>
+        </div>
+
+        <div class="config-card">
+          <div class="config-card-title">Dados da conta</div>
+          <div class="config-info">
+            <div>
+              <div class="config-info-label">Usuario</div>
+              <div class="config-info-value" id="config-info-name">${escapeHtml(displayName || "Nao informado")}</div>
+            </div>
+            <div>
+              <div class="config-info-label">E-mail</div>
+              <div class="config-info-value" id="config-info-email">${escapeHtml(email || "-")}</div>
+            </div>
+            <div>
+              <div class="config-info-label">Perfil</div>
+              <div class="config-info-value">${roleName}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      ${admin ? `
+        <div class="config-users-shell" id="admin-users-section">
+          <div class="config-users-toolbar">
+            <div>
+              <h2>Gerenciamento de equipe</h2>
+              <div class="muted">Controle de acessos, convites e permissoes do workspace.</div>
+            </div>
+            <div class="config-users-actions">
+              <label class="config-users-search">
+                <i data-lucide="search"></i>
+                <input id="admin-users-search" type="search" placeholder="Buscar usuario ou e-mail">
+              </label>
+              <button class="btn primary" type="button" id="admin-invite-btn">Criar usuario</button>
+            </div>
+          </div>
+          <div class="config-users-filters">
+            <label>
+              Perfil
+              <select id="admin-role-filter" class="config-input">
+                <option value="all">Todos</option>
+                <option value="admin">Administrador</option>
+                <option value="developer">Desenvolvedor</option>
+                <option value="user">Usuario</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <select id="admin-status-filter" class="config-input">
+                <option value="all">Todos</option>
+                <option value="active">Ativo</option>
+                <option value="pending">Pendente</option>
+                <option value="inactive">Inativo</option>
+              </select>
+            </label>
+            <button class="btn sm ghost" type="button" id="admin-clear-filters">Limpar filtros</button>
+          </div>
+          <div class="config-users-table">
+            <div class="config-users-head">
+              <div>Usuario</div>
+              <div>Perfil</div>
+              <div>Status</div>
+              <div>Ultimo login</div>
+              <div></div>
+            </div>
+            <div id="admin-users-list" class="config-users-body">Carregando usuarios...</div>
+          </div>
+          <div class="config-hint">Use "Resetar senha" para enviar o e-mail de redefinicao ao usuario.</div>
+        </div>
+
+        <div class="config-user-drawer" id="admin-user-drawer" aria-hidden="true">
+          <div class="config-user-drawer-backdrop" data-drawer-close></div>
+          <div class="config-user-drawer-panel">
+            <div class="drawer-header">
+              <div>
+                <div class="drawer-title">Usuario selecionado</div>
+                <div class="drawer-subtitle" id="drawer-user-email">-</div>
+              </div>
+              <button class="btn sm ghost" type="button" data-drawer-close>
+                <i data-lucide="x"></i>
+              </button>
+            </div>
+            <div class="drawer-body">
+              <label>
+                Nome
+                <input id="drawer-user-name" class="config-input" type="text" placeholder="Nome do usuario">
+              </label>
+              <label>
+                Perfil
+                <select id="drawer-user-role" class="config-input">
+                  <option value="user">Usuario</option>
+                  <option value="developer">Desenvolvedor</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </label>
+              <div class="drawer-permissions">
+                <div class="drawer-permissions-title">Permissoes rapidas</div>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Pode criar tarefas</span>
+                </label>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Ve orcamentos</span>
+                </label>
+                <label class="drawer-toggle">
+                  <input type="checkbox" disabled>
+                  <span>Gerencia usuarios</span>
+                </label>
+              </div>
+            </div>
+            <div class="drawer-actions">
+              <button class="btn sm ghost" type="button" id="drawer-reset-btn">Resetar senha</button>
+              <button class="btn sm primary" type="button" id="drawer-save-btn">Salvar alteracoes</button>
+            </div>
+            <p id="drawer-status" class="config-message"></p>
+          </div>
+        </div>
+
+        <div class="section-header">
+          <div class="header-row">
+            <h2>Grupos de acesso</h2>
+          </div>
+          <div class="muted">Defina quais usuarios visualizam cada cliente.</div>
+        </div>
+        <div class="config-card" id="admin-groups-section">
+          <div class="group-create">
+            <input class="config-input" id="group-name-input" type="text" placeholder="Nome do grupo">
+            <button class="btn sm primary" type="button" id="group-create-btn">Criar grupo</button>
+          </div>
+          <div id="admin-groups-list" class="config-groups">Carregando grupos...</div>
+        </div>
+
+        <div class="modal" id="admin-create-user-modal" aria-hidden="true">
+          <div class="modal-backdrop" data-modal-close></div>
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3>Criar usuario</h3>
+              <button class="btn sm ghost" type="button" data-modal-close>Fechar</button>
+            </div>
+            <form id="admin-create-user-form" class="form">
+              <label>
+                Nome completo
+                <input id="admin-create-user-name" type="text" placeholder="Nome do usuario">
+              </label>
+              <label>
+                E-mail
+                <input id="admin-create-user-email" type="email" placeholder="usuario@email.com" required>
+              </label>
+              <div class="config-hint">O usuario sera criado como Administrador e vera os mesmos projetos.</div>
+              <div class="modal-actions">
+                <button class="btn ghost" type="button" data-modal-close>Cancelar</button>
+                <button class="btn primary" type="submit">Criar usuario</button>
+              </div>
+              <p id="admin-create-user-status" class="config-message"></p>
+            </form>
+          </div>
+        </div>
+      ` : ""}
+    </div>
+  `;
+
+  const form = byId("account-form");
+  if (form) {
+    form.addEventListener("submit", handleAccountUpdate);
+  }
+
+  if (window.lucide) {
+    window.lucide.createIcons();
+  }
+
+  if (admin) {
+    if (!state.adminUserFilters) {
+      state.adminUserFilters = { query: "", role: "all", status: "all" };
+    }
+
+    const searchInput = byId("admin-users-search");
+    if (searchInput) {
+      searchInput.value = state.adminUserFilters.query || "";
+      if (!searchInput.dataset.wired) {
+        searchInput.addEventListener("input", () => {
+          state.adminUserFilters.query = searchInput.value;
+          applyAdminUserFilters();
+        });
+        searchInput.dataset.wired = "true";
+      }
+    }
+
+    const roleFilter = byId("admin-role-filter");
+    if (roleFilter) {
+      roleFilter.value = state.adminUserFilters.role || "all";
+      if (!roleFilter.dataset.wired) {
+        roleFilter.addEventListener("change", () => {
+          state.adminUserFilters.role = roleFilter.value;
+          applyAdminUserFilters();
+        });
+        roleFilter.dataset.wired = "true";
+      }
+    }
+
+    const statusFilter = byId("admin-status-filter");
+    if (statusFilter) {
+      statusFilter.value = state.adminUserFilters.status || "all";
+      if (!statusFilter.dataset.wired) {
+        statusFilter.addEventListener("change", () => {
+          state.adminUserFilters.status = statusFilter.value;
+          applyAdminUserFilters();
+        });
+        statusFilter.dataset.wired = "true";
+      }
+    }
+
+    const clearFiltersBtn = byId("admin-clear-filters");
+    if (clearFiltersBtn && !clearFiltersBtn.dataset.wired) {
+      clearFiltersBtn.addEventListener("click", () => {
+        state.adminUserFilters = { query: "", role: "all", status: "all" };
+        if (searchInput) searchInput.value = "";
+        if (roleFilter) roleFilter.value = "all";
+        if (statusFilter) statusFilter.value = "all";
+        applyAdminUserFilters();
+      });
+      clearFiltersBtn.dataset.wired = "true";
+    }
+
+    const inviteBtn = byId("admin-invite-btn");
+    if (inviteBtn && !inviteBtn.dataset.wired) {
+      inviteBtn.addEventListener("click", () => {
+        openCreateUserModal();
+      });
+      inviteBtn.dataset.wired = "true";
+    }
+
+    loadAdminUsers();
+    loadAdminGroups();
+    wireAdminUserDrawer();
+    wireCreateUserModal();
+
+    const groupCreateBtn = byId("group-create-btn");
+    if (groupCreateBtn && !groupCreateBtn.dataset.wired) {
+      groupCreateBtn.addEventListener("click", async () => {
+        const input = byId("group-name-input");
+        const name = input?.value.trim() || "";
+        if (!name) {
+          alert("Informe o nome do grupo.");
+          return;
+        }
+        try {
+          await createGroupInDb(name);
+          if (input) input.value = "";
+          await loadAdminGroups();
+        } catch (err) {
+          console.error(err);
+          alert("Nao foi possivel criar o grupo.");
+        }
+      });
+      groupCreateBtn.dataset.wired = "true";
+    }
+  }
+}
+
+async function handleAccountUpdate(e) {
+  e.preventDefault();
+  const user = auth?.currentUser;
+  if (!user) {
+    setAccountMessage("error", "Usuario nao autenticado.");
+    return;
+  }
+  const nameInput = byId("account-name");
+  const emailInput = byId("account-email");
+  const currentPassInput = byId("account-current-password");
+  const newPassInput = byId("account-new-password");
+  const confirmPassInput = byId("account-confirm-password");
+
+  const newName = nameInput?.value.trim() || "";
+  const newEmail = emailInput?.value.trim() || "";
+  const currentPassword = currentPassInput?.value || "";
+  const newPassword = newPassInput?.value || "";
+  const confirmPassword = confirmPassInput?.value || "";
+
+  setAccountMessage("", "");
+
+  if (!newEmail) {
+    setAccountMessage("error", "Informe um e-mail valido.");
+    return;
+  }
+  if (newPassword && newPassword.length < 6) {
+    setAccountMessage("error", "A nova senha precisa ter ao menos 6 caracteres.");
+    return;
+  }
+  if (newPassword && newPassword !== confirmPassword) {
+    setAccountMessage("error", "As novas senhas nao conferem.");
+    return;
+  }
+
+  const needsEmailUpdate = newEmail && newEmail !== user.email;
+  const needsPasswordUpdate = Boolean(newPassword);
+
+  try {
+    if (needsEmailUpdate || needsPasswordUpdate) {
+      await reauthenticateUser(user, currentPassword);
+    }
+    if (newName && newName !== user.displayName) {
+      await user.updateProfile({ displayName: newName });
+    }
+    if (needsEmailUpdate) {
+      await user.updateEmail(newEmail);
+    }
+    if (needsPasswordUpdate) {
+      await user.updatePassword(newPassword);
+    }
+    await syncUserProfile(user);
+    await loadCurrentUserRole(user);
+    updateUserHeader(user);
+    setAccountMessage("success", "Dados atualizados com sucesso.");
+    if (currentPassInput) currentPassInput.value = "";
+    if (newPassInput) newPassInput.value = "";
+    if (confirmPassInput) confirmPassInput.value = "";
+    const infoName = byId("config-info-name");
+    if (infoName && newName) infoName.textContent = newName;
+    const infoEmail = byId("config-info-email");
+    if (infoEmail && needsEmailUpdate) infoEmail.textContent = newEmail;
+    if (needsEmailUpdate) state.currentUserEmail = newEmail;
+  } catch (err) {
+    console.error(err);
+    if (err?.code === "auth/requires-recent-login") {
+      setAccountMessage("error", "Confirme sua autenticacao para atualizar dados sensiveis.");
+      return;
+    }
+    if (err?.code === "auth/wrong-password") {
+      setAccountMessage("error", "Senha atual incorreta.");
+      return;
+    }
+    if (err?.code === "auth/invalid-email") {
+      setAccountMessage("error", "E-mail invalido.");
+      return;
+    }
+    if (err?.code === "auth/email-already-in-use") {
+      setAccountMessage("error", "E-mail ja esta em uso.");
+      return;
+    }
+    if (err?.message) {
+      setAccountMessage("error", err.message);
+      return;
+    }
+    setAccountMessage("error", "Nao foi possivel atualizar os dados.");
+  }
+}
+
+async function loadAdminUsers() {
+  const list = byId("admin-users-list");
+  if (!list) return;
+  if (!db) {
+    list.textContent = "Usuarios indisponiveis sem Firebase configurado.";
+    return;
+  }
+  try {
+    const users = await loadUsersFromDb();
+    state.users = users.slice();
+    renderAdminUsers(list, getFilteredAdminUsers(users));
+  } catch (err) {
+    console.error(err);
+    list.textContent = "Falha ao carregar usuarios.";
+  }
+}
+
+async function loadAdminGroups() {
+  const list = byId("admin-groups-list");
+  if (!list) return;
+  if (!db) {
+    list.textContent = "Grupos indisponiveis sem Firebase configurado.";
+    return;
+  }
+  try {
+    const groups = await loadGroupsFromDb();
+    state.groups = groups.slice();
+    if (!state.users.length) {
+      state.users = await loadUsersFromDb();
+    }
+    renderAdminGroups(list, groups, state.users);
+  } catch (err) {
+    console.error(err);
+    list.textContent = "Falha ao carregar grupos.";
+  }
+}
+
+function renderAdminUsers(container, users) {
+  const rows = users
+    .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
+    .map((user) => {
+      const email = escapeHtml(user.email || "");
+      const name = escapeHtml(user.displayName || user.email || "Usuario");
+      const role = normalizeUserRole(user.role);
+      const roleClass = role === "admin" ? "role-admin" : role === "developer" ? "role-dev" : "role-user";
+      const status = getAdminUserStatus(user);
+      const lastLoginLabel = getAdminUserLastLoginLabel(user);
+      return `
+        <div class="config-user-row" data-user-id="${escapeHtml(user.uid)}" data-user-email="${email}">
+          <div class="config-user-main">
+            <div class="config-user-name">${name}</div>
+            <div class="config-user-email">${email || "-"}</div>
+          </div>
+          <div>
+            <span class="config-badge ${roleClass}">${roleLabel(role)}</span>
+          </div>
+          <div>
+            <span class="config-badge ${status.className}">${status.label}</span>
+          </div>
+          <div class="config-user-last">${lastLoginLabel}</div>
+          <div class="config-user-actions">
+            <button class="btn sm ghost" type="button" data-user-open title="Detalhes">
+              <i data-lucide="more-horizontal"></i>
+            </button>
+            <button class="btn sm danger" type="button" data-user-delete title="Excluir perfil">
+              <i data-lucide="trash-2"></i>
+            </button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = rows || "<div class=\"muted\">Nenhum usuario encontrado.</div>";
+
+  if (!container.dataset.wired) {
+    container.addEventListener("click", async (e) => {
+      const deleteBtn = e.target.closest("[data-user-delete]");
+      if (deleteBtn) {
+        const row = deleteBtn.closest("[data-user-id]");
+        if (!row) return;
+        const uid = row.dataset.userId || "";
+        const email = row.dataset.userEmail || "";
+        if (!uid) return;
+        if (auth?.currentUser?.uid === uid) {
+          alert("Nao e possivel excluir o proprio perfil.");
+          return;
+        }
+        if (isAdminEmail(email)) {
+          alert("Nao e possivel excluir o administrador principal.");
+          return;
+        }
+        const confirmed = window.confirm(`Excluir o perfil de ${email || "este usuario"}?`);
+        if (!confirmed) return;
+        deleteBtn.disabled = true;
+        try {
+          await deleteUserFromDb(uid);
+          state.users = (state.users || []).filter((item) => item.uid !== uid);
+          applyAdminUserFilters();
+          await loadAdminGroups();
+          closeAdminUserDrawer();
+        } catch (err) {
+          console.error(err);
+          alert("Erro ao excluir usuario.");
+        } finally {
+          deleteBtn.disabled = false;
+        }
+        return;
+      }
+
+      const row = e.target.closest("[data-user-id]");
+      if (!row) return;
+      const isOpen = e.target.closest("[data-user-open]") || e.target.closest(".config-user-row");
+      if (!isOpen) return;
+      const uid = row.dataset.userId || "";
+      const user = (state.users || []).find((item) => item.uid === uid);
+      openAdminUserDrawer(user);
+    });
+    container.dataset.wired = "true";
+  }
+
+  if (window.lucide) {
+    window.lucide.createIcons();
+  }
+}
+
+function renderAdminGroups(container, groups, users) {
+  const clients = state.clients || [];
+  const groupHtml = groups
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((group) => {
+      const membersHtml = users
+        .sort((a, b) => (a.email || "").localeCompare(b.email || ""))
+        .map((user) => {
+          const name = escapeHtml(user.displayName || user.email || "Usuario");
+          const email = escapeHtml(user.email || "");
+          const isMember = Boolean(group.members?.[user.uid]);
+          return `
+            <label class="config-group-item">
+              <input type="checkbox" data-group-member data-user-id="${escapeHtml(user.uid)}"${isMember ? " checked" : ""}>
+              <span>${name}</span>
+              <small>${email}</small>
+            </label>
+          `;
+        })
+        .join("");
+
+      const clientsHtml = clients
+        .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+        .map((client) => {
+          const isAssigned = Boolean(group.clients?.[client.id]);
+          const clientName = escapeHtml(client.name || "Cliente");
+          return `
+            <label class="config-group-item">
+              <input type="checkbox" data-group-client data-client-id="${escapeHtml(client.id)}"${isAssigned ? " checked" : ""}>
+              <span>${clientName}</span>
+            </label>
+          `;
+        })
+        .join("");
+
+      return `
+        <div class="config-group" data-group-id="${escapeHtml(group.id)}">
+          <div class="config-group-header">
+            <input class="config-input" type="text" value="${escapeHtml(group.name)}" data-group-name>
+            <div class="config-group-actions">
+              <button class="btn sm ghost" type="button" data-group-save>Salvar</button>
+              <button class="btn sm ghost danger" type="button" data-group-delete>Excluir</button>
+            </div>
+          </div>
+          <div class="config-group-columns">
+            <div class="config-group-col">
+              <div class="config-group-title">Usuarios</div>
+              <div class="config-group-list">${membersHtml || "<div class=\"muted\">Sem usuarios</div>"}</div>
+            </div>
+            <div class="config-group-col">
+              <div class="config-group-title">Clientes</div>
+              <div class="config-group-list">${clientsHtml || "<div class=\"muted\">Sem clientes</div>"}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = groupHtml || "<div class=\"muted\">Nenhum grupo cadastrado.</div>";
+
+  if (container.dataset.wired) return;
+  container.dataset.wired = "true";
+
+  container.addEventListener("click", async (e) => {
+    const groupRow = e.target.closest("[data-group-id]");
+    if (!groupRow) return;
+    const groupId = groupRow.dataset.groupId;
+    if (e.target.closest("[data-group-save]")) {
+      const nameInput = groupRow.querySelector("[data-group-name]");
+      const name = nameInput?.value.trim() || "Grupo";
+      try {
+        await updateGroupNameInDb(groupId, name);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    if (e.target.closest("[data-group-delete]")) {
+      const confirmed = window.confirm("Excluir este grupo? Os clientes vinculados ficarao sem grupo.");
+      if (!confirmed) return;
+      try {
+        await deleteGroupFromDb(groupId);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  });
+
+  container.addEventListener("change", async (e) => {
+    const groupRow = e.target.closest("[data-group-id]");
+    if (!groupRow) return;
+    const groupId = groupRow.dataset.groupId;
+    const memberInput = e.target.closest("[data-group-member]");
+    if (memberInput) {
+      const uid = memberInput.dataset.userId;
+      const enabled = memberInput.checked;
+      try {
+        await updateGroupMemberInDb(groupId, uid, enabled);
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
+    const clientInput = e.target.closest("[data-group-client]");
+    if (clientInput) {
+      const clientId = clientInput.dataset.clientId;
+      const enabled = clientInput.checked;
+      try {
+        if (enabled) {
+          await assignClientToGroup(clientId, groupId);
+        } else {
+          await removeClientFromGroup(clientId, groupId);
+        }
+        await loadAdminGroups();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  });
+}
+
+function captureScrollPositions() {
+  const positions = {};
+  document.querySelectorAll("[data-preserve-scroll]").forEach((el) => {
+    const key = el.dataset.preserveScroll;
+    if (!key) return;
+    positions[key] = el.scrollTop;
+  });
+  return positions;
+}
+
+function restoreScrollPositions(positions) {
+  if (!positions) return;
+  document.querySelectorAll("[data-preserve-scroll]").forEach((el) => {
+    const key = el.dataset.preserveScroll;
+    if (!key) return;
+    if (!(key in positions)) return;
+    el.scrollTop = positions[key];
+  });
+}
+
+function renderMain() {
+  removeRelatorioStyles(); 
+
+  if (normalizeUserRole(state.currentUserRole) === "developer" && state.currentSection !== "dev-board") {
+    state.currentSection = "dev-board";
+  }
+
+  const prevContext = state.lastRenderContext || null;
+  const nextContext = {
+    section: state.currentSection,
+    clientId: state.selectedClient?.id || state.selectedClient?.name || null,
+    projectId: state.selectedProject?.id || state.selectedProject?.name || null
+  };
+  const preserveScroll =
+    prevContext &&
+    prevContext.section === nextContext.section &&
+    prevContext.clientId === nextContext.clientId &&
+    prevContext.projectId === nextContext.projectId;
+  const scrollX = preserveScroll ? window.scrollX : 0;
+  const scrollY = preserveScroll ? window.scrollY : 0;
+  const scrollPositions = preserveScroll ? captureScrollPositions() : null;
+
+  const { selectedClient, selectedProject } = state;
+  const panels = byId("dashboard-panels");
+  panels.innerHTML = "";
+  setActiveNav(state.currentSection);
+  updateTopActions();
+
+  if (state.currentSection === "dashboard-melhorias" || state.currentSection === "minhas-melhorias") {
+    state.currentSection = "dashboard";
+  }
+
+  const finalizeRender = () => {
+    state.lastRenderContext = nextContext;
+    if (preserveScroll) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.scrollTo(scrollX, scrollY);
+          restoreScrollPositions(scrollPositions);
+        });
+      });
+    }
+  };
+
+  if (state.currentSection === "inicio") {
+    renderHome(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "dashboard") {
+    renderDashboard(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "relatorio") {
+    renderRelatorioSection();
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "monitor") {
+    renderMonitorActivities(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "dev-board") {
+    renderDeveloperBoard(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (state.currentSection === "config") {
+    renderConfig(panels);
+    finalizeRender();
+    return;
+  }
+
+  if (!selectedClient || !selectedProject) {
+    if (!state.clients.length) {
+      const message = state.dbAccessDenied
+        ? "Sem acesso aos projetos cadastrados. Solicite liberacao ao administrador."
+        : "Nenhum projeto cadastrado no momento.";
+      panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Projetos indisponiveis</h2><p>${message}</p></div>`;
+    } else {
+      panels.innerHTML = `<div class="empty-state span-all" style="text-align: center; padding: 40px;"><h2>Bem-vindo!</h2><p>Selecione um cliente e um projeto na barra lateral para começar.</p></div>`;
+    }
+    finalizeRender();
+    return;
+  }
+
+  setCrumbPathProject(selectedClient, selectedProject);
+
+  const metrics = projectMetrics(selectedProject.tasks || []);
+  const status = projectStatus(selectedProject, metrics);
+  const statusBadge = statusInfo(status);
+  const scheduleBadge = scheduleStatusInfo(projectScheduleStatus(selectedProject));
+  const progressPct = clampPct(metrics.progress ?? selectedProject.progress ?? 0);
+  const sCurveSeries = computeSCurveDailyBaseline(selectedProject, selectedProject?.tasks || null, progressPct);
+  const baselinePct = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(selectedProject, progressPct);
+  const realizedPct = progressPct;
+  const gap = round1(baselinePct - realizedPct);
+  const gapStart = round1(Math.min(realizedPct, baselinePct));
+  const gapWidth = round1(Math.abs(realizedPct - baselinePct));
+  const gapStatus = gapStatusInfo(gap, baselinePct, realizedPct);
+  const progressTrendClass = realizedPct > baselinePct ? "is-ahead" : realizedPct < baselinePct ? "is-behind" : "";
+  const progressTrackClass = [
+    "progress-track",
+    progressTrendClass,
+    gapStatus.className === "gap-critical" ? "is-critical" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const baselineLabel = formatMetric(baselinePct);
+  const gapLabel = formatSignedMetric(gap);
+  const projectCost = resolveProjectCost(selectedProject);
+  const costLabel = formatCurrency(projectCost);
+  const tasks = selectedProject.tasks || [];
+  const sparkRealized = renderSparklineSvg(buildSparklineSeries(progressPct), {
+    stroke: "var(--accent)",
+    fill: "var(--accent-soft)"
+  });
+  const sparkBaseline = renderSparklineSvg(buildSparklineSeries(baselinePct), {
+    stroke: "var(--muted)",
+    fill: "rgba(148, 163, 184, 0.14)"
+  });
+  const gapSparkPalette = {
+    "gap-ok": { stroke: "#16a34a", fill: "rgba(22, 163, 74, 0.12)" },
+    "gap-low": { stroke: "#64748b", fill: "rgba(100, 116, 139, 0.12)" },
+    "gap-risk": { stroke: "#b06013", fill: "rgba(199, 107, 26, 0.14)" },
+    "gap-delayed": { stroke: "#9c4f0f", fill: "rgba(199, 107, 26, 0.16)" },
+    "gap-critical": { stroke: "#9b1c23", fill: "rgba(155, 28, 35, 0.14)" }
+  };
+  const gapSparkTone = gapSparkPalette[gapStatus.className] || gapSparkPalette["gap-risk"];
+  const gapSparkBase = 100 - Math.min(Math.abs(gap) * 2, 60);
+  const sparkGap = renderSparklineSvg(buildSparklineSeries(gapSparkBase), gapSparkTone);
+  const curveColors = getSystemColors();
+  const curveSvg = sCurveSeries
+    ? renderSCurveSvgDaily(sCurveSeries, {
+        width: 960,
+        height: 190,
+        colors: {
+          planned: curveColors.planned,
+          actual: curveColors.actual,
+          axis: curveColors.grid,
+          muted: curveColors.muted,
+          text: curveColors.text
+        }
+      })
+    : "";
+  const emptyIllustration = `
+    <svg class="empty-illustration" viewBox="0 0 64 40" role="img" aria-hidden="true">
+      <rect x="4" y="8" width="56" height="24" rx="6" fill="none" stroke="currentColor" stroke-width="2"></rect>
+      <line x1="16" y1="18" x2="48" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+      <line x1="16" y1="26" x2="38" y2="26" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+    </svg>
+  `;
+  const renderSideEmpty = (label) => `
+    <div class="side-empty">
+      ${emptyIllustration}
+      <span>${label}</span>
+    </div>
+  `;
+  const milestoneItems = upcomingMilestones(tasks, 4);
+  const milestoneList = milestoneItems.length
+    ? `<ul class="side-list">
+        ${milestoneItems
+          .map(({ task, due }) => {
+            const title = escapeHtml(task?.title || "Atividade");
+            const phase = normalizePhaseLabel(task?.phase || "");
+            const dueLabel = due ? formatDateBR(due) : "-";
+            return `<li><span class="side-item-title">${title}</span><span class="side-item-meta">${phase} | ${dueLabel}</span></li>`;
+          })
+          .join("")}
+      </ul>`
+    : renderSideEmpty("Sem marcos proximos.");
+  const logItems = latestCompletedTasks(tasks, 4);
+  const logList = logItems.length
+    ? `<ul class="side-list">
+        ${logItems
+          .map((task) => {
+            const title = escapeHtml(task?.title || "Atividade");
+            const doneLabel = formatDateBR(activityDoneDate(task) || taskDueStr(task)) || "-";
+            return `<li><span class="side-item-title">${title}</span><span class="side-item-meta">Concluido | ${doneLabel}</span></li>`;
+          })
+          .join("")}
+      </ul>`
+    : renderSideEmpty("Sem logs recentes.");
+
+  const headerCard = document.createElement("div");
+  headerCard.className = "card project-header span-all";
+  headerCard.innerHTML = `
+    <div class="project-header-top">
+      <div>
+        <h2>${selectedProject.name}</h2>
+        <div class="project-subtitle">${selectedClient.name}</div>
+      </div>
+      <div class="project-header-badges">
+        <span class="pill project-status ${statusBadge.className}">${statusBadge.label}</span>
+        <span class="pill schedule-status ${scheduleBadge.className}">${scheduleBadge.label}</span>
+        <button class="btn sm ghost" type="button" data-export-project>Exportar</button>
+      </div>
+    </div>
+    <div class="project-meta-row">
+      <div class="project-meta-item">
+        <span class="label">Cliente</span>
+        <span class="value">${selectedClient.name}</span>
+      </div>
+      <div class="project-meta-item">
+        <span class="label">Responsavel</span>
+        <span class="value">${selectedProject.developer || "A definir"}</span>
+      </div>
+      <div class="project-meta-item">
+        <span class="label">Inicio</span>
+        <span class="value is-editable" data-edit-project-date="start" tabindex="0" role="button" aria-label="Editar data inicio">
+          ${formatDateBR(selectedProject.start) || "-"}
+        </span>
+      </div>
+      <div class="project-meta-item">
+        <span class="label">Go Live</span>
+        <span class="value is-editable" data-edit-project-date="end" tabindex="0" role="button" aria-label="Editar data fim">
+          ${formatDateBR(selectedProject.end) || "-"}
+        </span>
+      </div>
+    </div>
+  `;
+
+  const performanceGrid = document.createElement("div");
+  performanceGrid.className = "metrics-grid performance-grid project-performance-grid";
+  performanceGrid.innerHTML = `
+    <div class="metric-card card--kpi performance-card realizado">
+      <div class="label">Realizado (%)</div>
+      <div class="value">${progressPct}%</div>
+      <div class="sub">Atividades concluidas</div>
+      <div class="kpi-sparkline">${sparkRealized}</div>
+    </div>
+    <div class="metric-card card--kpi performance-card previsto">
+      <div class="label">Previsto (Baseline)</div>
+      <div class="value">${baselineLabel}%</div>
+      <div class="sub">Meta para hoje</div>
+      <div class="kpi-sparkline">${sparkBaseline}</div>
+    </div>
+    <div class="metric-card card--kpi performance-card gap ${gapStatus.className}">
+      <div class="label">GAP (Desvio)</div>
+      <div class="value">${gapLabel}pp</div>
+      <div class="sub">${gapStatus.label}</div>
+      <div class="kpi-sparkline">${sparkGap}</div>
+    </div>
+  `;
+
+  const progressCompare = document.createElement("div");
+  progressCompare.className = "card progress-compare card--progress";
+  progressCompare.innerHTML = `
+    <div class="progress-head">
+      <div class="progress-title">Avanco vs meta</div>
+      <div class="progress-legend">
+        <span class="leg"><b>Realizado</b> <span>${progressPct}%</span></span>
+        <span class="dot">|</span>
+        <span class="leg"><b>Previsto</b> <span>${baselineLabel}%</span></span>
+      </div>
+      <div class="delta-badge ${gapStatus.className}">${gapLabel}pp</div>
+    </div>
+    <div class="progress-curve">
+      ${curveSvg || `<div class="side-empty">Curva S: defina Data Inicio e Go Live.</div>`}
     </div>
   `;
 
   const metricsGrid = document.createElement("div");
-  metricsGrid.className = "metrics-grid span-all";
+  metricsGrid.className = "metrics-grid project-metrics-grid";
   metricsGrid.innerHTML = `
-    <div class="metric-card">
+    <div class="metric-card card--kpi">
       <div class="label">Total de atividades</div>
       <div class="value">${metrics.total}</div>
     </div>
-    <div class="metric-card">
+    <div class="metric-card card--kpi">
       <div class="label">Atividades concluidas</div>
       <div class="value">${metrics.done}</div>
     </div>
-    <div class="metric-card">
+    <div class="metric-card card--kpi">
       <div class="label">Atividades pendentes</div>
       <div class="value">${metrics.pending}</div>
     </div>
-    <div class="metric-card">
-      <div class="label">% Progresso</div>
-      <div class="value">${metrics.progress}%</div>
-    </div>
-    <button class="metric-card is-clickable" type="button" data-open-financials>
+    <button class="metric-card card--kpi is-clickable" type="button" data-open-financials>
       <div class="label">Custo do projeto</div>
       <div class="value">${costLabel}</div>
     </button>
   `;
 
-  const tasks = selectedProject.tasks || [];
   const requiredPhases = Array.isArray(selectedProject.epics) && selectedProject.epics.length
     ? selectedProject.epics
     : DEFAULT_EPICS;
   const tasksCard = document.createElement("div");
-  tasksCard.className = "card span-all";
+  tasksCard.className = "card scroll-card";
   tasksCard.innerHTML = `
     <div class="card-head">
       <h3>Atividades</h3>
-      <button class="btn sm ghost" data-open-activity>+ Nova Atividade</button>
+      <button class="btn sm primary" data-open-activity>+ Nova Atividade</button>
     </div>`;
   const tasksBox = document.createElement("div");
   tasksBox.className = "tasks";
+  tasksBox.dataset.preserveScroll = `tasks-${selectedProject.id || selectedProject.name || "default"}`;
+  const tasksHeader = document.createElement("div");
+  tasksHeader.className = "task-row header";
+  tasksHeader.innerHTML = `
+    <div>Atividade</div>
+    <div>Data inicio</div>
+    <div>Data fim</div>
+    <div>%</div>
+    <div>Status</div>
+    <div>Saude</div>
+    <div></div>
+  `;
+  tasksBox.appendChild(tasksHeader);
 
   const grouped = groupTasksByPhase(tasks, requiredPhases);
   if (!grouped.length) {
@@ -845,14 +8441,25 @@ function renderMain() {
           sub.tasks.forEach((task) => {
             const row = document.createElement("div");
             row.className = "task-row";
-            const info = statusInfo(task.status);
+            const info = taskStatusInfo(getTaskStatus(task));
+            const health = taskHealthInfo(task);
             const title = formatTaskTitle(task.title, sub.title);
+            const startLabel = formatDateBR(taskStartStr(task));
+            const endLabel = formatDateBR(taskDueStr(task));
+            const progressValue = taskProgressValue(task);
+            const progressLabel = progressValue >= 100 ? "OK" : `${progressValue}%`;
+            const progressClass = progressValue >= 100 ? "task-progress-btn is-complete" : "task-progress-btn";
             row.innerHTML = `
               <div>${title}</div>
-              <div style="color: var(--muted); font-weight:500;">${task.due}</div>
+              <div class="task-date task-date-editable" data-edit-task-date="start" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data inicio">${startLabel}</div>
+              <div class="task-date task-date-editable" data-edit-task-date="due" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data fim">${endLabel}</div>
+              <button type="button" class="${progressClass}" data-task-edit data-task-index="${task._idx}">
+                ${progressLabel}
+              </button>
               <button class="pill ${info.className} status-btn" data-task-index="${task._idx}">
                 ${info.label}
               </button>
+              <span class="pill ${health.className}">${health.label}</span>
               <button class="btn sm ghost task-action-btn" data-task-action data-task-index="${task._idx}">
                 ...
               </button>
@@ -866,13 +8473,24 @@ function renderMain() {
       tasks.forEach((task) => {
         const row = document.createElement("div");
         row.className = "task-row";
-        const info = statusInfo(task.status);
+        const info = taskStatusInfo(getTaskStatus(task));
+        const health = taskHealthInfo(task);
+        const startLabel = formatDateBR(taskStartStr(task));
+        const endLabel = formatDateBR(taskDueStr(task));
+        const progressValue = taskProgressValue(task);
+        const progressLabel = progressValue >= 100 ? "OK" : `${progressValue}%`;
+        const progressClass = progressValue >= 100 ? "task-progress-btn is-complete" : "task-progress-btn";
         row.innerHTML = `
           <div>${task.title}</div>
-          <div style="color: var(--muted); font-weight:500;">${task.due}</div>
+          <div class="task-date task-date-editable" data-edit-task-date="start" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data inicio">${startLabel}</div>
+          <div class="task-date task-date-editable" data-edit-task-date="due" data-task-index="${task._idx}" tabindex="0" role="button" aria-label="Editar data fim">${endLabel}</div>
+          <button type="button" class="${progressClass}" data-task-edit data-task-index="${task._idx}">
+            ${progressLabel}
+          </button>
           <button class="pill ${info.className} status-btn" data-task-index="${task._idx}">
             ${info.label}
           </button>
+          <span class="pill ${health.className}">${health.label}</span>
           <button class="btn sm ghost task-action-btn" data-task-action data-task-index="${task._idx}">
             ...
           </button>
@@ -884,40 +8502,114 @@ function renderMain() {
   }
   tasksCard.appendChild(tasksBox);
 
+  const projectLayout = document.createElement("div");
+  projectLayout.className = "project-layout span-all";
+  const projectMain = document.createElement("div");
+  projectMain.className = "project-main";
+  projectMain.appendChild(progressCompare);
+  projectMain.appendChild(tasksCard);
+  const projectSide = document.createElement("div");
+  projectSide.className = "project-side";
+  projectSide.appendChild(performanceGrid);
+  projectSide.appendChild(metricsGrid);
+  const milestonesCard = document.createElement("div");
+  milestonesCard.className = "card project-side-card";
+  milestonesCard.innerHTML = `
+    <div class="card-head">
+      <h4>Proximos marcos</h4>
+    </div>
+    ${milestoneList}
+  `;
+  const logsCard = document.createElement("div");
+  logsCard.className = "card project-side-card";
+  logsCard.innerHTML = `
+    <div class="card-head">
+      <h4>Logs recentes</h4>
+    </div>
+    ${logList}
+  `;
+  projectSide.appendChild(milestonesCard);
+  projectSide.appendChild(logsCard);
+  projectLayout.appendChild(projectMain);
+  projectLayout.appendChild(projectSide);
+
   panels.appendChild(headerCard);
-  panels.appendChild(metricsGrid);
-  panels.appendChild(tasksCard);
+  panels.appendChild(projectLayout);
+
+  finalizeRender();
 }
 
 function wireNav() {
-  document.querySelectorAll(".nav-link").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (btn.dataset.section === "sair") {
-        logout();
+  document.body.addEventListener("click", (e) => {
+    const crumbLink = e.target.closest(".crumb-link[data-crumb]");
+    if (crumbLink) {
+      const target = crumbLink.dataset.crumb;
+      if (target === "home") {
+        state.currentSection = "inicio";
+        setActiveNav(state.currentSection);
+        renderMain();
         return;
       }
-      if (btn.dataset.section === "meus-projetos") {
-        btn.classList.toggle("open");
+      if (target === "client") {
+        if (state.selectedClient) {
+          ensureDashboardState();
+          state.dashboard.filters = { clientName: [state.selectedClient.name] };
+          state.currentSection = "dashboard";
+          setActiveNav(state.currentSection);
+          renderMain();
+        }
         return;
       }
-      state.currentSection = btn.dataset.section || "inicio";
+      if (target === "project") {
+        if (state.selectedClient && state.selectedProject) {
+          openProject(state.selectedClient, state.selectedProject);
+        }
+        return;
+      }
+    }
+
+    const navBtn = e.target.closest(".nav-link, .btn[data-section], .sidebar-user-logout");
+    if (!navBtn) return;
+
+    const section = navBtn.dataset.section;
+    if (section === "sair") {
+      logout();
+      return;
+    }
+
+    if (normalizeUserRole(state.currentUserRole) === "developer" && section !== "dev-board") {
+      state.currentSection = "dev-board";
       setActiveNav(state.currentSection);
       renderMain();
-    });
+      return;
+    }
+
+    if (section === "meus-projetos") {
+      navBtn.classList.toggle("open");
+      return;
+    }
+    
+    state.currentSection = section || "inicio";
+    setActiveNav(state.currentSection);
+    renderMain();
   });
 }
-
 function wireModals() {
   const projectModal = byId("project-modal");
   const employeeModal = byId("employee-modal");
+  const clientModal = byId("client-modal");
   const activityModal = byId("activity-modal");
   const financeModal = byId("finance-modal");
   const expenseModal = byId("expense-modal");
+  const monitorTaskModal = byId("monitor-task-modal");
+  const ganttModal = byId("gantt-modal");
   const deleteProjectBtn = byId("delete-project-btn");
+  const deleteClientBtn = byId("delete-client-btn");
 
   const openProjectBtn = byId("open-project-modal");
   const editProjectBtn = byId("edit-project-btn");
   const openEmployeeBtn = byId("open-employee-modal");
+  const openGanttBtn = byId("open-gantt-btn");
 
   if (openProjectBtn) {
     openProjectBtn.addEventListener("click", () => openProjectModal("new"));
@@ -927,6 +8619,9 @@ function wireModals() {
   }
   if (openEmployeeBtn && employeeModal) {
     openEmployeeBtn.addEventListener("click", () => showModal(employeeModal));
+  }
+  if (openGanttBtn) {
+    openGanttBtn.addEventListener("click", () => openGanttModal());
   }
   document.body.addEventListener("click", (e) => {
     if (e.target.closest("[data-open-activity]")) {
@@ -943,23 +8638,45 @@ function wireModals() {
       openExpenseModal(expenseBtn.dataset.openExpense || "despesa");
       return;
     }
+    const exportBtn = e.target.closest("[data-export-project]");
+    if (exportBtn) {
+      openExportPopover(exportBtn);
+      return;
+    }
+    const exportOpt = e.target.closest("[data-export-format]");
+    if (exportOpt) {
+      hideExportPopover();
+      exportProjectReport(exportOpt.dataset.exportFormat);
+      return;
+    }
+    if (!e.target.closest("#export-popover")) {
+      hideExportPopover();
+    }
   });
 
   document.querySelectorAll("[data-close-modal]").forEach((el) => {
     el.addEventListener("click", () => {
       if (projectModal) hideModal(projectModal);
       if (employeeModal) hideModal(employeeModal);
+      if (clientModal) hideModal(clientModal);
       if (activityModal) hideModal(activityModal);
       if (financeModal) hideModal(financeModal);
       if (expenseModal) hideModal(expenseModal);
+      if (monitorTaskModal) hideModal(monitorTaskModal);
+      if (ganttModal) hideModal(ganttModal);
       resetProjectModal();
+      resetClientModal();
       resetActivityModal();
       resetExpenseModal();
+      resetMonitorTaskModal();
     });
   });
 
   if (deleteProjectBtn) {
     deleteProjectBtn.addEventListener("click", () => handleDeleteProject());
+  }
+  if (deleteClientBtn) {
+    deleteClientBtn.addEventListener("click", () => handleDeleteClient());
   }
 
   const projectForm = byId("project-form");
@@ -1092,6 +8809,14 @@ function wireModals() {
     });
   }
 
+  const clientForm = byId("client-form");
+  if (clientForm) {
+    clientForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      handleSaveClient();
+    });
+  }
+
   const activityForm = byId("activity-form");
   if (activityForm) {
     activityForm.addEventListener("submit", (e) => {
@@ -1106,20 +8831,29 @@ function wireModals() {
         return;
       }
       const data = new FormData(activityForm);
+      const progress = normalizeTaskProgress(data.get("progress"));
       const task = {
         title: data.get("title"),
         phase: data.get("phase"),
         package: data.get("package") || "",
+        start: data.get("start"),
         due: data.get("due"),
-        status: data.get("status")
+        status: data.get("status"),
+        progress
       };
       applyTaskStatus(task, task.status);
+      if (normalizeTaskStatus(task.status) === "concluido" && task.due) {
+        task.dataConclusao = task.due;
+      }
       if (state.editingTaskIndex !== null && state.editingTaskIndex !== undefined) {
         const idx = Number(state.editingTaskIndex);
         const currentTask = selectedProject.tasks?.[idx];
         if (!currentTask) return;
         const payload = { ...currentTask, ...task };
         applyTaskStatus(payload, payload.status);
+        if (normalizeTaskStatus(payload.status) === "concluido" && payload.due) {
+          payload.dataConclusao = payload.due;
+        }
         if (db && selectedProject.id && selectedProject.clientId && currentTask.id) {
           updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload)
             .then(async () => {
@@ -1180,6 +8914,416 @@ function wireModals() {
   }
 }
 
+function wireInlineProjectDates() {
+  if (document.body.dataset.inlineDatesWired) return;
+  document.body.dataset.inlineDatesWired = "true";
+
+  const startEdit = (target) => {
+    const project = state.selectedProject;
+    const client = state.selectedClient;
+    if (!project || !client) return;
+    const field = target.dataset.editProjectDate;
+    if (!field || !["start", "end"].includes(field)) return;
+    if (target.querySelector("input")) return;
+
+  const currentValue = field === "start" ? (project.start || project.startDate) : (project.end || project.goLiveDate || project.goLive);
+    const prevText = target.textContent.trim();
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "date-inline-input";
+    input.value = formatDateISO(currentValue);
+    input.setAttribute("aria-label", field === "start" ? "Data inicio" : "Data fim");
+
+    target.textContent = "";
+    target.appendChild(input);
+    input.focus();
+
+    let finished = false;
+    let canceled = false;
+
+    const restore = () => {
+      target.textContent = prevText || "-";
+    };
+
+    const commit = () => {
+      if (finished || canceled) return;
+      finished = true;
+      const nextValue = input.value || "";
+      const nextStart = field === "start" ? nextValue : (project.start || project.startDate || "");
+      const nextEnd = field === "end" ? nextValue : (project.end || project.goLiveDate || project.goLive || "");
+      const payload = {
+        name: project.name,
+        developer: project.developer || "",
+        start: nextStart,
+        end: nextEnd,
+        startDate: nextStart,
+        goLiveDate: nextEnd,
+        client: client.name
+      };
+
+      if (db && project.id && project.clientId) {
+        updateProjectOnDb(project.clientId, project.id, payload)
+          .then(async () => {
+            await loadStateFromDb();
+            renderClientList();
+            renderMain();
+          })
+          .catch((err) => {
+            console.error(err);
+            alert("Erro ao atualizar datas do projeto.");
+            restore();
+          });
+      } else {
+        updateProjectInState(payload);
+        saveLocalState();
+        renderClientList();
+        renderMain();
+      }
+    };
+
+    const cancel = () => {
+      if (finished) return;
+      canceled = true;
+      finished = true;
+      restore();
+    };
+
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        input.blur();
+      }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        cancel();
+      }
+    });
+    input.addEventListener("blur", () => {
+      if (canceled) return;
+      commit();
+    });
+  };
+
+  document.body.addEventListener("click", (e) => {
+    const target = e.target.closest("[data-edit-project-date]");
+    if (!target) return;
+    e.preventDefault();
+    startEdit(target);
+  });
+
+  document.body.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const target = e.target.closest("[data-edit-project-date]");
+    if (!target) return;
+    e.preventDefault();
+    startEdit(target);
+  });
+}
+
+function wireInlineTaskDates() {
+  if (document.body.dataset.inlineTaskDatesWired) return;
+  document.body.dataset.inlineTaskDatesWired = "true";
+
+  const startEdit = (target) => {
+    const project = state.selectedProject;
+    if (!project) return;
+    const idx = Number(target.dataset.taskIndex);
+    if (Number.isNaN(idx)) return;
+    const field = target.dataset.editTaskDate;
+    if (!field || !["start", "due"].includes(field)) return;
+    if (target.querySelector("input")) return;
+
+    const task = project.tasks?.[idx];
+    if (!task) return;
+
+    const currentValue = field === "start" ? taskStartStr(task) : taskDueStr(task);
+    const prevText = target.textContent.trim();
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "date-inline-input";
+    input.value = formatDateISO(currentValue);
+    input.setAttribute("aria-label", field === "start" ? "Data inicio" : "Data fim");
+
+    target.textContent = "";
+    target.appendChild(input);
+    input.focus();
+
+    let finished = false;
+    let canceled = false;
+
+    const restore = () => {
+      target.textContent = prevText || "-";
+    };
+
+    const commit = () => {
+      if (finished || canceled) return;
+      finished = true;
+      const nextValue = input.value || "";
+    const key = field === "start" ? taskStartKey(task) : taskDueKey(task);
+    const prevValue = task?.[key] ?? "";
+    task[key] = nextValue;
+    if (field === "due" && normalizeTaskStatus(task.status) === "concluido") {
+      task.dataConclusao = nextValue || task.dataConclusao || "";
+    }
+
+    const payload = { ...task, [key]: nextValue };
+      if (db && project.id && project.clientId && task.id) {
+        updateTaskOnDb(project.clientId, project.id, task.id, payload)
+          .then(() => {
+            renderMain();
+          })
+          .catch((err) => {
+            console.error(err);
+            task[key] = prevValue;
+            alert("Erro ao atualizar datas da atividade.");
+            renderMain();
+          });
+        return;
+      }
+      saveLocalState();
+      renderMain();
+    };
+
+    const cancel = () => {
+      if (finished) return;
+      canceled = true;
+      finished = true;
+      restore();
+    };
+
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        input.blur();
+      }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        cancel();
+      }
+    });
+    input.addEventListener("blur", () => {
+      if (canceled) return;
+      commit();
+    });
+  };
+
+  document.body.addEventListener("click", (e) => {
+    const target = e.target.closest("[data-edit-task-date]");
+    if (!target) return;
+    e.preventDefault();
+    startEdit(target);
+  });
+
+  document.body.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const target = e.target.closest("[data-edit-task-date]");
+    if (!target) return;
+    e.preventDefault();
+    startEdit(target);
+  });
+}
+
+function openMonitorTaskModalByIndexes(clientIndex, projectIndex, taskIndex) {
+  const client = state.clients?.[clientIndex];
+  const project = client?.projects?.[projectIndex];
+  const task = project?.tasks?.[taskIndex];
+  if (!client || !project || !task) return;
+
+  state.monitorEditing = { clientIndex, projectIndex, taskIndex };
+
+  const modal = byId("monitor-task-modal");
+  const form = byId("monitor-task-form");
+  if (!modal || !form) return;
+
+  form.elements.name.value = task.title || "";
+  form.elements.due.value = formatDateISO(taskDueStr(task));
+
+  const responsibleSelect = form.elements.responsible;
+  const options = new Set();
+  if (taskOwner(task)) options.add(taskOwner(task));
+  if (project.developer) options.add(project.developer);
+  (state.employees || []).forEach((employee) => {
+    if (employee?.name) options.add(employee.name);
+  });
+  responsibleSelect.innerHTML = "";
+  const emptyOption = document.createElement("option");
+  emptyOption.value = "";
+  emptyOption.textContent = "A definir";
+  responsibleSelect.appendChild(emptyOption);
+  Array.from(options).forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    responsibleSelect.appendChild(opt);
+  });
+  responsibleSelect.value = taskOwner(task) || project.developer || "";
+
+  showModal(modal);
+}
+
+function resetMonitorTaskModal() {
+  const form = byId("monitor-task-form");
+  state.monitorEditing = null;
+  if (form) form.reset();
+}
+
+function saveMonitorTaskChanges() {
+  const edit = state.monitorEditing;
+  if (!edit) return;
+  const client = state.clients?.[edit.clientIndex];
+  const project = client?.projects?.[edit.projectIndex];
+  const task = project?.tasks?.[edit.taskIndex];
+  if (!client || !project || !task) return;
+
+  const form = byId("monitor-task-form");
+  if (!form) return;
+
+  const name = form.elements.name.value.trim();
+  const dueValue = form.elements.due.value || "";
+  const responsible = form.elements.responsible.value || "";
+  const dueKey = taskDueKey(task);
+
+  const previous = { title: task.title, responsible: task.responsible, due: task[dueKey] };
+  task.title = name || task.title || "";
+  task.responsible = responsible;
+  task[dueKey] = dueValue;
+
+  const payload = { ...task, [dueKey]: dueValue, responsible };
+  if (db && project.id && client.id && task.id) {
+    updateTaskOnDb(client.id, project.id, task.id, payload)
+      .then(() => {
+        hideModal(byId("monitor-task-modal"));
+        resetMonitorTaskModal();
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        task.title = previous.title;
+        task.responsible = previous.responsible;
+        task[dueKey] = previous.due;
+        alert("Erro ao atualizar atividade.");
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  hideModal(byId("monitor-task-modal"));
+  resetMonitorTaskModal();
+  renderMain();
+}
+
+function completeMonitorTask(clientIndex, projectIndex, taskIndex) {
+  const client = state.clients?.[clientIndex];
+  const project = client?.projects?.[projectIndex];
+  const task = project?.tasks?.[taskIndex];
+  if (!client || !project || !task) return;
+  const previousStatus = task.status;
+  const previousDone = task.dataConclusao;
+  applyTaskStatus(task, "concluido");
+  const payload = { status: task.status, dataConclusao: task.dataConclusao ?? null };
+
+  if (db && project.id && client.id && task.id) {
+    updateTaskStatusOnDb(client.id, project.id, task.id, payload)
+      .then(() => {
+        saveLocalState();
+        renderMain();
+      })
+      .catch((err) => {
+        console.error(err);
+        task.status = previousStatus;
+        task.dataConclusao = previousDone;
+        alert("Erro ao concluir atividade.");
+        renderMain();
+      });
+    return;
+  }
+  saveLocalState();
+  renderMain();
+}
+
+function setupMonitorActions() {
+  if (document.body.dataset.monitorWired) return;
+  document.body.dataset.monitorWired = "true";
+
+  document.body.addEventListener("click", (e) => {
+    const toggle = e.target.closest("[data-monitor-toggle]");
+    if (toggle) {
+      e.stopPropagation();
+      return;
+    }
+
+    const filterBtn = e.target.closest("[data-monitor-filter-btn]");
+    if (filterBtn) {
+      const popover = byId("monitor-filter-popover");
+      if (popover) popover.classList.toggle("show");
+      return;
+    }
+
+    const filterOpt = e.target.closest("[data-monitor-filter]");
+    if (filterOpt) {
+      state.monitor.filter = filterOpt.dataset.monitorFilter || "all";
+      renderMain();
+      return;
+    }
+
+    const actionBtn = e.target.closest("[data-monitor-action]");
+    if (actionBtn) {
+      e.stopPropagation();
+      return;
+    }
+
+    const card = e.target.closest("[data-monitor-card]");
+    if (card) {
+      const popover = byId("monitor-filter-popover");
+      if (popover) popover.classList.remove("show");
+      const clientIndex = Number(card.dataset.clientIndex);
+      const projectIndex = Number(card.dataset.projectIndex);
+      const taskIndex = Number(card.dataset.taskIndex);
+      if (Number.isFinite(clientIndex) && Number.isFinite(projectIndex) && Number.isFinite(taskIndex)) {
+        openMonitorTaskModalByIndexes(clientIndex, projectIndex, taskIndex);
+      }
+      return;
+    }
+
+    if (!e.target.closest("#monitor-filter-popover")) {
+      const popover = byId("monitor-filter-popover");
+      if (popover) popover.classList.remove("show");
+    }
+  });
+
+  document.body.addEventListener("change", (e) => {
+    const toggle = e.target.closest("[data-monitor-toggle]");
+    if (toggle) {
+      const input = toggle.matches("input") ? toggle : toggle.querySelector("input");
+      if (!input || !input.checked) return;
+      const card = toggle.closest("[data-monitor-card]");
+      if (!card) return;
+      const clientIndex = Number(card.dataset.clientIndex);
+      const projectIndex = Number(card.dataset.projectIndex);
+      const taskIndex = Number(card.dataset.taskIndex);
+      if (Number.isFinite(clientIndex) && Number.isFinite(projectIndex) && Number.isFinite(taskIndex)) {
+        completeMonitorTask(clientIndex, projectIndex, taskIndex);
+      }
+      return;
+    }
+
+    const select = e.target.closest("[data-monitor-select]");
+    if (!select) return;
+    const key = select.dataset.monitorSelect;
+    if (!key) return;
+    state.monitor[key] = select.value || "";
+    renderMain();
+  });
+
+  const monitorForm = byId("monitor-task-form");
+  if (monitorForm) {
+    monitorForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      saveMonitorTaskChanges();
+    });
+  }
+}
+
 function showModal(modalEl) {
   modalEl.classList.add("show");
 }
@@ -1194,6 +9338,7 @@ function openProjectModal(mode = "new") {
   const submitBtn = modal.querySelector('button[type="submit"]');
   const form = byId("project-form");
   const clientSelect = byId("project-client-select");
+  const deleteProjectBtn = byId("delete-project-btn");
 
   if (mode === "edit" && state.selectedProject && state.selectedClient) {
     state.editingProjectId = state.selectedProject.id || "local";
@@ -1206,11 +9351,13 @@ function openProjectModal(mode = "new") {
     clientSelect.disabled = true;
     title.textContent = "Editar Projeto";
     submitBtn.textContent = "Salvar Alteracoes";
+    if (deleteProjectBtn) deleteProjectBtn.classList.remove("hidden");
   } else {
     resetProjectModal();
     hydrateClientSelect();
     title.textContent = "Novo Projeto";
     submitBtn.textContent = "Salvar Projeto";
+    if (deleteProjectBtn) deleteProjectBtn.classList.add("hidden");
   }
 
   showModal(modal);
@@ -1222,11 +9369,50 @@ function resetProjectModal() {
   const title = modal.querySelector("h2");
   const submitBtn = modal.querySelector('button[type="submit"]');
   const clientSelect = byId("project-client-select");
+  const deleteProjectBtn = byId("delete-project-btn");
   state.editingProjectId = null;
   if (form) form.reset();
   if (clientSelect) clientSelect.disabled = false;
   if (title) title.textContent = "Novo Projeto";
   if (submitBtn) submitBtn.textContent = "Salvar Projeto";
+  if (deleteProjectBtn) deleteProjectBtn.classList.add("hidden");
+}
+
+async function handleDeleteProject() {
+  const project = state.selectedProject;
+  const client = state.selectedClient;
+  if (!project || !client) {
+    alert("Nenhum projeto selecionado.");
+    return;
+  }
+  const confirmed = window.confirm(`Excluir o projeto "${project.name}"? Esta acao nao pode ser desfeita.`);
+  if (!confirmed) return;
+
+  const modal = byId("project-modal");
+  if (db && project.id && project.clientId) {
+    try {
+      await deleteProjectFromDb(project.clientId, project.id);
+      await loadStateFromDb({ clientId: client.id, clientName: client.name });
+      resetProjectModal();
+      if (modal) hideModal(modal);
+      return;
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao excluir projeto no Firebase.");
+      return;
+    }
+  }
+
+  const idx = client.projects.findIndex((p) => p === project || (p.id && p.id === project.id) || p.name === project.name);
+  if (idx >= 0) {
+    client.projects.splice(idx, 1);
+  }
+  state.selectedProject = client.projects[0] || null;
+  saveLocalState();
+  renderClientList();
+  renderMain();
+  resetProjectModal();
+  if (modal) hideModal(modal);
 }
 
 function openActivityModal(mode = "new", taskIndex = null) {
@@ -1247,8 +9433,11 @@ function openActivityModal(mode = "new", taskIndex = null) {
       addPackageToProject(state.selectedProject, derivedPackage);
     }
     form.elements.package.value = derivedPackage || "";
+    form.elements.start.value = taskStartStr(task);
     form.elements.due.value = task.due || "";
-    form.elements.status.value = normalizeTaskStatus(task.status) || "planejado";
+    const progressValue = taskProgress(task);
+    form.elements.progress.value = progressValue != null ? progressValue : "";
+    form.elements.status.value = normalizeTaskStatus(getTaskStatus(task));
     title.textContent = "Editar Atividade";
     submitBtn.textContent = "Salvar Alteracoes";
   } else {
@@ -1378,6 +9567,32 @@ function resetExpenseModal() {
   if (form) form.reset();
 }
 
+function openImprovementModal(improvementId = null) {
+  const modal = byId("improvement-modal");
+  const form = byId("improvement-form");
+  const title = byId("improvement-modal-title");
+  if (!modal || !form) return;
+  const improvement = state.improvements.find((item) => item.id === improvementId) || null;
+  state.editingImprovementId = improvement?.id || null;
+  form.elements.name.value = improvement?.name || "";
+  form.elements.client.value = improvement?.client || "";
+  form.elements.owner.value = improvement?.owner || "";
+  form.elements.start.value = improvement?.start || "";
+  form.elements.end.value = improvement?.end || "";
+  form.elements.status.value = improvement?.status || "planejado";
+  form.elements.progress.value = improvement?.progress ?? 0;
+  if (title) title.textContent = improvement ? "Editar Melhoria" : "Nova Melhoria";
+  showModal(modal);
+}
+
+function resetImprovementModal() {
+  const form = byId("improvement-form");
+  const title = byId("improvement-modal-title");
+  state.editingImprovementId = null;
+  if (form) form.reset();
+  if (title) title.textContent = "Nova Melhoria";
+}
+
 function deleteTaskByIndex(idx) {
   const project = state.selectedProject;
   if (!project || !project.tasks || !project.tasks[idx]) return;
@@ -1436,12 +9651,16 @@ function updateProjectInState(payload) {
   );
   if (idx === -1) return;
   const existing = client.projects[idx];
+  const nextStart = payload.start ?? existing.start ?? existing.startDate ?? "";
+  const nextEnd = payload.end ?? existing.end ?? existing.goLiveDate ?? existing.goLive ?? "";
   const updated = {
     ...existing,
     name: payload.name,
     developer: payload.developer,
-    start: payload.start,
-    end: payload.end
+    start: nextStart,
+    end: nextEnd,
+    startDate: nextStart,
+    goLiveDate: nextEnd
   };
   client.projects[idx] = updated;
   state.selectedClient = client;
@@ -1492,6 +9711,173 @@ function promptNewClientName() {
   const name = window.prompt("Nome do novo cliente:");
   if (!name) return "";
   return name.trim();
+}
+
+function promptRenameClientName(currentName) {
+  const name = window.prompt("Novo nome do cliente:", currentName || "");
+  if (!name) return "";
+  return name.trim();
+}
+
+function getClientFromModal() {
+  const form = byId("client-form");
+  if (!form) return null;
+  const clientId = form.dataset.clientId;
+  const clientName = form.dataset.clientName;
+  if (clientId) {
+    const found = state.clients.find((c) => c.id === clientId);
+    if (found) return found;
+  }
+  if (clientName) {
+    const found = state.clients.find((c) => c.name === clientName);
+    if (found) return found;
+  }
+  return state.selectedClient || null;
+}
+
+async function renameClient(client, nextName) {
+  if (!client) return;
+  const trimmed = String(nextName || "").trim();
+  if (!trimmed || trimmed === client.name) return;
+  const existing = findClientByName(trimmed);
+  if (existing && existing !== client) {
+    alert("Ja existe um cliente com esse nome.");
+    return;
+  }
+
+  const previousName = client.name;
+  if (db && client.id) {
+    try {
+      const clientRef = clientDocRef(client.id);
+      if (!clientRef) return;
+      await clientRef.update({ name: trimmed });
+      await loadStateFromDb({
+        clientId: client.id,
+        projectId: state.selectedProject?.id,
+        clientName: trimmed,
+        projectName: state.selectedProject?.name
+      });
+      return;
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao atualizar cliente no Firebase.");
+      return;
+    }
+  }
+
+  client.name = trimmed;
+  if (Object.prototype.hasOwnProperty.call(state.clientVisibility, previousName)) {
+    state.clientVisibility[trimmed] = state.clientVisibility[previousName];
+    delete state.clientVisibility[previousName];
+  }
+  saveLocalState();
+  renderClientList();
+  renderMain();
+  hydrateClientSelect(client.name);
+}
+
+async function handleRenameClient(client) {
+  if (!client) return;
+  const nextName = promptRenameClientName(client.name);
+  if (!nextName || nextName === client.name) return;
+  await renameClient(client, nextName);
+}
+
+function openClientModal(client) {
+  const modal = byId("client-modal");
+  const form = byId("client-form");
+  if (!modal || !form) return;
+  const nameInput = form.querySelector('input[name="name"]');
+  const title = modal.querySelector("h2");
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const deleteBtn = byId("delete-client-btn");
+  if (title) title.textContent = "Editar Cliente";
+  if (submitBtn) submitBtn.textContent = "Salvar Cliente";
+  if (nameInput) nameInput.value = client?.name || "";
+  form.dataset.clientId = client?.id || "";
+  form.dataset.clientName = client?.name || "";
+  if (deleteBtn) deleteBtn.classList.toggle("hidden", !client);
+  showModal(modal);
+  if (nameInput) nameInput.focus();
+}
+
+function resetClientModal() {
+  const modal = byId("client-modal");
+  const form = byId("client-form");
+  const deleteBtn = byId("delete-client-btn");
+  if (form) {
+    form.reset();
+    delete form.dataset.clientId;
+    delete form.dataset.clientName;
+  }
+  if (deleteBtn) deleteBtn.classList.add("hidden");
+  if (modal) {
+    const title = modal.querySelector("h2");
+    const submitBtn = modal.querySelector('button[type="submit"]');
+    if (title) title.textContent = "Editar Cliente";
+    if (submitBtn) submitBtn.textContent = "Salvar Cliente";
+  }
+}
+
+async function handleSaveClient() {
+  const form = byId("client-form");
+  if (!form) return;
+  const data = new FormData(form);
+  const nextName = data.get("name");
+  if (!nextName || !String(nextName).trim()) {
+    alert("Informe o nome do cliente.");
+    return;
+  }
+  const client = getClientFromModal();
+  if (!client) {
+    alert("Cliente nao encontrado.");
+    return;
+  }
+  await renameClient(client, nextName);
+  const modal = byId("client-modal");
+  resetClientModal();
+  if (modal) hideModal(modal);
+}
+
+async function handleDeleteClient() {
+  const client = getClientFromModal();
+  if (!client) {
+    alert("Nenhum cliente selecionado.");
+    return;
+  }
+  const confirmed = window.confirm(`Excluir o cliente "${client.name}"? Esta acao nao pode ser desfeita.`);
+  if (!confirmed) return;
+
+  const modal = byId("client-modal");
+  if (db && client.id) {
+    try {
+      await deleteClientFromDb(client.id);
+      await loadStateFromDb({});
+      resetClientModal();
+      if (modal) hideModal(modal);
+      return;
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao excluir cliente no Firebase.");
+      return;
+    }
+  }
+
+  const idx = state.clients.findIndex((c) => c === client || (c.id && c.id === client.id) || c.name === client.name);
+  if (idx >= 0) {
+    state.clients.splice(idx, 1);
+  }
+  if (Object.prototype.hasOwnProperty.call(state.clientVisibility, client.name)) {
+    delete state.clientVisibility[client.name];
+  }
+  state.selectedClient = state.clients[0] || null;
+  state.selectedProject = state.selectedClient?.projects?.[0] || null;
+  saveLocalState();
+  renderClientList();
+  renderMain();
+  hydrateClientSelect(state.selectedClient?.name || "");
+  resetClientModal();
+  if (modal) hideModal(modal);
 }
 
 function resetClientSelect(select) {
@@ -1604,11 +9990,22 @@ function updateActivityPackageField() {
 
 function statusInfo(status) {
   return (
-    STATUS_OPTIONS.find((opt) => opt.value === normalizeTaskStatus(status)) || {
-      label: "Planejado",
+    STATUS_OPTIONS.find((opt) => opt.value === status) || {
+      label: "Nao iniciado",
       className: "planejado"
     }
   );
+}
+
+function normalizeTaskStatus(status) {
+  const value = normStatus(status);
+  if (!value) return "planejado";
+  if (STATUS_DONE.has(value)) return "concluido";
+  if (STATUS_VALIDATION.has(value)) return "em_validacao";
+  if (STATUS_IN_PROGRESS.has(value)) return "em_andamento";
+  if (value === "parado") return "parado";
+  if (STATUS_PLANNED.has(value)) return "planejado";
+  return value.replace(/\s+/g, "_");
 }
 
 function applyTaskStatus(task, status) {
@@ -1617,18 +10014,71 @@ function applyTaskStatus(task, status) {
   const normalized = normalizeTaskStatus(status);
   if (normalized === "concluido") {
     if (!task.dataConclusao) {
-      task.dataConclusao = new Date().toISOString().slice(0, 10);
+      const due = activityDueDate(task);
+      task.dataConclusao = due || new Date().toISOString().slice(0, 10);
     }
     return;
   }
   task.dataConclusao = null;
 }
 
+function taskStatusInfo(status) {
+  const normalized = normalizeTaskStatus(status);
+  return (
+    TASK_STATUS_OPTIONS.find((opt) => opt.value === normalized) || {
+      label: "Nao iniciado",
+      className: "planejado"
+    }
+  );
+}
+
+function scheduleStatusInfo(status) {
+  if (status === "em_atraso") {
+    return { label: "Em Atraso", className: "em-atraso" };
+  }
+  return { label: "Em Dia", className: "em-dia" };
+}
+
+function taskHealthRank(task) {
+  const due = taskDueValueSafe(task);
+  if (!Number.isFinite(due) || due === Number.POSITIVE_INFINITY) return 3;
+  const today = todayStartTs();
+  if (due < today) return 0;
+  const riskLimit = today + 7 * 24 * 60 * 60 * 1000;
+  if (due <= riskLimit) return 1;
+  return 2;
+}
+
+function taskHealthInfo(task) {
+  if (isDoneTask(task)) return { label: "Em dia", className: "em-dia" };
+  const due = taskDueValueSafe(task);
+  if (!Number.isFinite(due) || due === Number.POSITIVE_INFINITY) {
+    return { label: "Sem prazo", className: "sem-prazo" };
+  }
+  const today = todayStartTs();
+  if (due < today) return { label: "Em Atraso", className: "em-atraso" };
+  const riskLimit = today + 7 * 24 * 60 * 60 * 1000;
+  if (due <= riskLimit) return { label: "Em risco", className: "em-risco" };
+  return { label: "Em dia", className: "em-dia" };
+}
+
+function projectScheduleStatus(project) {
+  const tasks = Array.isArray(project?.tasks) ? project.tasks : [];
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const hasOverdue = tasks.some((task) => {
+    if (normalizeTaskStatus(getTaskStatus(task)) === "concluido") return false;
+    const dt = parseTaskDate(task.due);
+    return dt && dt.getTime() < today;
+  });
+  return hasOverdue ? "em_atraso" : "em_dia";
+}
+
 function setupStatusPopover() {
   const popover = byId("status-popover");
   const select = byId("status-select");
   select.innerHTML = "";
-  STATUS_OPTIONS.forEach((opt) => {
+  TASK_STATUS_OPTIONS.forEach((opt) => {
     const o = document.createElement("option");
     o.value = opt.value;
     o.textContent = opt.label;
@@ -1653,6 +10103,7 @@ function setupStatusPopover() {
     const btn = e.target.closest(".status-btn");
     if (btn) {
       hideTaskActionsPopover();
+      hideProgressPopover();
       openStatusPopover(btn);
       return;
     }
@@ -1662,32 +10113,6 @@ function setupStatusPopover() {
   });
 
   select.addEventListener("change", () => {
-    const context = popover.dataset.context || "project";
-    if (context === "monitor") {
-      const resolved = resolveMonitorTaskFromDataset(popover.dataset);
-      if (!resolved) return;
-      applyTaskStatus(resolved.task, select.value);
-      const statusPayload = {
-        status: resolved.task.status,
-        dataConclusao: resolved.task.dataConclusao ?? null
-      };
-      if (db && resolved.project?.id && resolved.project?.clientId && resolved.task?.id) {
-        updateTaskStatusOnDb(resolved.project.clientId, resolved.project.id, resolved.task.id, statusPayload)
-          .then(() => {
-            hideStatusPopover();
-            renderMain();
-          })
-          .catch((err) => {
-            console.error(err);
-            alert("Erro ao atualizar status no Firebase.");
-          });
-        return;
-      }
-      saveLocalState();
-      hideStatusPopover();
-      renderMain();
-      return;
-    }
     const idx = Number(popover.dataset.taskIndex);
     if (Number.isNaN(idx) || !state.selectedProject) return;
     const task = state.selectedProject.tasks[idx];
@@ -1708,6 +10133,58 @@ function setupStatusPopover() {
     saveLocalState();
     hideStatusPopover();
     renderMain();
+  });
+}
+
+function setupProgressPopover() {
+  const popover = byId("progress-popover");
+  const input = byId("progress-input");
+  const saveBtn = byId("progress-save-btn");
+
+  document.body.addEventListener("click", (e) => {
+    const btn = e.target.closest(".task-progress-btn");
+    if (btn) {
+      hideStatusPopover();
+      hideTaskActionsPopover();
+      openProgressPopover(btn);
+      return;
+    }
+    if (!e.target.closest("#progress-popover")) {
+      hideProgressPopover();
+    }
+  });
+
+  const applyChange = () => {
+    const idx = Number(popover.dataset.taskIndex);
+    if (Number.isNaN(idx) || !state.selectedProject) return;
+    const task = state.selectedProject.tasks?.[idx];
+    if (!task) return;
+    const next = normalizeTaskProgress(input.value);
+    const progress = next == null ? 0 : next;
+    task.progress = progress;
+    if (db && state.selectedProject.id && task.id) {
+      updateTaskProgressOnDb(state.selectedProject.clientId, state.selectedProject.id, task.id, progress)
+        .then(() => {
+          hideProgressPopover();
+          renderMain();
+        })
+        .catch((err) => {
+          console.error(err);
+          alert("Erro ao atualizar percentual no Firebase.");
+        });
+      return;
+    }
+    saveLocalState();
+    hideProgressPopover();
+    renderMain();
+  };
+
+  saveBtn.addEventListener("click", applyChange);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyChange();
+    }
   });
 }
 
@@ -1746,6 +10223,7 @@ function setupTaskActions() {
 
 function openTaskActionsPopover(target) {
   hideStatusPopover();
+  hideProgressPopover();
   const popover = byId("task-actions-popover");
   const idx = target.dataset.taskIndex;
   popover.dataset.taskIndex = idx;
@@ -1768,26 +10246,9 @@ function openStatusPopover(target) {
   const popover = byId("status-popover");
   const select = byId("status-select");
   const idx = target.dataset.taskIndex;
-  const context = target.dataset.context || "project";
-  popover.dataset.context = context;
-  if (context === "monitor") {
-    popover.dataset.clientIndex = target.dataset.clientIndex || "";
-    popover.dataset.projectIndex = target.dataset.projectIndex || "";
-    popover.dataset.taskIndex = idx || "";
-    popover.dataset.clientId = target.dataset.clientId || "";
-    popover.dataset.projectId = target.dataset.projectId || "";
-    popover.dataset.taskId = target.dataset.taskId || "";
-    const resolved = resolveMonitorTaskFromDataset(target.dataset);
-    const currentStatus = resolved?.task?.status;
-    if (currentStatus) select.value = normalizeTaskStatus(currentStatus);
-  } else {
-    popover.dataset.taskIndex = idx;
-    popover.dataset.clientIndex = "";
-    popover.dataset.projectIndex = "";
-    popover.dataset.taskId = "";
-    const currentStatus = state.selectedProject?.tasks[Number(idx)]?.status;
-    if (currentStatus) select.value = normalizeTaskStatus(currentStatus);
-  }
+  popover.dataset.taskIndex = idx;
+  const currentStatus = state.selectedProject?.tasks[Number(idx)]?.status;
+  if (currentStatus) select.value = currentStatus;
   const rect = target.getBoundingClientRect();
   popover.style.top = `${rect.bottom + window.scrollY + 6}px`;
   popover.style.left = `${rect.left + window.scrollX}px`;
@@ -1796,6 +10257,26 @@ function openStatusPopover(target) {
 
 function hideStatusPopover() {
   byId("status-popover").classList.remove("show");
+}
+
+function openProgressPopover(target) {
+  const popover = byId("progress-popover");
+  const input = byId("progress-input");
+  const idx = Number(target.dataset.taskIndex);
+  popover.dataset.taskIndex = idx;
+  const task = state.selectedProject?.tasks?.[idx];
+  const value = taskProgress(task);
+  input.value = value != null ? value : taskProgressValue(task);
+  const rect = target.getBoundingClientRect();
+  popover.style.top = `${rect.bottom + window.scrollY + 6}px`;
+  popover.style.left = `${rect.left + window.scrollX}px`;
+  popover.classList.add("show");
+  input.focus();
+  input.select();
+}
+
+function hideProgressPopover() {
+  byId("progress-popover").classList.remove("show");
 }
 
 function setupDashboardFilters() {
@@ -1930,7 +10411,7 @@ function openDashboardFilterPopover(button) {
     input.value = value;
     input.checked = active.size === 0 || active.has(value);
     const text = document.createElement("span");
-    text.textContent = value;
+    text.textContent = column?.type === "date" ? formatDateBR(value) : value;
     label.appendChild(input);
     label.appendChild(text);
     options.appendChild(label);
@@ -1977,14 +10458,134 @@ function hideDashboardFilterPopover() {
   popover.classList.remove("show");
 }
 
-function showLogin() {
-  byId("login-screen")?.classList.remove("hidden");
-  byId("app-shell")?.classList.add("hidden");
-  const errEl = byId("login-error");
+function ensureExportPopover() {
+  let popover = byId("export-popover");
+  if (popover) return popover;
+  popover = document.createElement("div");
+  popover.id = "export-popover";
+  popover.className = "export-popover";
+  popover.innerHTML = `
+    <button type="button" class="btn sm ghost export-option" data-export-format="pdf">Exportar PDF</button>
+    <button type="button" class="btn sm ghost export-option" data-export-format="pptx">Exportar PPTX</button>
+  `;
+  document.body.appendChild(popover);
+  return popover;
+}
+
+function positionExportPopover(button, popover) {
+  const rect = button.getBoundingClientRect();
+  const top = rect.bottom + window.scrollY + 8;
+  popover.style.top = `${top}px`;
+  const popoverRect = popover.getBoundingClientRect();
+  const maxLeft = window.scrollX + window.innerWidth - popoverRect.width - 12;
+  const left = Math.min(Math.max(rect.left + window.scrollX - popoverRect.width + rect.width, 12), maxLeft);
+  popover.style.left = `${left}px`;
+}
+
+function openExportPopover(button) {
+  const popover = ensureExportPopover();
+  popover.classList.add("show");
+  positionExportPopover(button, popover);
+}
+
+function hideExportPopover() {
+  const popover = byId("export-popover");
+  if (!popover) return;
+  popover.classList.remove("show");
+}
+
+function setAccountMessage(type, message) {
+  const errEl = byId("account-error");
+  const successEl = byId("account-success");
   if (errEl) {
     errEl.textContent = "";
     errEl.classList.add("hidden");
   }
+  if (successEl) {
+    successEl.textContent = "";
+    successEl.classList.add("hidden");
+  }
+  if (!message) return;
+  if (type === "success" && successEl) {
+    successEl.textContent = message;
+    successEl.classList.remove("hidden");
+    return;
+  }
+  if (errEl) {
+    errEl.textContent = message;
+    errEl.classList.remove("hidden");
+  }
+}
+
+async function reauthenticateUser(user, currentPassword) {
+  if (!user) throw new Error("Usuario nao autenticado.");
+  const providers = user.providerData || [];
+  const hasPassword = providers.some((p) => p.providerId === "password");
+  if (hasPassword) {
+    if (!currentPassword) {
+      throw new Error("Informe sua senha atual para continuar.");
+    }
+    const credential = firebase.auth.EmailAuthProvider.credential(user.email || "", currentPassword);
+    await user.reauthenticateWithCredential(credential);
+    return;
+  }
+  const hasGoogle = providers.some((p) => p.providerId === "google.com");
+  if (hasGoogle) {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    await user.reauthenticateWithPopup(provider);
+    return;
+  }
+  throw new Error("Reautenticacao necessaria. Faca login novamente.");
+}
+
+function setLoginError(message) {
+  const errEl = byId("login-error");
+  if (!errEl) return;
+  if (!message) {
+    errEl.textContent = "";
+    errEl.classList.add("hidden");
+    return;
+  }
+  errEl.textContent = message;
+  errEl.classList.remove("hidden");
+}
+
+function getLoginMode() {
+  const card = byId("login-card");
+  return card?.dataset.mode === "signup" ? "signup" : "login";
+}
+
+function setLoginMode(mode) {
+  const card = byId("login-card");
+  if (!card) return;
+  const nextMode = mode === "signup" ? "signup" : "login";
+  card.dataset.mode = nextMode;
+  const title = byId("login-title");
+  if (title) title.textContent = nextMode === "signup" ? "Criar conta" : "Entrar";
+  const submit = byId("login-submit");
+  if (submit) submit.textContent = nextMode === "signup" ? "Criar conta" : "Entrar";
+  const switchText = byId("login-switch-text");
+  if (switchText) switchText.textContent = nextMode === "signup" ? "Ja tem conta?" : "Nao tem conta?";
+  const switchBtn = byId("login-switch-btn");
+  if (switchBtn) switchBtn.textContent = nextMode === "signup" ? "Entrar" : "Criar conta";
+  const passInput = byId("login-password");
+  if (passInput) {
+    passInput.autocomplete = nextMode === "signup" ? "new-password" : "current-password";
+  }
+  setLoginError("");
+}
+
+function showLogin() {
+  setLoginMode("login");
+  state.currentUserEmail = "";
+  state.currentUserRole = "user";
+  state.currentUserKey = "";
+  state.dbAccessDenied = false;
+  resetUserState();
+  updateRoleNavVisibility();
+  byId("login-screen")?.classList.remove("hidden");
+  byId("app-shell")?.classList.add("hidden");
+  setLoginError("");
 }
 
 function showApp() {
@@ -1995,37 +10596,91 @@ function showApp() {
 function wireLogin() {
   const form = byId("login-form");
   if (!form || form.dataset.wired) return;
+  const switchBtn = byId("login-switch-btn");
+  if (switchBtn) {
+    switchBtn.addEventListener("click", () => {
+      const current = getLoginMode();
+      setLoginMode(current === "signup" ? "login" : "signup");
+    });
+  }
+  const googleBtn = byId("login-google");
+  if (googleBtn) {
+    googleBtn.addEventListener("click", async () => {
+      setLoginError("");
+      if (!auth) {
+        setLoginError("Login indisponivel no momento. Tente novamente.");
+        return;
+      }
+      try {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        await auth.signInWithPopup(provider);
+      } catch (err) {
+        console.error(err);
+        setLoginError("Falha no login com Google. Tente novamente.");
+      }
+    });
+  }
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const mode = getLoginMode();
+    const name = byId("login-name")?.value.trim() || "";
     const email = byId("login-email")?.value.trim() || "";
     const pass = byId("login-password")?.value || "";
-    const errEl = byId("login-error");
-    if (errEl) {
-      errEl.textContent = "";
-      errEl.classList.add("hidden");
-    }
-    if (!email || !pass) {
-      if (errEl) {
-        errEl.textContent = "Falha no login. Verifique e-mail e senha.";
-        errEl.classList.remove("hidden");
+    const passConfirm = byId("login-password-confirm")?.value || "";
+    setLoginError("");
+    if (mode === "signup") {
+      if (!name || !email || !pass) {
+        setLoginError("Preencha nome, e-mail e senha para criar a conta.");
+        return;
       }
+      if (pass.length < 6) {
+        setLoginError("A senha precisa ter ao menos 6 caracteres.");
+        return;
+      }
+      if (pass !== passConfirm) {
+        setLoginError("As senhas nao conferem.");
+        return;
+      }
+    } else if (!email || !pass) {
+      setLoginError("Falha no login. Verifique e-mail e senha.");
       return;
     }
     if (!auth) {
-      if (errEl) {
-        errEl.textContent = "Login indisponivel no momento. Tente novamente.";
-        errEl.classList.remove("hidden");
-      }
+      setLoginError("Login indisponivel no momento. Tente novamente.");
       return;
     }
     try {
-      await auth.signInWithEmailAndPassword(email, pass);
+      if (mode === "signup") {
+        const cred = await auth.createUserWithEmailAndPassword(email, pass);
+        if (cred?.user && name) {
+          await cred.user.updateProfile({ displayName: name });
+        }
+      } else {
+        await auth.signInWithEmailAndPassword(email, pass);
+      }
     } catch (err) {
       console.error(err);
-      if (errEl) {
-        errEl.textContent = "Falha no login. Verifique e-mail e senha.";
-        errEl.classList.remove("hidden");
+      if (mode === "signup") {
+        if (err?.code === "auth/email-already-in-use") {
+          setLoginError("E-mail ja cadastrado. Use outro e-mail.");
+          return;
+        }
+        if (err?.code === "auth/invalid-email") {
+          setLoginError("E-mail invalido. Verifique o formato.");
+          return;
+        }
+        if (err?.code === "auth/weak-password") {
+          setLoginError("Senha fraca. Use ao menos 6 caracteres.");
+          return;
+        }
+        setLoginError("Falha ao criar conta. Tente novamente.");
+        return;
       }
+      if (err?.code === "auth/user-not-found" || err?.code === "auth/wrong-password") {
+        setLoginError("Falha no login. Verifique e-mail e senha.");
+        return;
+      }
+      setLoginError("Falha no login. Verifique e-mail e senha.");
     }
   });
   form.dataset.wired = "true";
@@ -2038,6 +10693,7 @@ async function logout() {
 
 async function init() {
   showLogin();
+  setupThemeToggle();
   wireLogin();
   const ok = await initFirebase();
   if (!ok) return;
@@ -2053,6 +10709,26 @@ async function init() {
       return;
     }
     showApp();
+    const userKey = currentUserKey(user);
+    if (state.currentUserKey && state.currentUserKey !== userKey) {
+      resetUserState();
+    }
+    state.currentUserKey = userKey;
+    persistActiveUserKey(userKey);
+    state.dbAccessDenied = false;
+    state.currentUserEmail = user?.email || "";
+    state.currentUserRole = normalizeUserRole(isAdminUser(user) ? "admin" : "user");
+    updateUserHeader(user);
+    updateRoleNavVisibility();
+    try {
+      await syncUserProfile(user);
+    } catch (err) {
+      console.warn("Nao foi possivel sincronizar o perfil do usuario.", err);
+    }
+    await loadCurrentUserRole(user);
+    if (state.currentSection === "config") {
+      renderMain();
+    }
     if (!appInitialized) {
       appInitialized = true;
       await initApp();
@@ -2066,6 +10742,11 @@ async function init() {
 }
 
 document.addEventListener("DOMContentLoaded", init);
+
+if (typeof window !== "undefined") {
+  window.formatDateBR = formatDateBR;
+  window.parseTaskDate = parseTaskDate;
+}
 
 async function ensureClientDoc(clientName) {
   const rootRef = clientDataRootRef();
@@ -2087,6 +10768,12 @@ async function deleteProjectFromDb(clientId, projectId) {
   await clientRef.child("projects").child(projectId).remove();
 }
 
+async function deleteClientFromDb(clientId) {
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.remove();
+}
+
 async function saveProjectToDb(payload) {
   const client = await ensureClientDoc(payload.client);
   const projectRef = client.ref.child("projects").push();
@@ -2095,6 +10782,8 @@ async function saveProjectToDb(payload) {
     developer: payload.developer,
     start: payload.start,
     end: payload.end,
+    startDate: payload.start,
+    goLiveDate: payload.end,
     epics: DEFAULT_EPICS.slice(),
     packages: [],
     financials: [],
@@ -2110,7 +10799,9 @@ async function updateProjectOnDb(clientId, projectId, payload) {
     name: payload.name,
     developer: payload.developer,
     start: payload.start,
-    end: payload.end
+    end: payload.end,
+    startDate: payload.startDate || payload.start,
+    goLiveDate: payload.goLiveDate || payload.end
   });
 }
 
@@ -2124,21 +10815,39 @@ async function saveTaskToDb(clientId, projectId, task) {
   const clientRef = clientDocRef(clientId);
   if (!clientRef) return;
   const taskRef = clientRef.child("projects").child(projectId).child("tasks").push();
+  const normalizedStatus = normalizeTaskStatus(task.status);
+  const dataConclusao =
+    task.dataConclusao || (normalizedStatus === "concluido" ? new Date().toISOString().slice(0, 10) : "");
   await taskRef.set({
     title: task.title,
     phase: task.phase,
     package: task.package,
+    start: task.start,
     due: task.due,
     status: task.status,
-    ...(task.dataConclusao ? { dataConclusao: task.dataConclusao } : {}),
+    progress: task.progress,
+    ...(dataConclusao ? { dataConclusao } : {}),
     createdAt: firebase.database.ServerValue.TIMESTAMP
   });
 }
 
 async function updateTaskStatusOnDb(clientId, projectId, taskId, payload) {
+  const updatePayload = { ...payload };
+  if (normalizeTaskStatus(updatePayload.status) === "concluido" && !updatePayload.dataConclusao) {
+    updatePayload.dataConclusao = new Date().toISOString().slice(0, 10);
+  }
   const clientRef = clientDocRef(clientId);
   if (!clientRef) return;
-  await clientRef.child("projects").child(projectId).child("tasks").child(taskId).update(payload);
+  await clientRef.child("projects").child(projectId).child("tasks").child(taskId).update(updatePayload);
+}
+
+async function updateTaskProgressOnDb(clientId, projectId, taskId, progress) {
+  if (progress == null) return;
+  const value = Number(progress);
+  if (!Number.isFinite(value)) return;
+  const clientRef = clientDocRef(clientId);
+  if (!clientRef) return;
+  await clientRef.child("projects").child(projectId).child("tasks").child(taskId).update({ progress: value });
 }
 
 async function updateTaskOnDb(clientId, projectId, taskId, payload) {
@@ -2146,10 +10855,19 @@ async function updateTaskOnDb(clientId, projectId, taskId, payload) {
     title: payload.title,
     phase: payload.phase,
     package: payload.package,
+    start: payload.start,
     due: payload.due,
-    status: payload.status,
-    ...(payload.dataConclusao !== undefined ? { dataConclusao: payload.dataConclusao } : {})
+    status: payload.status
   };
+  if (payload.progress != null) {
+    const progressValue = Number(payload.progress);
+    if (Number.isFinite(progressValue)) {
+      updatePayload.progress = progressValue;
+    }
+  }
+  if ("dataConclusao" in payload) {
+    updatePayload.dataConclusao = payload.dataConclusao;
+  }
   Object.keys(updatePayload).forEach((key) => {
     if (updatePayload[key] === undefined) delete updatePayload[key];
   });
@@ -2172,7 +10890,7 @@ async function updateProjectPackagesOnDb(clientId, projectId, packages) {
 
 function projectMetrics(tasks = []) {
   const total = tasks.length;
-  const done = tasks.filter((t) => normalizeTaskStatus(t.status) === "concluido").length;
+  const done = tasks.filter((t) => isDoneTask(t)).length;
   const pending = Math.max(total - done, 0);
   const progress = total ? Math.round((done / total) * 100) : 0;
   return { total, done, pending, progress };
@@ -2199,7 +10917,7 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
     grouped.push({
       phase,
       tasks: sortTasksForDisplay(flatTasks),
-      subEpics: subEpics.sort((a, b) => b.latest - a.latest),
+      subEpics: subEpics.sort((a, b) => compareLatestDesc(a.latest, b.latest)),
       isEmpty: items.length === 0
     });
   });
@@ -2210,13 +10928,13 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
     const existing = grouped.find((group) => group.phase === "OUTROS");
     if (existing) {
       existing.tasks = sortTasksForDisplay(existing.tasks.concat(flatTasks));
-      existing.subEpics = existing.subEpics.concat(subEpics).sort((a, b) => b.latest - a.latest);
+      existing.subEpics = existing.subEpics.concat(subEpics).sort((a, b) => compareLatestDesc(a.latest, b.latest));
       existing.isEmpty = existing.tasks.length === 0 && existing.subEpics.length === 0;
     } else {
       grouped.push({
         phase: "OUTROS",
         tasks: sortTasksForDisplay(flatTasks),
-        subEpics: subEpics.sort((a, b) => b.latest - a.latest),
+        subEpics: subEpics.sort((a, b) => compareLatestDesc(a.latest, b.latest)),
         isEmpty: remaining.length === 0
       });
     }
@@ -2271,193 +10989,22 @@ function taskStatusRank(status) {
   return 2;
 }
 
-function parseDateValue(value) {
-  if (value === null || value === undefined || value === "") return Number.NaN;
-  if (typeof value === "number") return value;
-  const raw = String(value).trim();
-  const parsed = Date.parse(raw);
-  if (!Number.isNaN(parsed)) return parsed;
-  const match = raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
-  if (match) {
-    return new Date(`${match[3]}-${match[2]}-${match[1]}`).getTime();
-  }
-  return Number.NaN;
+function dateSortValue(value) {
+  const dt = parseTaskDate(value);
+  return dt ? dt.getTime() : Number.POSITIVE_INFINITY;
 }
 
-function startOfDay(date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function round1(value) {
-  if (!Number.isFinite(value)) return 0;
-  return Math.round(value * 10) / 10;
-}
-
-function formatMetric(value) {
-  if (!Number.isFinite(value)) return "0";
-  const rounded = round1(value);
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
-}
-
-function formatSignedMetric(value) {
-  const num = Number(value);
-  const base = formatMetric(value);
-  if (Number.isFinite(num) && num > 0) return `+${base}`;
-  return base;
-}
-
-function parseNumericValue(value) {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  const raw = String(value).trim();
-  if (!raw) return 0;
-  let normalized = raw.replace(/[^0-9,.-]/g, "");
-  const hasComma = normalized.includes(",");
-  const hasDot = normalized.includes(".");
-  if (hasComma && hasDot) {
-    normalized = normalized.replace(/\./g, "").replace(",", ".");
-  } else if (hasComma) {
-    normalized = normalized.replace(",", ".");
-  }
-  const num = Number(normalized);
-  return Number.isFinite(num) ? num : 0;
-}
-
-function resolveProjectCost(project) {
-  const budgetBase = resolveProjectBudget(project);
-  if (Number.isFinite(budgetBase) && budgetBase > 0) return budgetBase;
-  const summary = computeFinanceSummary(project);
-  if (Number.isFinite(summary.despesa) && summary.despesa > 0) {
-    return summary.despesa;
-  }
-  return null;
-}
-
-function resolveProjectBudget(project) {
-  if (!project) return null;
-  const candidates = [
-    project.budget,
-    project.cost,
-    project.custo,
-    project.valor,
-    project.valorProjeto
-  ];
-  for (const value of candidates) {
-    const numeric = parseNumericValue(value);
-    if (Number.isFinite(numeric) && numeric > 0) return numeric;
-  }
-  return null;
-}
-
-function formatCurrency(value) {
-  if (!Number.isFinite(value)) return "-";
-  try {
-    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
-  } catch (err) {
-    return `R$ ${value.toFixed(2)}`;
-  }
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function normalizeFinanceType(value) {
-  const type = String(value || "").trim().toLowerCase();
-  return type === "receita" ? "receita" : "despesa";
-}
-
-function getProjectFinancials(project) {
-  if (!project) return [];
-  if (!Array.isArray(project.financials)) {
-    project.financials = [];
-  }
-  return project.financials;
-}
-
-function sortFinanceEntries(entries) {
-  return entries.slice().sort((a, b) => {
-    const aDate = parseDateValue(a?.date || a?.createdAt);
-    const bDate = parseDateValue(b?.date || b?.createdAt);
-    if (Number.isNaN(aDate) && Number.isNaN(bDate)) return 0;
-    if (Number.isNaN(aDate)) return 1;
-    if (Number.isNaN(bDate)) return -1;
-    if (aDate !== bDate) return aDate - bDate;
-    return (a?.createdAt || 0) - (b?.createdAt || 0);
-  });
-}
-
-function computeFinanceSummary(project) {
-  const entries = getProjectFinancials(project);
-  const budgetBase = resolveProjectBudget(project);
-  let receita = 0;
-  let despesa = 0;
-  entries.forEach((entry) => {
-    const amount = parseNumericValue(entry?.amount);
-    if (normalizeFinanceType(entry?.type) === "receita") {
-      receita += amount;
-    } else {
-      despesa += amount;
-    }
-  });
-  const saldoBase = Number.isFinite(budgetBase) ? budgetBase : 0;
-  return {
-    receita,
-    despesa,
-    saldo: saldoBase + receita - despesa,
-    budgetBase,
-    entries
-  };
-}
-
-function formatFinanceAmount(amount, type) {
-  if (!Number.isFinite(amount)) return "-";
-  const label = formatCurrency(amount);
-  return normalizeFinanceType(type) === "despesa" ? `-${label}` : label;
-}
-
-function baselinePctFromDates(startValue, endValue, now = new Date()) {
-  const startMs = parseDateValue(startValue);
-  const endMs = parseDateValue(endValue);
-  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return 0;
-  const start = startOfDay(new Date(startMs));
-  const end = startOfDay(new Date(endMs));
-  const today = startOfDay(now);
-  const total = end.getTime() - start.getTime();
-  if (total <= 0) return today >= end ? 100 : 0;
-  if (today <= start) return 0;
-  if (today >= end) return 100;
-  const pct = ((today.getTime() - start.getTime()) / total) * 100;
-  return Math.max(0, Math.min(100, round1(pct)));
-}
-
-function taskSortDate(value) {
-  const parsed = parseDateValue(value);
-  return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
+function dateMetricValue(value) {
+  const dt = parseTaskDate(value);
+  return dt ? dt.getTime() : null;
 }
 
 function sortTasksForDisplay(tasks) {
   return tasks.slice().sort((a, b) => {
-    const aRank = taskStatusRank(a.status);
-    const bRank = taskStatusRank(b.status);
-    if (aRank !== bRank) return aRank - bRank;
-    const aDate = taskSortDate(a.due);
-    const bDate = taskSortDate(b.due);
-    if (aDate !== bDate) return aDate - bDate;
+    const d = dateSortValue(a.due) - dateSortValue(b.due);
+    if (d !== 0) return d;
     return (a.title || "").localeCompare(b.title || "");
   });
-}
-
-function dateValue(value) {
-  const parsed = parseDateValue(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function goLiveValue(value) {
@@ -2466,176 +11013,19 @@ function goLiveValue(value) {
 }
 
 function latestDate(tasks) {
-  return tasks.reduce((acc, t) => Math.max(acc, dateValue(t.due)), 0);
+  return tasks.reduce((acc, t) => {
+    const value = dateMetricValue(t.due);
+    if (value === null) return acc;
+    if (acc === null) return value;
+    return Math.max(acc, value);
+  }, null);
 }
 
-function ensureMonitorState() {
-  if (!state.monitor) {
-    state.monitor = {
-      filters: { client: "", project: "", responsible: "" }
-    };
-    return;
-  }
-  if (!state.monitor.filters) {
-    state.monitor.filters = { client: "", project: "", responsible: "" };
-    return;
-  }
-  if (state.monitor.filters.client === undefined) state.monitor.filters.client = "";
-  if (state.monitor.filters.project === undefined) state.monitor.filters.project = "";
-  if (state.monitor.filters.responsible === undefined) state.monitor.filters.responsible = "";
-}
-
-function clientColor(name) {
-  const value = String(name || "");
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash * 31 + value.charCodeAt(i)) % 997;
-  }
-  return CLIENT_COLOR_PALETTE[hash % CLIENT_COLOR_PALETTE.length];
-}
-
-function collectMonitorTasks() {
-  const items = [];
-  state.clients.forEach((client, clientIndex) => {
-    (client.projects || []).forEach((project, projectIndex) => {
-      const responsible = project.developer || "A definir";
-      (project.tasks || []).forEach((task, taskIndex) => {
-        items.push({
-          client,
-          project,
-          task,
-          responsible,
-          clientIndex,
-          projectIndex,
-          taskIndex,
-          dueMs: parseDateValue(task.due)
-        });
-      });
-    });
-  });
-  return items;
-}
-
-function applyMonitorFilters(items) {
-  ensureMonitorState();
-  const { client, project, responsible } = state.monitor.filters;
-  return items.filter((item) => {
-    if (client && item.client?.name !== client) return false;
-    if (project && item.project?.name !== project) return false;
-    if (responsible && item.responsible !== responsible) return false;
-    return true;
-  });
-}
-
-function monitorDaysFromToday(targetMs, now = new Date()) {
-  if (!Number.isFinite(targetMs)) return null;
-  const today = startOfDay(now).getTime();
-  const target = startOfDay(new Date(targetMs)).getTime();
-  return Math.round((target - today) / (24 * 60 * 60 * 1000));
-}
-
-function monitorDueInfo(item, now = new Date()) {
-  const dueMs = Number.isFinite(item.dueMs) ? item.dueMs : parseDateValue(item.task?.due);
-  const diff = monitorDaysFromToday(dueMs, now);
-  if (diff === null) {
-    return { diff: null, isToday: false, isSoon: false, isOverdue: false };
-  }
-  return {
-    diff,
-    isToday: diff === 0,
-    isSoon: diff >= 0 && diff <= 7,
-    isOverdue: diff < 0
-  };
-}
-
-function monitorCompletionMs(task) {
-  const raw = task?.dataConclusao || task?.due;
-  const parsed = parseDateValue(raw);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-function monitorBadgeData(item, dueInfo) {
-  const status = normalizeTaskStatus(item.task?.status);
-  if (status !== "concluido") {
-    if (dueInfo.isOverdue) return { label: "Atrasado", className: "atrasado" };
-    if (dueInfo.isSoon) return { label: "Proximo", className: "proximo" };
-  }
-  const info = statusInfo(status);
-  return { label: info.label, className: info.className };
-}
-
-function resolveMonitorTaskFromDataset(dataset) {
-  const clientIndex = Number(dataset.clientIndex);
-  const projectIndex = Number(dataset.projectIndex);
-  const taskIndex = Number(dataset.taskIndex);
-  const client = Number.isNaN(clientIndex) ? null : state.clients[clientIndex];
-  const project = client?.projects?.[projectIndex] || null;
-  const task = project?.tasks?.[taskIndex] || null;
-  if (task) return { client, project, task };
-  const taskId = dataset.taskId;
-  if (!taskId) return null;
-  for (const fallbackClient of state.clients) {
-    const matchProject = (fallbackClient.projects || []).find((p) =>
-      (p.tasks || []).some((t) => t.id === taskId)
-    );
-    if (matchProject) {
-      const matchTask = matchProject.tasks.find((t) => t.id === taskId);
-      return { client: fallbackClient, project: matchProject, task: matchTask };
-    }
-  }
-  return null;
-}
-
-function renderMonitorTaskList(container, items, options = {}) {
-  const limit = Number.isFinite(options.limit) ? options.limit : items.length;
-  const slice = items.slice(0, limit);
-  container.innerHTML = "";
-  if (!slice.length) {
-    const empty = document.createElement("div");
-    empty.className = "monitor-empty";
-    empty.textContent = options.emptyText || "Sem atividades.";
-    container.appendChild(empty);
-    return;
-  }
-  slice.forEach((item) => {
-    const dueInfo = monitorDueInfo(item);
-    const badge = monitorBadgeData(item, dueInfo);
-    const row = document.createElement("div");
-    row.className = "monitor-item";
-    if (options.compact) row.classList.add("compact");
-    row.style.setProperty("--client-color", clientColor(item.client?.name));
-    const dueLabel =
-      options.dateType === "done"
-        ? item.task?.dataConclusao || item.task?.due || "-"
-        : item.task?.due || "-";
-    row.innerHTML = `
-      <div class="monitor-item-main">
-        <div class="monitor-item-title">${item.task?.title || "Atividade sem titulo"}</div>
-        <div class="monitor-item-meta">
-          <span class="client-dot"></span>
-          <span>${item.client?.name || "-"}</span>
-          <span class="meta-sep">|</span>
-          <span>${item.project?.name || "-"}</span>
-          <span class="meta-sep">|</span>
-          <span>${item.responsible || "A definir"}</span>
-        </div>
-      </div>
-      <div class="monitor-item-due">${dueLabel}</div>
-      <button
-        class="status-badge ${badge.className} status-btn"
-        type="button"
-        data-context="monitor"
-        data-client-index="${item.clientIndex}"
-        data-project-index="${item.projectIndex}"
-        data-task-index="${item.taskIndex}"
-        data-client-id="${item.client?.id || ""}"
-        data-project-id="${item.project?.id || ""}"
-        data-task-id="${item.task?.id || ""}">
-        ${badge.label}
-      </button>
-    `;
-    container.appendChild(row);
-  });
+function compareLatestDesc(aValue, bValue) {
+  if (aValue === null && bValue === null) return 0;
+  if (aValue === null) return 1;
+  if (bValue === null) return -1;
+  return bValue - aValue;
 }
 
 function ensureDashboardState() {
@@ -2655,6 +11045,7 @@ function dashboardDisplayValue(project, key) {
   if (key === "clientName") return project.clientName || "";
   if (key === "developer") return project.developer || "-";
   if (key === "status") return statusInfo(project.status).label;
+  if (key === "schedule") return scheduleStatusInfo(project.schedule).label;
   if (key === "progress") return `${project.progress}%`;
   if (key === "baseline") return `${formatMetric(project.baseline)}%`;
   if (key === "gap") return `${formatSignedMetric(project.gap)}pp`;
@@ -2726,18 +11117,21 @@ function allProjects() {
   return state.clients.flatMap((client) =>
     (client.projects || []).map((p) => {
       const metrics = projectMetrics(p.tasks || []);
-      const baseline = baselinePctFromDates(p.start, p.end);
-      const gap = round1(baseline - metrics.progress);
+      const progressPct = clampPct(metrics.progress ?? p.progress ?? 0);
+      const sCurveSeries = computeSCurveDailyBaseline(p, p?.tasks || null, progressPct);
+      const baseline = sCurveSeries ? round1(sCurveSeries.baselineNow * 100) : projectBaselinePct(p, progressPct);
+      const gap = round1(baseline - progressPct);
       const cost = resolveProjectCost(p);
       return {
         ...p,
         cost,
         clientName: client.name,
         metrics,
-        progress: metrics.progress,
+        progress: progressPct,
         baseline,
         gap,
         status: projectStatus(p, metrics),
+        schedule: projectScheduleStatus(p),
         goLive: p.end || ""
       };
     })
@@ -2748,7 +11142,7 @@ function projectStatus(project, metrics = projectMetrics(project.tasks || [])) {
   if (metrics.progress === 100 && metrics.total > 0) return "concluido";
   const goLive = goLiveValue(project.end);
   if (goLive !== null && goLive < Date.now() && metrics.progress < 100) return "atrasado";
-  const hasWorkStarted = (project.tasks || []).some((t) => normalizeTaskStatus(t.status) !== "planejado");
+  const hasWorkStarted = (project.tasks || []).some((t) => normalizeTaskStatus(getTaskStatus(t)) !== "planejado");
   return hasWorkStarted ? "em_andamento" : "planejado";
 }
 
@@ -2765,316 +11159,8 @@ function sortProjectsForDashboard(a, b) {
   return a.name.localeCompare(b.name);
 }
 
-function renderMonitor(container) {
-  byId("crumb-path").textContent = "Monitor de Atividades";
-  ensureMonitorState();
-
-  const allItems = collectMonitorTasks();
-  const filteredItems = applyMonitorFilters(allItems);
-  const now = new Date();
-
-  const activeItems = filteredItems.filter(
-    (item) => normalizeTaskStatus(item.task?.status) !== "concluido"
-  );
-  const criticalItems = activeItems
-    .filter((item) => {
-      const info = monitorDueInfo(item, now);
-      return info.isOverdue || info.isSoon;
-    })
-    .sort((a, b) => (a.dueMs || Number.POSITIVE_INFINITY) - (b.dueMs || Number.POSITIVE_INFINITY));
-  const todayItems = activeItems
-    .filter((item) => monitorDueInfo(item, now).isToday)
-    .sort((a, b) => (a.dueMs || Number.POSITIVE_INFINITY) - (b.dueMs || Number.POSITIVE_INFINITY));
-  const upcomingItems = activeItems
-    .filter((item) => {
-      const info = monitorDueInfo(item, now);
-      return info.diff !== null && info.diff > 0 && info.diff <= 7;
-    })
-    .sort((a, b) => (a.dueMs || Number.POSITIVE_INFINITY) - (b.dueMs || Number.POSITIVE_INFINITY));
-  const bottleneckItems = activeItems
-    .filter((item) => {
-      const info = monitorDueInfo(item, now);
-      return info.isOverdue && info.diff !== null && info.diff <= -3;
-    })
-    .sort((a, b) => (a.dueMs || Number.POSITIVE_INFINITY) - (b.dueMs || Number.POSITIVE_INFINITY));
-  const recentDone = filteredItems
-    .filter((item) => normalizeTaskStatus(item.task?.status) === "concluido")
-    .filter((item) => {
-      const doneMs = monitorCompletionMs(item.task);
-      const diff = monitorDaysFromToday(doneMs, now);
-      return diff !== null && diff <= 0 && diff >= -7;
-    })
-    .sort((a, b) => (monitorCompletionMs(b.task) || 0) - (monitorCompletionMs(a.task) || 0));
-
-  const totalCount = filteredItems.length;
-  const doneCount = filteredItems.filter(
-    (item) => normalizeTaskStatus(item.task?.status) === "concluido"
-  ).length;
-  const efficiency = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
-
-  const teamMap = new Map();
-  activeItems.forEach((item) => {
-    const key = item.responsible || "A definir";
-    if (!teamMap.has(key)) teamMap.set(key, { total: 0, overdue: 0 });
-    const entry = teamMap.get(key);
-    entry.total += 1;
-    if (monitorDueInfo(item, now).isOverdue) entry.overdue += 1;
-  });
-  const teamMetrics = Array.from(teamMap.entries())
-    .map(([name, data]) => ({ name, ...data }))
-    .sort((a, b) => b.total - a.total || b.overdue - a.overdue || a.name.localeCompare(b.name))
-    .slice(0, 6);
-
-  const board = document.createElement("div");
-  board.className = "monitor-board span-all";
-
-  const header = document.createElement("div");
-  header.className = "monitor-head";
-  header.innerHTML = `
-    <div class="monitor-title-row">
-      <div>
-        <h2>Monitor de Atividades</h2>
-        <div class="muted">Visao centralizada da execucao e saude da operacao.</div>
-      </div>
-    </div>
-    <div class="monitor-filters">
-      <div class="monitor-filter">
-        <label>Cliente</label>
-        <select data-monitor-filter="client"></select>
-      </div>
-      <div class="monitor-filter">
-        <label>Projeto</label>
-        <select data-monitor-filter="project"></select>
-      </div>
-      <div class="monitor-filter">
-        <label>Responsavel</label>
-        <select data-monitor-filter="responsible"></select>
-      </div>
-    </div>
-    <div class="monitor-kpi-grid">
-      <div class="kpi-card">
-        <div class="label">Total de criticas</div>
-        <div class="value">${criticalItems.length}</div>
-        <div class="muted">Atrasos e proximos 7 dias</div>
-      </div>
-      <div class="kpi-card">
-        <div class="label">Atividades hoje</div>
-        <div class="value">${todayItems.length}</div>
-        <div class="muted">Vencem ate hoje</div>
-      </div>
-      <div class="kpi-card">
-        <div class="label">Concluidas na semana</div>
-        <div class="value">${recentDone.length}</div>
-        <div class="muted">Ultimos 7 dias</div>
-      </div>
-      <div class="kpi-card">
-        <div class="label">Eficiencia do time</div>
-        <div class="value">${efficiency}%</div>
-        <div class="muted">${doneCount} de ${totalCount} entregas</div>
-      </div>
-    </div>
-  `;
-
-  const columns = document.createElement("div");
-  columns.className = "monitor-columns";
-
-  const mainCol = document.createElement("div");
-  mainCol.className = "monitor-main";
-
-  const sideCol = document.createElement("div");
-  const sideGrid = document.createElement("div");
-  sideGrid.className = "monitor-side-grid";
-  sideCol.appendChild(sideGrid);
-
-  const criticalCard = document.createElement("div");
-  criticalCard.className = "card monitor-card";
-  criticalCard.innerHTML = `
-    <div class="card-head">
-      <div>
-        <h3>Acoes criticas</h3>
-        <div class="muted">Intervencao imediata</div>
-      </div>
-      <span class="status-badge atrasado">${criticalItems.length} itens</span>
-    </div>
-  `;
-  const criticalList = document.createElement("div");
-  criticalList.className = "monitor-list monitor-scroll";
-  renderMonitorTaskList(criticalList, criticalItems, {
-    emptyText: "Nenhuma criticidade no momento."
-  });
-  criticalCard.appendChild(criticalList);
-
-  const todayCard = document.createElement("div");
-  todayCard.className = "card monitor-card";
-  todayCard.innerHTML = `
-    <div class="card-head">
-      <div>
-        <h3>Cronograma do dia</h3>
-        <div class="muted">Foco no que vence hoje</div>
-      </div>
-      <span class="status-badge proximo">${todayItems.length} itens</span>
-    </div>
-  `;
-  const todayList = document.createElement("div");
-  todayList.className = "monitor-list";
-  renderMonitorTaskList(todayList, todayItems, {
-    emptyText: "Nenhuma atividade prevista para hoje."
-  });
-  todayCard.appendChild(todayList);
-
-  const doneCard = document.createElement("div");
-  doneCard.className = "card monitor-card";
-  doneCard.innerHTML = `
-    <div class="card-head">
-      <div>
-        <h3>Concluidos recentemente</h3>
-        <div class="muted">Ultimos 7 dias</div>
-      </div>
-      <span class="status-badge concluido">${recentDone.length} itens</span>
-    </div>
-  `;
-  const doneList = document.createElement("div");
-  doneList.className = "monitor-list";
-  renderMonitorTaskList(doneList, recentDone, {
-    emptyText: "Nenhuma entrega recente.",
-    dateType: "done",
-    limit: 8
-  });
-  doneCard.appendChild(doneList);
-
-  const upcomingCard = document.createElement("div");
-  upcomingCard.className = "card monitor-card";
-  upcomingCard.innerHTML = `
-    <div class="card-head">
-      <div>
-        <h3>Proximos 7 dias</h3>
-        <div class="muted">Planejamento imediato</div>
-      </div>
-      <span class="status-badge proximo">${upcomingItems.length} itens</span>
-    </div>
-  `;
-  const upcomingList = document.createElement("div");
-  upcomingList.className = "monitor-list";
-  renderMonitorTaskList(upcomingList, upcomingItems, {
-    emptyText: "Sem entregas na proxima semana.",
-    limit: 8,
-    compact: true
-  });
-  upcomingCard.appendChild(upcomingList);
-
-  const teamCard = document.createElement("div");
-  teamCard.className = "card monitor-card";
-  teamCard.innerHTML = `
-    <div class="card-head">
-      <div>
-        <h3>Metricas de time</h3>
-        <div class="muted">Carga por responsavel</div>
-      </div>
-    </div>
-  `;
-  const teamList = document.createElement("div");
-  teamList.className = "monitor-metrics";
-  if (!teamMetrics.length) {
-    const empty = document.createElement("div");
-    empty.className = "monitor-empty";
-    empty.textContent = "Sem atividades abertas.";
-    teamList.appendChild(empty);
-  } else {
-    teamMetrics.forEach((entry) => {
-      const row = document.createElement("div");
-      row.className = "monitor-metric-row";
-      row.innerHTML = `
-        <div class="monitor-metric-name">${entry.name}</div>
-        <div class="monitor-metric-values">
-          <span>${entry.total} itens</span>
-          <span>${entry.overdue} atrasos</span>
-        </div>
-      `;
-      teamList.appendChild(row);
-    });
-  }
-  teamCard.appendChild(teamList);
-
-  const bottleneckCard = document.createElement("div");
-  bottleneckCard.className = "card monitor-card";
-  bottleneckCard.innerHTML = `
-    <div class="card-head">
-      <div>
-        <h3>Gargalos criticos</h3>
-        <div class="muted">Atrasos acima de 3 dias</div>
-      </div>
-      <span class="status-badge atrasado">${bottleneckItems.length} itens</span>
-    </div>
-  `;
-  const bottleneckList = document.createElement("div");
-  bottleneckList.className = "monitor-list";
-  renderMonitorTaskList(bottleneckList, bottleneckItems, {
-    emptyText: "Nenhum gargalo critico identificado.",
-    limit: 6,
-    compact: true
-  });
-  bottleneckCard.appendChild(bottleneckList);
-
-  mainCol.appendChild(criticalCard);
-  mainCol.appendChild(todayCard);
-  mainCol.appendChild(doneCard);
-
-  sideGrid.appendChild(upcomingCard);
-  sideGrid.appendChild(teamCard);
-  sideGrid.appendChild(bottleneckCard);
-
-  columns.appendChild(mainCol);
-  columns.appendChild(sideCol);
-
-  board.appendChild(header);
-  board.appendChild(columns);
-  container.appendChild(board);
-
-  const clientFilterValue = state.monitor.filters.client;
-  const projectFilterValue = state.monitor.filters.project;
-  const projectSource = clientFilterValue
-    ? allItems.filter((item) => item.client?.name === clientFilterValue)
-    : allItems;
-  const responsibleSource = allItems.filter((item) => {
-    if (clientFilterValue && item.client?.name !== clientFilterValue) return false;
-    if (projectFilterValue && item.project?.name !== projectFilterValue) return false;
-    return true;
-  });
-
-  const uniqueValues = (source, getter) => {
-    const values = new Set();
-    source.forEach((item) => {
-      const value = getter(item);
-      if (value) values.add(value);
-    });
-    return Array.from(values).sort((a, b) => a.localeCompare(b));
-  };
-
-  const filterOptions = {
-    client: uniqueValues(allItems, (item) => item.client?.name),
-    project: uniqueValues(projectSource, (item) => item.project?.name),
-    responsible: uniqueValues(responsibleSource, (item) => item.responsible)
-  };
-
-  header.querySelectorAll("[data-monitor-filter]").forEach((select) => {
-    const key = select.dataset.monitorFilter;
-    const options = filterOptions[key] || [];
-    if (state.monitor.filters[key] && !options.includes(state.monitor.filters[key])) {
-      state.monitor.filters[key] = "";
-    }
-    select.innerHTML = `<option value="">Todos</option>${options
-      .map((value) => `<option value="${value}">${value}</option>`)
-      .join("")}`;
-    select.value = state.monitor.filters[key] || "";
-    select.addEventListener("change", () => {
-      state.monitor.filters[key] = select.value;
-      renderMain();
-    });
-  });
-}
-
 function renderDashboard(container) {
-  byId("crumb-path").textContent = "Dashboard Projetos";
+  setCrumbPathText("Dashboard Projetos");
   ensureDashboardState();
   const all = allProjects();
   const filtered = applyDashboardFilters(all);
@@ -3088,6 +11174,24 @@ function renderDashboard(container) {
       <button class="btn sm ghost" type="button" data-clear-dashboard-sort>Limpar ordenacao</button>
     </div>
     <div class="muted">Ordenado por atrasos e Go Live mais proximo.</div>
+    <div class="dashboard-legend" role="note" aria-label="Legenda de cores">
+      <div class="legend-group">
+        <span class="legend-title">Status</span>
+        <span class="legend-item"><span class="legend-dot status-atrasado" aria-hidden="true"></span>Atrasado</span>
+        <span class="legend-item"><span class="legend-dot status-andamento" aria-hidden="true"></span>Em andamento</span>
+      </div>
+      <div class="legend-group">
+        <span class="legend-title">Saúde</span>
+        <span class="legend-item"><span class="legend-dot health-atraso" aria-hidden="true"></span>Em Atraso</span>
+        <span class="legend-item"><span class="legend-dot health-dia" aria-hidden="true"></span>Em Dia</span>
+      </div>
+      <div class="legend-group">
+        <span class="legend-title">GAP (pp)</span>
+        <span class="legend-item"><span class="legend-dot gap-critical" aria-hidden="true"></span>+30pp ou mais</span>
+        <span class="legend-item"><span class="legend-dot gap-delayed" aria-hidden="true"></span>+10pp a +29pp</span>
+        <span class="legend-item"><span class="legend-dot gap-ok" aria-hidden="true"></span>Negativo (adiantado)</span>
+      </div>
+    </div>
   `;
 
   const clearSortBtn = header.querySelector("[data-clear-dashboard-sort]");
@@ -3119,18 +11223,39 @@ function renderDashboard(container) {
   const rows = projects
     .map((p) => {
       const info = statusInfo(p.status);
+      const scheduleInfo = scheduleStatusInfo(p.schedule);
+      const gapInfo = gapStatusInfo(p.gap, p.baseline, p.progress);
+      const progressValue = clampPct(p.progress);
+      const isCompleted = progressValue >= 100;
+      const developerName = p.developer || "";
+      const avatarLabel = developerName ? initialsFromName(developerName) : "";
+      const avatarHtml = developerName
+        ? `<div class="table-person" title="${escapeHtml(developerName)}"><span class="avatar">${escapeHtml(avatarLabel)}</span></div>`
+        : `<span class="person-empty">-</span>`;
       const costLabel = formatCurrency(p.cost);
+      const progressBarClass = isCompleted ? "progress-inline-bar progress-inline-bar--done" : "progress-inline-bar";
+      const progressValueClass = isCompleted
+        ? "progress-inline-value progress-inline-value--done"
+        : "progress-inline-value";
       return `
         <tr data-client="${p.clientName}" data-project="${p.name}">
           <td>${p.name}</td>
           <td>${p.clientName}</td>
-          <td>${p.developer || "-"}</td>
+          <td>${avatarHtml}</td>
           <td><span class="pill project-status ${info.className}">${info.label}</span></td>
-          <td>${p.progress}%</td>
+          <td><span class="pill schedule-status ${scheduleInfo.className}">${scheduleInfo.label}</span></td>
+          <td>
+            <div class="progress-inline">
+              <div class="progress-inline-track">
+                <span class="${progressBarClass}" style="width:${progressValue}%"></span>
+              </div>
+              <span class="${progressValueClass}">${progressValue}%</span>
+            </div>
+          </td>
           <td>${formatMetric(p.baseline)}%</td>
-          <td>${formatSignedMetric(p.gap)}pp</td>
+          <td><span class="delta-badge ${gapInfo.className}">${formatSignedMetric(p.gap)}pp</span></td>
           <td>${costLabel}</td>
-          <td>${p.goLive || "-"}</td>
+          <td>${formatDateBR(p.goLive) || "-"}</td>
         </tr>
       `;
     })
@@ -3143,7 +11268,7 @@ function renderDashboard(container) {
         </tr>
       </thead>
       <tbody>
-        ${rows || "<tr><td colspan='9'>Nenhum projeto cadastrado.</td></tr>"}
+        ${rows || "<tr><td colspan='10'>Nenhum projeto cadastrado.</td></tr>"}
       </tbody>
     </table>
   `;
@@ -3164,77 +11289,9 @@ function renderDashboard(container) {
   container.appendChild(tableCard);
 }
 
-async function renderAuditTrail(container) {
-  byId("crumb-path").textContent = "Audit Logs";
 
-  const header = document.createElement("div");
-  header.className = "section-header span-all";
-  header.innerHTML = `
-    <div class="header-row">
-      <h2>Logs de Auditoria</h2>
-      <button class="btn sm ghost" id="refresh-audit">Atualizar</button>
-    </div>
-    <div class="muted">Rastreamento de segurança e conformidade (Supabase).</div>
-  `;
 
-  const tableCard = document.createElement("div");
-  tableCard.className = "table-card span-all";
-  tableCard.innerHTML = `<div style="padding:20px;">Carregando logs...</div>`;
 
-  container.appendChild(header);
-  container.appendChild(tableCard);
 
-  if (!supabase) {
-    tableCard.innerHTML = `<div style="padding:20px;">Supabase não configurado. Verifique as chaves em app.js.</div>`;
-    return;
-  }
 
-  const { data, error } = await supabase
-    .from('audit_logs')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(50);
 
-  if (error) {
-    console.error("Erro ao buscar logs:", error);
-    tableCard.innerHTML = `<div style="padding:20px; color:var(--bad);">Erro ao carregar logs: ${error.message}</div>`;
-    return;
-  }
-
-  if (!data || !data.length) {
-    tableCard.innerHTML = `<div style="padding:20px;">Nenhum registro de auditoria encontrado.</div>`;
-    return;
-  }
-
-  const rows = data.map(log => `
-    <tr>
-      <td>${formatDateTime(new Date(log.created_at))}</td>
-      <td>${log.action}</td>
-      <td>${log.admin_id || '-'}</td>
-      <td>${log.target_id || '-'}</td>
-      <td>${log.ip_address || '-'}</td>
-    </tr>
-  `).join("");
-
-  tableCard.innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Data</th>
-          <th>Ação</th>
-          <th>Admin ID</th>
-          <th>Alvo</th>
-          <th>IP</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-  `;
-
-  const refreshBtn = byId("refresh-audit");
-  if(refreshBtn) {
-    refreshBtn.addEventListener("click", () => renderAuditTrail(container));
-  }
-}
