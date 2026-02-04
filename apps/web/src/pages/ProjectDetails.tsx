@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import { useEffect } from "react";
 import { NavLink, Outlet, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { endpoints } from "../api/endpoints";
@@ -50,3 +50,4 @@ export function ProjectDetails() {
     </div>
   );
 }
+

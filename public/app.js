@@ -11,9 +11,17 @@ const firebaseConfig = {
 
 let db = null;
 let auth = null;
+let functions = null;
+let storage = null;
 let appInitialized = false;
 
 const THEME_STORAGE_KEY = "axon-theme";
+const PDFJS_WORKER_SRCS = [
+  "/vendor/pdf.worker.min.js",
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js",
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js",
+  "https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js"
+];
 
 const state = {
   clients: [
@@ -327,6 +335,7 @@ function resetUserState() {
   state.selectedProject = null;
   state.collapsedPhases = {};
   state.clientVisibility = {};
+  state.completedVisibility = {};
   state.editingProjectId = null;
   state.editingTaskIndex = null;
   state.dashboard = { sort: { key: null, direction: "asc" }, filters: {} };
@@ -3444,6 +3453,12 @@ async function initFirebase() {
   try {
     ensureFirebaseApp();
     db = firebase.database();
+    if (firebase.functions) {
+      functions = firebase.functions();
+    }
+    if (firebase.storage) {
+      storage = firebase.storage();
+    }
     return true;
   } catch (err) {
     console.error("Falha ao inicializar Firebase.", err);
@@ -3658,9 +3673,420 @@ async function removeUserFromGroups(uid) {
 }
 
 async function deleteUserFromDb(uid) {
-  if (!db || !uid) return;
-  await db.ref(`users/${uid}`).remove();
+  if (!db || !uid) return { authDeleted: false };
+  const updates = {
+    [`users/${uid}`]: null,
+    [`tenants/${uid}`]: null
+  };
+  await db.ref().update(updates);
   await removeUserFromGroups(uid);
+  return { authDeleted: false };
+}
+
+function getProjectImports(project) {
+  if (!project) return [];
+  const raw = project.imports || {};
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (raw && typeof raw === "object") {
+    return Object.entries(raw).map(([id, data]) => ({ id, ...(data || {}) }));
+  }
+  return [];
+}
+
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes)) return "-";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
+}
+
+function isAllowedImportFile(file) {
+  if (!file) return false;
+  const name = String(file.name || "").toLowerCase();
+  const ext = name.split(".").pop();
+  return ["mpp", "pdf", "csv", "xlsx", "xls"].includes(ext || "");
+}
+
+const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+const MAX_IMPORT_TASKS = 500;
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const parts = result.split(",");
+      resolve(parts.length > 1 ? parts.slice(1).join(",") : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error("Falha ao ler arquivo."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function base64ToBlob(base64, contentType) {
+  const binary = atob(base64 || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: contentType || "application/octet-stream" });
+}
+
+function base64ToUint8Array(base64) {
+  const binary = atob(base64 || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function base64ToText(base64) {
+  const bytes = base64ToUint8Array(base64);
+  if (typeof TextDecoder !== "undefined") {
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    out += String.fromCharCode(bytes[i]);
+  }
+  return out;
+}
+
+function normalizeHeaderKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+const PHASE_KEYWORDS = [
+  { phase: "LEVANTAMENTO", words: ["levantamento", "especificacao", "especificacao", "requisitos"] },
+  { phase: "DESENVOLVIMENTO", words: ["desenvolvimento", "implementacao", "construcao", "dev", "build"] },
+  { phase: "TESTES", words: ["teste", "testes", "qa", "homolog", "uat"] },
+  { phase: "DEPLOY", words: ["deploy", "go live", "golive", "implantacao", "entrega"] },
+  { phase: "GESTAO", words: ["gestao", "gerencia", "planejamento", "status"] }
+];
+
+function inferPhaseFromTitle(title) {
+  const text = String(title || "").toLowerCase();
+  if (!text) return "";
+  for (const group of PHASE_KEYWORDS) {
+    if (group.words.some((word) => text.includes(word))) {
+      return group.phase;
+    }
+  }
+  return "";
+}
+
+function parsePercent(value) {
+  if (value == null) return null;
+  const str = String(value).replace(",", ".").trim();
+  const match = /(\d{1,3}(?:\.\d+)?)/.exec(str);
+  if (!match) return null;
+  const num = Number(match[1]);
+  if (!Number.isFinite(num)) return null;
+  return Math.max(0, Math.min(100, num));
+}
+
+function inferStatusFromData(statusText, percent) {
+  const raw = String(statusText || "").toLowerCase();
+  if (raw) {
+    if (raw.includes("conclu") || raw.includes("done") || raw.includes("final")) return "concluido";
+    if (raw.includes("andamento") || raw.includes("progress") || raw.includes("execu")) return "em_andamento";
+    if (raw.includes("valid")) return "em_validacao";
+    if (raw.includes("parado") || raw.includes("bloque")) return "parado";
+    if (raw.includes("planej") || raw.includes("nao iniciado")) return "planejado";
+  }
+  if (Number.isFinite(percent)) {
+    if (percent >= 100) return "concluido";
+    if (percent > 0) return "em_andamento";
+  }
+  return "planejado";
+}
+
+function mapRowToTask(row) {
+  const entries = Object.entries(row || {}).reduce((acc, [key, value]) => {
+    acc[normalizeHeaderKey(key)] = value;
+    return acc;
+  }, {});
+  const title =
+    entries.atividade ||
+    entries.tarefa ||
+    entries.titulo ||
+    entries.title ||
+    entries.nome ||
+    entries.taskname ||
+    entries.summary ||
+    "";
+  if (!String(title || "").trim()) return null;
+
+  const startRaw =
+    entries.inicio ||
+    entries.datainicio ||
+    entries.start ||
+    entries.startdate ||
+    entries.data_inicio ||
+    "";
+  const endRaw =
+    entries.fim ||
+    entries.datafim ||
+    entries.end ||
+    entries.enddate ||
+    entries.data_fim ||
+    entries.termino ||
+    entries.prazo ||
+    "";
+  const statusRaw = entries.status || entries.situacao || entries.state || "";
+  const percentRaw = entries.percentual || entries.progresso || entries.percentcomplete || entries.complete || entries.percent || "";
+  const phaseRaw = entries.fase || entries.epico || entries.agrupador || "";
+  const packageRaw = entries.pacote || entries.package || entries.grupo || "";
+
+  const startDate = formatDateISO(startRaw);
+  const endDate = formatDateISO(endRaw);
+  const percent = parsePercent(percentRaw);
+  const phase = String(phaseRaw || inferPhaseFromTitle(title) || "").toUpperCase();
+  const status = inferStatusFromData(statusRaw, percent);
+
+  return {
+    title: String(title).trim(),
+    phase: phase || "OUTROS",
+    package: packageRaw ? String(packageRaw).trim() : "",
+    start: startDate,
+    due: endDate,
+    status: normalizeTaskStatus(status),
+    progress: Number.isFinite(percent) ? percent : 0
+  };
+}
+
+async function parseTasksFromXlsxBase64(base64) {
+  await ensureXlsx();
+  if (!window.XLSX) throw new Error("Leitor XLSX nao carregado.");
+  const data = base64ToUint8Array(base64);
+  const workbook = window.XLSX.read(data, { type: "array" });
+  const firstSheet = workbook.SheetNames[0];
+  if (!firstSheet) return [];
+  const sheet = workbook.Sheets[firstSheet];
+  const rows = window.XLSX.utils.sheet_to_json(sheet, { defval: "" });
+  return rows.map(mapRowToTask).filter(Boolean);
+}
+
+async function parseTasksFromCsvBase64(base64) {
+  await ensureXlsx();
+  if (!window.XLSX) throw new Error("Leitor CSV nao carregado.");
+  const text = base64ToText(base64);
+  const workbook = window.XLSX.read(text, { type: "string" });
+  const firstSheet = workbook.SheetNames[0];
+  if (!firstSheet) return [];
+  const sheet = workbook.Sheets[firstSheet];
+  const rows = window.XLSX.utils.sheet_to_json(sheet, { defval: "" });
+  return rows.map(mapRowToTask).filter(Boolean);
+}
+
+async function parseTasksFromPdfBase64(base64) {
+  await ensurePdfJs();
+  if (!window.pdfjsLib) throw new Error("Leitor PDF nao carregado.");
+  const data = base64ToUint8Array(base64);
+  const doc = await window.pdfjsLib.getDocument({ data }).promise;
+  const lines = [];
+  for (let i = 1; i <= doc.numPages; i += 1) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    const text = content.items.map((item) => item.str).join(" ");
+    text.split(/\s{2,}|\n/).forEach((line) => {
+      const trimmed = String(line || "").trim();
+      if (trimmed) lines.push(trimmed);
+    });
+  }
+
+  let currentPhase = "";
+  const tasks = [];
+  const dateRegex = /(\d{2}\/\d{2}\/\d{4})/g;
+  lines.forEach((line) => {
+    const upper = line.toUpperCase();
+    const dates = Array.from(line.matchAll(dateRegex)).map((m) => m[1]);
+    if (!dates.length) {
+      const possiblePhase = inferPhaseFromTitle(upper);
+      if (possiblePhase && upper.length <= 40) {
+        currentPhase = possiblePhase;
+      }
+      return;
+    }
+    const titlePart = line.split(dates[0])[0].trim();
+    if (!titlePart) return;
+    const percentMatch = /(\d{1,3})\s?%/.exec(line);
+    const percent = percentMatch ? Number(percentMatch[1]) : null;
+    const startDate = formatDateISO(dates[0]);
+    const endDate = formatDateISO(dates[1] || dates[0]);
+    const phase = inferPhaseFromTitle(titlePart) || currentPhase || "OUTROS";
+    const status = inferStatusFromData("", percent);
+    tasks.push({
+      title: titlePart,
+      phase,
+      package: "",
+      start: startDate,
+      due: endDate,
+      status: normalizeTaskStatus(status),
+      progress: Number.isFinite(percent) ? percent : 0
+    });
+  });
+  return tasks;
+}
+
+async function parseTasksFromImport(item) {
+  const name = String(item?.name || "");
+  const ext = name.split(".").pop().toLowerCase();
+  if (!item?.contentBase64) throw new Error("Arquivo sem conteudo para importar.");
+  if (ext === "csv") return parseTasksFromCsvBase64(item.contentBase64);
+  if (ext === "xlsx" || ext === "xls") return parseTasksFromXlsxBase64(item.contentBase64);
+  if (ext === "pdf") return parseTasksFromPdfBase64(item.contentBase64);
+  throw new Error("Formato nao suportado para importacao automatica. Use CSV, XLSX ou PDF.");
+}
+
+function configureImportLibraries() {
+  if (window.pdfjsLib?.GlobalWorkerOptions) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_SRCS[0];
+  }
+}
+
+const externalScriptCache = {};
+
+function loadExternalScript(url, globalName) {
+  if (globalName && window[globalName]) return Promise.resolve(window[globalName]);
+  if (externalScriptCache[url]) return externalScriptCache[url];
+  externalScriptCache[url] = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = url;
+    script.async = true;
+    script.onload = () => resolve(globalName ? window[globalName] : true);
+    script.onerror = () => reject(new Error(`Falha ao carregar ${url}`));
+    document.head.appendChild(script);
+  });
+  return externalScriptCache[url];
+}
+
+async function loadExternalScriptFromList(urls, globalName) {
+  let lastError = null;
+  for (const url of urls) {
+    try {
+      const result = await loadExternalScript(url, globalName);
+      return result;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("Falha ao carregar dependencias.");
+}
+
+async function ensurePdfJs() {
+  if (!window.pdfjsLib) {
+    await loadExternalScriptFromList(
+      [
+        "/vendor/pdf.min.js",
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js",
+        "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.min.js",
+        "https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.min.js"
+      ],
+      "pdfjsLib"
+    );
+  }
+  if (window.pdfjsLib?.GlobalWorkerOptions) {
+    for (const src of PDFJS_WORKER_SRCS) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = src;
+    }
+  }
+  return window.pdfjsLib;
+}
+
+async function ensureXlsx() {
+  if (!window.XLSX) {
+    await loadExternalScriptFromList(
+      [
+        "/vendor/xlsx.full.min.js",
+        "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
+        "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
+        "https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"
+      ],
+      "XLSX"
+    );
+  }
+  return window.XLSX;
+}
+
+async function uploadProjectImport(clientId, projectId, file, project) {
+  if (!db) throw new Error("Banco indisponivel.");
+  if (!clientId || !projectId) throw new Error("Projeto invalido.");
+  if (!isAllowedImportFile(file)) throw new Error("Formato nao suportado.");
+  if (file.size > MAX_IMPORT_BYTES) {
+    throw new Error("Arquivo muito grande para envio direto (max. 10 MB).");
+  }
+
+  const contentBase64 = await readFileAsBase64(file);
+
+  const payload = {
+    name: file.name || "arquivo",
+    size: file.size || 0,
+    contentType: file.type || "",
+    contentBase64,
+    contentEncoding: "base64",
+    status: "uploaded",
+    createdAt: new Date().toISOString()
+  };
+
+  const projectRef = clientDocRef(clientId).child("projects").child(projectId);
+  const importsRef = projectRef.child("imports").push();
+  await importsRef.set(payload);
+
+  if (project) {
+    if (!project.imports || typeof project.imports !== "object" || Array.isArray(project.imports)) {
+      project.imports = {};
+    }
+    project.imports[importsRef.key] = payload;
+  }
+
+  return { id: importsRef.key, ...payload };
+}
+
+async function updateProjectImportStatus(clientId, projectId, importId, status) {
+  if (!db || !clientId || !projectId || !importId) return;
+  const projectRef = clientDocRef(clientId).child("projects").child(projectId);
+  await projectRef.child("imports").child(importId).update({
+    status,
+    updatedAt: new Date().toISOString()
+  });
+}
+
+async function updateProjectImportRecord(clientId, projectId, importId, payload) {
+  if (!db || !clientId || !projectId || !importId) return;
+  const projectRef = clientDocRef(clientId).child("projects").child(projectId);
+  await projectRef.child("imports").child(importId).update(payload);
+}
+
+async function importTasksIntoProject(clientId, project, tasks) {
+  if (!clientId || !project?.id) throw new Error("Projeto invalido.");
+  if (!Array.isArray(tasks) || !tasks.length) return { imported: 0, skipped: 0 };
+  const localTasks = Array.isArray(project.tasks) ? project.tasks : [];
+  const limited = tasks.slice(0, MAX_IMPORT_TASKS);
+  for (const task of limited) {
+    const phase = String(task.phase || inferPhaseFromTitle(task.title) || "OUTROS").toUpperCase();
+    const payload = {
+      title: task.title,
+      phase,
+      package: task.package || "",
+      start: task.start || "",
+      due: task.due || "",
+      status: normalizeTaskStatus(task.status),
+      progress: Number.isFinite(task.progress) ? task.progress : 0
+    };
+    const created = await saveTaskToDb(clientId, project.id, payload);
+    localTasks.push({ id: created?.id || `${Date.now()}-${Math.random()}`, ...payload });
+  }
+  project.tasks = localTasks;
+  return { imported: limited.length, skipped: Math.max(0, tasks.length - limited.length) };
 }
 
 async function sendPasswordReset(email) {
@@ -3905,6 +4331,7 @@ async function deleteGroupFromDb(groupId) {
 
 async function initApp() {
   loadHomeContext();
+  configureImportLibraries();
   const firebaseReady = db ? true : await initFirebase();
   if (firebaseReady) {
     try {
@@ -3964,6 +4391,23 @@ function renderClientList() {
     return;
   }
 
+  const projectProgressInfo = (project) => {
+    const tasks = flattenProjectTasks(project);
+    const metrics = projectMetrics(tasks);
+    const progress = clampPct(metrics.progress ?? project?.progress ?? 0);
+    return { progress, tasksDone: tasks.filter(isDoneTask).length, tasksTotal: tasks.length };
+  };
+
+  const isProjectDone = (project) => {
+    if (!project) return false;
+    const status = normalizeTaskStatus(project.status || "");
+    if (status === "concluido") return true;
+    const tasks = flattenProjectTasks(project);
+    if (tasks.length && tasks.every(isDoneTask)) return true;
+    const { progress } = projectProgressInfo(project);
+    return progress >= 100;
+  };
+
   state.clients.forEach((client) => {
     const wrapper = document.createElement("div");
     wrapper.className = "sub-item";
@@ -4003,15 +4447,82 @@ function renderClientList() {
 
     const projects = document.createElement("div");
     projects.className = "projects-list";
-    client.projects.forEach((proj) => {
+
+    const activeProjects = [];
+    const doneProjects = [];
+    (client.projects || []).forEach((proj) => {
+      if (isProjectDone(proj)) {
+        doneProjects.push(proj);
+      } else {
+        activeProjects.push(proj);
+      }
+    });
+
+    const appendProjectChip = (container, proj, done = false) => {
       const btn = document.createElement("button");
-      btn.className = "project-chip";
-      btn.textContent = proj.name;
+      btn.className = `project-chip${done ? " done" : ""}`;
+      btn.dataset.projectName = proj.name || "";
+      const label = document.createElement("span");
+      label.className = "project-name";
+      label.textContent = proj.name || "Projeto";
+      const meta = document.createElement("span");
+      meta.className = "project-chip-meta";
+      if (done) {
+        meta.textContent = "Concluido";
+        const badge = document.createElement("span");
+        badge.className = "project-chip-badge";
+        badge.textContent = "✓";
+        meta.prepend(badge);
+      } else {
+        const info = projectProgressInfo(proj);
+        meta.textContent = `${info.progress}%`;
+      }
+      btn.appendChild(label);
+      btn.appendChild(meta);
       btn.addEventListener("click", () => {
         openProject(client, proj);
       });
-      projects.appendChild(btn);
-    });
+      container.appendChild(btn);
+    };
+
+    activeProjects.forEach((proj) => appendProjectChip(projects, proj, false));
+
+    if (doneProjects.length) {
+      const section = document.createElement("div");
+      section.className = "projects-section";
+      const headerDone = document.createElement("button");
+      headerDone.type = "button";
+      headerDone.className = "projects-section-header";
+      const titleDone = document.createElement("span");
+      titleDone.className = "projects-section-title";
+      titleDone.textContent = `Concluidos (${doneProjects.length})`;
+      const toggle = document.createElement("span");
+      toggle.className = "projects-section-toggle";
+      const isDoneOpen =
+        state.completedVisibility[client.name] !== undefined
+          ? state.completedVisibility[client.name]
+          : false;
+      toggle.textContent = isDoneOpen ? "−" : "+";
+      headerDone.appendChild(titleDone);
+      headerDone.appendChild(toggle);
+      headerDone.addEventListener("click", () => {
+        const nextOpen = !section.classList.contains("open");
+        section.classList.toggle("open", nextOpen);
+        toggle.textContent = nextOpen ? "−" : "+";
+        state.completedVisibility[client.name] = nextOpen;
+      });
+
+      const body = document.createElement("div");
+      body.className = "projects-section-body";
+      doneProjects.forEach((proj) => appendProjectChip(body, proj, true));
+      section.appendChild(headerDone);
+      section.appendChild(body);
+      if (isDoneOpen) {
+        section.classList.add("open");
+        toggle.textContent = "−";
+      }
+      projects.appendChild(section);
+    }
 
     wrapper.appendChild(header);
     wrapper.appendChild(projects);
@@ -4023,7 +4534,191 @@ function renderClientList() {
 
 function highlightActiveProject(name) {
   document.querySelectorAll("#client-list .project-chip").forEach((chip) => {
-    chip.classList.toggle("active", chip.textContent === name);
+    chip.classList.toggle("active", chip.dataset.projectName === name);
+  });
+}
+
+function setupImportSchedule(client, project) {
+  const openBtn = document.querySelector("[data-open-import]");
+  const modal = byId("import-schedule-modal");
+  if (!openBtn || !modal || !client || !project) return;
+
+  const closeModal = () => {
+    modal.classList.remove("show");
+    modal.setAttribute("aria-hidden", "true");
+  };
+
+  openBtn.addEventListener("click", () => {
+    modal.classList.add("show");
+    modal.setAttribute("aria-hidden", "false");
+    renderImportList(project);
+  });
+
+  modal.addEventListener("click", (event) => {
+    if (event.target.closest("[data-modal-close]")) {
+      closeModal();
+    }
+  });
+
+  const form = byId("import-schedule-form");
+  if (form && !form.dataset.wired) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fileInput = byId("import-schedule-file");
+      const status = byId("import-schedule-status");
+      const file = fileInput?.files?.[0] || null;
+      if (status) {
+        status.textContent = "";
+        status.classList.remove("error", "success");
+      }
+      if (!file) {
+        if (status) {
+          status.textContent = "Selecione um arquivo.";
+          status.classList.add("error");
+        }
+        return;
+      }
+      if (!isAllowedImportFile(file)) {
+        if (status) {
+          status.textContent = "Formato nao suportado. Use MPP, PDF, CSV ou XLSX.";
+          status.classList.add("error");
+        }
+        return;
+      }
+      try {
+        await uploadProjectImport(client.id, project.id, file, project);
+        if (status) {
+          status.textContent = "Arquivo enviado. Importacao pendente.";
+          status.classList.add("success");
+        }
+        if (fileInput) fileInput.value = "";
+        renderImportList(project);
+      } catch (err) {
+        console.error(err);
+        if (status) {
+          status.textContent = err?.message || "Nao foi possivel enviar o arquivo.";
+          status.classList.add("error");
+        }
+      }
+    });
+    form.dataset.wired = "true";
+  }
+}
+
+function renderImportList(project) {
+  const list = byId("import-schedule-list");
+  if (!list) return;
+  const imports = getProjectImports(project).sort((a, b) => {
+    const ta = Date.parse(a.createdAt || "") || 0;
+    const tb = Date.parse(b.createdAt || "") || 0;
+    return tb - ta;
+  });
+  if (!imports.length) {
+    list.textContent = "Nenhum arquivo enviado.";
+    return;
+  }
+  list.innerHTML = imports
+    .map((item) => {
+      const sizeLabel = formatFileSize(item.size);
+      const statusLabel =
+        item.status === "uploaded" ? "Aguardando importacao" :
+        item.status === "queued" ? "Em processamento" :
+        item.status === "done" ? "Importado" :
+        item.status === "error" ? "Falha" :
+        "Pendente";
+      const metaExtra = item.importedTasks ? ` • ${item.importedTasks}/${item.totalTasks || item.importedTasks} atividades` : "";
+      const canPreview = Boolean(item.contentBase64);
+      return `
+        <div class="import-row" data-import-id="${escapeHtml(item.id || "")}">
+          <div class="import-info">
+            <div class="import-name">${escapeHtml(item.name || "arquivo")}</div>
+            <div class="import-meta">${sizeLabel} • ${statusLabel}${metaExtra}</div>
+          </div>
+          <div class="import-actions">
+            <button class="btn sm ghost" type="button" data-import-download ${canPreview ? "" : "disabled"}>Preview</button>
+            <button class="btn sm primary" type="button" data-import-process>Processar</button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  list.querySelectorAll("[data-import-download]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const row = e.target.closest("[data-import-id]");
+      if (!row) return;
+      const importId = row.dataset.importId;
+      const item = getProjectImports(project).find((imp) => imp.id === importId);
+      if (!item?.contentBase64) return;
+      const blob = base64ToBlob(item.contentBase64, item.contentType || "");
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    });
+  });
+
+  list.querySelectorAll("[data-import-process]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const row = e.target.closest("[data-import-id]");
+      if (!row) return;
+      const importId = row.dataset.importId;
+      const item = getProjectImports(project).find((imp) => imp.id === importId);
+      const status = byId("import-schedule-status");
+      const clientId = project.clientId || state.selectedClient?.id || "";
+      if (!clientId) return;
+      btn.setAttribute("disabled", "true");
+      if (status) {
+        status.textContent = "Lendo arquivo e importando atividades...";
+        status.classList.remove("error", "success");
+      }
+      try {
+        await updateProjectImportStatus(clientId, project.id, importId, "queued");
+        if (item) item.status = "queued";
+        const tasks = await parseTasksFromImport(item);
+        if (!tasks.length) {
+          throw new Error("Nenhuma atividade encontrada no arquivo.");
+        }
+        const result = await importTasksIntoProject(clientId, project, tasks);
+        await updateProjectImportRecord(clientId, project.id, importId, {
+          status: "done",
+          processedAt: new Date().toISOString(),
+          totalTasks: tasks.length,
+          importedTasks: result.imported,
+          skippedTasks: result.skipped
+        });
+        if (item) {
+          item.status = "done";
+          item.totalTasks = tasks.length;
+          item.importedTasks = result.imported;
+          item.skippedTasks = result.skipped;
+        }
+        if (status) {
+          status.textContent = `Importacao concluida. ${result.imported} atividades criadas.`;
+          status.classList.add("success");
+        }
+        renderImportList(project);
+        renderMain();
+      } catch (err) {
+        console.error(err);
+        await updateProjectImportRecord(clientId, project.id, importId, {
+          status: "error",
+          error: String(err?.message || "Falha ao importar."),
+          processedAt: new Date().toISOString()
+        });
+        if (item) item.status = "error";
+        if (status) {
+          const message = err?.message || "Nao foi possivel importar o arquivo.";
+          const hint = message.includes("carregar")
+            ? " (tente recarregar a pagina ou desativar bloqueadores)."
+            : "";
+          status.textContent = message.includes("Leitor") || message.includes("carregar") ? `${message}${hint}` : message;
+          status.classList.add("error");
+        }
+        renderImportList(project);
+      } finally {
+        btn.removeAttribute("disabled");
+      }
+    });
   });
 }
 
@@ -5467,8 +6162,7 @@ function renderConfig(container) {
           <div class="modal-backdrop" data-modal-close></div>
           <div class="modal-content">
             <div class="modal-header">
-              <h3>Criar usuario</h3>
-              <button class="btn sm ghost" type="button" data-modal-close>Fechar</button>
+              <h3 class="modal-title">Criar novo usuario</h3>
             </div>
             <form id="admin-create-user-form" class="form">
               <label>
@@ -5929,7 +6623,10 @@ function renderAdminUsers(container, users) {
         if (!confirmed) return;
         deleteBtn.disabled = true;
         try {
-          await deleteUserFromDb(uid);
+          const result = await deleteUserFromDb(uid);
+          if (result && result.authDeleted === false) {
+            alert("Usuario removido do banco. O e-mail ainda existe no Auth. Para liberar novo cadastro, precisa do plano Blaze.");
+          }
           state.users = (state.users || []).filter((item) => item.uid !== uid);
           applyAdminUserFilters();
           await loadAdminGroups();
@@ -7593,8 +8290,7 @@ function renderConfig(container) {
           <div class="modal-backdrop" data-modal-close></div>
           <div class="modal-content">
             <div class="modal-header">
-              <h3>Criar usuario</h3>
-              <button class="btn sm ghost" type="button" data-modal-close>Fechar</button>
+              <h3 class="modal-title">Criar novo usuario</h3>
             </div>
             <form id="admin-create-user-form" class="form">
               <label>
@@ -7900,7 +8596,10 @@ function renderAdminUsers(container, users) {
         if (!confirmed) return;
         deleteBtn.disabled = true;
         try {
-          await deleteUserFromDb(uid);
+          const result = await deleteUserFromDb(uid);
+          if (result && result.authDeleted === false) {
+            alert("Usuario removido do banco. O e-mail ainda existe no Auth. Para liberar novo cadastro, precisa do plano Blaze.");
+          }
           state.users = (state.users || []).filter((item) => item.uid !== uid);
           applyAdminUserFilters();
           await loadAdminGroups();
@@ -8372,7 +9071,10 @@ function renderMain() {
   tasksCard.innerHTML = `
     <div class="card-head">
       <h3>Atividades</h3>
-      <button class="btn sm primary" data-open-activity>+ Nova Atividade</button>
+      <div class="card-actions">
+        <button class="btn sm ghost" data-open-import>Importar cronograma</button>
+        <button class="btn sm primary" data-open-activity>+ Nova Atividade</button>
+      </div>
     </div>`;
   const tasksBox = document.createElement("div");
   tasksBox.className = "tasks";
@@ -8535,6 +9237,37 @@ function renderMain() {
 
   panels.appendChild(headerCard);
   panels.appendChild(projectLayout);
+
+  const importModal = document.createElement("div");
+  importModal.className = "modal";
+  importModal.id = "import-schedule-modal";
+  importModal.innerHTML = `
+    <div class="modal-backdrop" data-modal-close></div>
+    <div class="modal-content import-modal">
+      <div class="modal-header">
+        <h3 class="modal-title">Importar cronograma</h3>
+      </div>
+      <form id="import-schedule-form" class="form">
+        <label>
+          Arquivo (MPP, PDF, CSV, XLSX)
+          <input id="import-schedule-file" type="file" accept=".mpp,.pdf,.csv,.xlsx,.xls">
+        </label>
+        <div class="config-hint">O arquivo e lido no navegador e enviado ao banco (sem Storage), ficando aguardando importacao.</div>
+        <div class="modal-actions">
+          <button class="btn ghost" type="button" data-modal-close>Cancelar</button>
+          <button class="btn primary" type="submit">Enviar arquivo</button>
+        </div>
+        <p id="import-schedule-status" class="config-message"></p>
+      </form>
+      <div class="import-list">
+        <div class="import-list-title">Arquivos enviados</div>
+        <div id="import-schedule-list" class="import-list-body">Nenhum arquivo enviado.</div>
+      </div>
+    </div>
+  `;
+  panels.appendChild(importModal);
+
+  setupImportSchedule(selectedClient, selectedProject);
 
   finalizeRender();
 }
@@ -10829,6 +11562,7 @@ async function saveTaskToDb(clientId, projectId, task) {
     ...(dataConclusao ? { dataConclusao } : {}),
     createdAt: firebase.database.ServerValue.TIMESTAMP
   });
+  return { id: taskRef.key, ...task };
 }
 
 async function updateTaskStatusOnDb(clientId, projectId, taskId, payload) {
@@ -11288,6 +12022,7 @@ function renderDashboard(container) {
   container.appendChild(header);
   container.appendChild(tableCard);
 }
+
 
 
 

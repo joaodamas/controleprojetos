@@ -1,4 +1,5 @@
-import express from "express";
+import "dotenv/config";
+import express, { type Request, type Response } from "express";
 import cors from "cors";
 import crypto from "crypto";
 import { authMiddleware, AuthenticatedRequest } from "./auth";
@@ -6,11 +7,13 @@ import { prisma } from "./db";
 import { BLUEPRINTS } from "./blueprints/catalog";
 import { scheduleRecompute } from "./recompute";
 import { sendWorkspaceInviteEmail, isEmailConfigured } from "./email";
+import { mirrorMembership, removeMembership } from "./rtdb";
 import {
   InterventionStatus,
   Prisma,
   RiskSeverity,
   RiskStatus,
+  WorkspaceInviteStatus,
   WorkspaceRole,
   WorkItemType
 } from "@prisma/client";
@@ -25,6 +28,15 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use("/api", authMiddleware);
+
+function getUserId(req: Request): string {
+  return (req as AuthenticatedRequest).userId;
+}
+
+function getParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
+}
 
 function toDateOnlyUTC(d: Date): string {
   const yyyy = d.getUTCFullYear();
@@ -141,6 +153,32 @@ function hasMinRole(role: WorkspaceRole, minRole: WorkspaceRole) {
   return roleRank[role] >= roleRank[minRole];
 }
 
+function logAction(data: {
+  workspaceId: string;
+  actorUserId: string;
+  action: string;
+  targetUserId?: string;
+  result: "ok" | "error";
+  reason?: string;
+  error?: string;
+}) {
+  console.log(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      ...data
+    })
+  );
+}
+
+async function requireWorkspace(res: express.Response, workspaceId: string) {
+  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
+  if (!workspace) {
+    res.status(404).json({ error: "NOT_FOUND" });
+    return null;
+  }
+  return workspace;
+}
+
 async function requireWorkspaceMember(
   res: express.Response,
   workspaceId: string,
@@ -156,6 +194,27 @@ async function requireWorkspaceMember(
   }
 
   return member;
+}
+
+async function requireWorkspaceRole(
+  res: express.Response,
+  workspaceId: string,
+  userId: string,
+  minRole: WorkspaceRole
+) {
+  const member = await requireWorkspaceMember(res, workspaceId, userId);
+  if (!member) return null;
+  if (!hasMinRole(member.role, minRole)) {
+    res.status(403).json({ error: "FORBIDDEN" });
+    return null;
+  }
+  return member;
+}
+
+async function countWorkspaceOwners(workspaceId: string) {
+  return prisma.workspaceMember.count({
+    where: { workspaceId, role: "owner" }
+  });
 }
 
 function getStatuses(statusesJson: unknown): string[] {
@@ -213,8 +272,8 @@ async function createWorkItemsFromBlueprint(args: {
   }
 }
 
-app.post("/api/workspaces", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
+app.post("/api/workspaces", async (req: Request, res) => {
+  const userId = getUserId(req);
   const name = typeof req.body?.name === "string" ? req.body.name : "Workspace";
 
   const result = await prisma.$transaction(async (tx) => {
@@ -233,15 +292,56 @@ app.post("/api/workspaces", async (req: AuthenticatedRequest, res) => {
     return { workspace, member };
   });
 
+  try {
+    await mirrorMembership({
+      workspaceId: result.workspace.id,
+      userId,
+      role: result.member.role,
+      status: "active"
+    });
+  } catch (err) {
+    console.log("[rtdb] mirror workspace owner failed", {
+      workspaceId: result.workspace.id,
+      userId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+    logAction({
+      workspaceId: result.workspace.id,
+      actorUserId: userId,
+      targetUserId: userId,
+      action: "workspace_member_create_owner",
+      result: "error",
+      reason: "RTDB_MIRROR_FAILED",
+      error: err instanceof Error ? err.message : String(err)
+    });
+    await prisma.$transaction(async (tx) => {
+      await tx.workspaceMember.deleteMany({
+        where: { workspaceId: result.workspace.id, userId }
+      });
+      await tx.workspace.delete({
+        where: { id: result.workspace.id }
+      });
+    });
+    return res.status(500).json({ error: "RTDB_MIRROR_FAILED" });
+  }
+
   res.json({
     id: result.workspace.id,
     name: result.workspace.name,
     userRole: result.member.role
   });
+
+  logAction({
+    workspaceId: result.workspace.id,
+    actorUserId: userId,
+    targetUserId: userId,
+    action: "workspace_member_create_owner",
+    result: "ok"
+  });
 });
 
-app.get("/api/workspaces", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
+app.get("/api/workspaces", async (req: Request, res) => {
+  const userId = getUserId(req);
   const memberships = await prisma.workspaceMember.findMany({
     where: { userId },
     include: { workspace: true }
@@ -259,9 +359,9 @@ app.get("/api/workspaces", async (req: AuthenticatedRequest, res) => {
   res.json(data);
 });
 
-app.get("/api/workspaces/:id", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const workspaceId = req.params.id;
+app.get("/api/workspaces/:id", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const workspaceId = getParam(req.params.id);
 
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId }
@@ -284,9 +384,9 @@ app.get("/api/workspaces/:id", async (req: AuthenticatedRequest, res) => {
   });
 });
 
-app.post("/api/workspaces/:id/blueprint/install", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const workspaceId = req.params.id;
+app.post("/api/workspaces/:id/blueprint/install", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const workspaceId = getParam(req.params.id);
 
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId }
@@ -354,16 +454,15 @@ app.post("/api/workspaces/:id/blueprint/install", async (req: AuthenticatedReque
   });
 });
 
-app.post("/api/workspaces/:id/invites", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const workspaceId = req.params.id;
+app.post("/api/workspaces/:id/invites", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const workspaceId = getParam(req.params.id);
 
   const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
   if (!workspace) return res.status(404).json({ error: "NOT_FOUND" });
 
-  const member = await requireWorkspaceMember(res, workspaceId, userId);
+  const member = await requireWorkspaceRole(res, workspaceId, userId, "admin");
   if (!member) return;
-  if (!hasMinRole(member.role, "admin")) return res.status(403).json({ error: "FORBIDDEN" });
 
   const emailRaw = typeof req.body?.email === "string" ? req.body.email : "";
   const email = normalizeEmail(emailRaw);
@@ -424,7 +523,7 @@ app.post("/api/workspaces/:id/invites", async (req: AuthenticatedRequest, res) =
   });
 
   const baseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
-  const inviteUrl = `${baseUrl.replace(/\\/+$/, "")}/invite/${token}`;
+  const inviteUrl = `${baseUrl.replace(/\/+$/, "")}/invite/${token}`;
 
   try {
     await sendWorkspaceInviteEmail({
@@ -440,29 +539,43 @@ app.post("/api/workspaces/:id/invites", async (req: AuthenticatedRequest, res) =
   }
 
   const emailConfigured = isEmailConfigured();
-  return res.json({
+  const payload = {
     ok: true,
     inviteId: invite.id,
     email,
     role,
     expiresAt: invite.expiresAt,
     inviteUrl: emailConfigured ? undefined : inviteUrl
+  };
+
+  logAction({
+    workspaceId,
+    actorUserId: userId,
+    action: "workspace_invite_create",
+    result: "ok"
   });
+
+  return res.json(payload);
 });
 
-app.get("/api/workspaces/:id/invites", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const workspaceId = req.params.id;
+app.get("/api/workspaces/:id/invites", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const workspaceId = getParam(req.params.id);
 
-  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
-  if (!workspace) return res.status(404).json({ error: "NOT_FOUND" });
+  const workspace = await requireWorkspace(res, workspaceId);
+  if (!workspace) return;
 
-  const member = await requireWorkspaceMember(res, workspaceId, userId);
+  const member = await requireWorkspaceRole(res, workspaceId, userId, "admin");
   if (!member) return;
-  if (!hasMinRole(member.role, "admin")) return res.status(403).json({ error: "FORBIDDEN" });
+
+  const allowedStatuses = ["pending", "accepted", "revoked", "expired"];
+  const statuses = parseStatusList(req.query.status, allowedStatuses, []);
 
   const invites = await prisma.workspaceInvite.findMany({
-    where: { workspaceId },
+    where: {
+      workspaceId,
+      ...(statuses.length ? { status: { in: statuses as WorkspaceInviteStatus[] } } : {})
+    },
     orderBy: { createdAt: "desc" },
     take: 200
   });
@@ -470,8 +583,35 @@ app.get("/api/workspaces/:id/invites", async (req: AuthenticatedRequest, res) =>
   return res.json({ invites });
 });
 
-app.post("/api/invites/accept", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
+app.get("/api/workspaces/:id/members", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const workspaceId = getParam(req.params.id);
+
+  const workspace = await requireWorkspace(res, workspaceId);
+  if (!workspace) return;
+
+  const member = await requireWorkspaceMember(res, workspaceId, userId);
+  if (!member) return;
+
+  const members = await prisma.workspaceMember.findMany({
+    where: { workspaceId },
+    orderBy: { createdAt: "asc" }
+  });
+
+  const payload = members.map((m) => ({
+    userId: m.userId,
+    email: null,
+    name: null,
+    role: m.role,
+    status: "active",
+    createdAt: m.createdAt
+  }));
+
+  return res.json({ members: payload });
+});
+
+app.post("/api/invites/accept", async (req: Request, res) => {
+  const userId = getUserId(req);
   const token = typeof req.body?.token === "string" ? req.body.token : "";
   if (!token) return res.status(400).json({ error: "TOKEN_REQUIRED" });
 
@@ -489,6 +629,13 @@ app.post("/api/invites/accept", async (req: AuthenticatedRequest, res) => {
     await prisma.workspaceInvite.update({
       where: { id: invite.id },
       data: { status: "expired", updatedAt: new Date() }
+    });
+    logAction({
+      workspaceId: invite.workspaceId,
+      actorUserId: userId,
+      action: "workspace_invite_accept",
+      result: "error",
+      reason: "INVITE_EXPIRED"
     });
     return res.status(410).json({ error: "INVITE_EXPIRED" });
   }
@@ -518,17 +665,63 @@ app.post("/api/invites/accept", async (req: AuthenticatedRequest, res) => {
     });
   });
 
+  try {
+    await mirrorMembership({
+      workspaceId: invite.workspaceId,
+      userId,
+      role: invite.role,
+      status: "active"
+    });
+  } catch (err) {
+    console.log("[rtdb] mirror invite accept failed", {
+      workspaceId: invite.workspaceId,
+      userId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+    logAction({
+      workspaceId: invite.workspaceId,
+      actorUserId: userId,
+      targetUserId: userId,
+      action: "workspace_invite_accept",
+      result: "error",
+      reason: "RTDB_MIRROR_FAILED",
+      error: err instanceof Error ? err.message : String(err)
+    });
+    await prisma.$transaction(async (tx) => {
+      await tx.workspaceMember.deleteMany({
+        where: { workspaceId: invite.workspaceId, userId }
+      });
+      await tx.workspaceInvite.update({
+        where: { id: invite.id },
+        data: {
+          status: "pending",
+          acceptedAt: null,
+          acceptedByUserId: null,
+          updatedAt: new Date()
+        }
+      });
+    });
+    return res.status(500).json({ error: "RTDB_MIRROR_FAILED" });
+  }
+
+  logAction({
+    workspaceId: invite.workspaceId,
+    actorUserId: userId,
+    targetUserId: userId,
+    action: "workspace_invite_accept",
+    result: "ok"
+  });
+
   return res.json({ ok: true, workspaceId: invite.workspaceId });
 });
 
-app.post("/api/workspaces/:id/invites/:inviteId/revoke", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const workspaceId = req.params.id;
-  const inviteId = req.params.inviteId;
+app.post("/api/workspaces/:id/invites/:inviteId/revoke", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const workspaceId = getParam(req.params.id);
+  const inviteId = getParam(req.params.inviteId);
 
-  const member = await requireWorkspaceMember(res, workspaceId, userId);
+  const member = await requireWorkspaceRole(res, workspaceId, userId, "admin");
   if (!member) return;
-  if (!hasMinRole(member.role, "admin")) return res.status(403).json({ error: "FORBIDDEN" });
 
   const invite = await prisma.workspaceInvite.findUnique({ where: { id: inviteId } });
   if (!invite || invite.workspaceId !== workspaceId) return res.status(404).json({ error: "NOT_FOUND" });
@@ -548,12 +741,162 @@ app.post("/api/workspaces/:id/invites/:inviteId/revoke", async (req: Authenticat
     payload: { inviteId, email: invite.email }
   });
 
+  logAction({
+    workspaceId,
+    actorUserId: userId,
+    action: "workspace_invite_revoke",
+    result: "ok"
+  });
+
   return res.json({ ok: true });
 });
 
-app.post("/api/workspaces/:id/projects", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const workspaceId = req.params.id;
+app.patch("/api/workspaces/:id/members/:userId", async (req: Request, res) => {
+  const actorUserId = getUserId(req);
+  const workspaceId = getParam(req.params.id);
+  const targetUserId = getParam(req.params.userId);
+
+  const workspace = await requireWorkspace(res, workspaceId);
+  if (!workspace) return;
+
+  const actor = await requireWorkspaceRole(res, workspaceId, actorUserId, "admin");
+  if (!actor) return;
+
+  const target = await prisma.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId: targetUserId } }
+  });
+
+  if (!target) return res.status(404).json({ error: "NOT_FOUND" });
+
+  const roleRaw = typeof req.body?.role === "string" ? req.body.role : "";
+  const allowedRoles: WorkspaceRole[] = ["owner", "admin", "manager", "member", "viewer"];
+  if (!allowedRoles.includes(roleRaw as WorkspaceRole)) {
+    return res.status(400).json({ error: "INVALID_ROLE" });
+  }
+  const nextRole = roleRaw as WorkspaceRole;
+
+  if (nextRole === "owner" && actor.role !== "owner") {
+    return res.status(403).json({ error: "FORBIDDEN" });
+  }
+
+  if (target.role === "owner" && nextRole !== "owner") {
+    const ownerCount = await countWorkspaceOwners(workspaceId);
+    if (ownerCount <= 1) {
+      return res.status(409).json({ error: "LAST_OWNER" });
+    }
+  }
+
+  const updated = await prisma.workspaceMember.update({
+    where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
+    data: { role: nextRole }
+  });
+
+  try {
+    await mirrorMembership({
+      workspaceId,
+      userId: targetUserId,
+      role: updated.role,
+      status: "active"
+    });
+  } catch (err) {
+    console.log("[rtdb] mirror member role failed", {
+      workspaceId,
+      userId: targetUserId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+    logAction({
+      workspaceId,
+      actorUserId,
+      targetUserId,
+      action: "workspace_member_role_update",
+      result: "error",
+      reason: "RTDB_MIRROR_FAILED",
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return res.status(500).json({ error: "RTDB_MIRROR_FAILED" });
+  }
+
+  logAction({
+    workspaceId,
+    actorUserId,
+    targetUserId,
+    action: "workspace_member_role_update",
+    result: "ok"
+  });
+
+  return res.json({
+    userId: updated.userId,
+    role: updated.role,
+    createdAt: updated.createdAt
+  });
+});
+
+app.delete("/api/workspaces/:id/members/:userId", async (req: Request, res) => {
+  const actorUserId = getUserId(req);
+  const workspaceId = getParam(req.params.id);
+  const targetUserId = getParam(req.params.userId);
+
+  const workspace = await requireWorkspace(res, workspaceId);
+  if (!workspace) return;
+
+  const actor = await requireWorkspaceRole(res, workspaceId, actorUserId, "admin");
+  if (!actor) return;
+
+  const target = await prisma.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId: targetUserId } }
+  });
+
+  if (!target) return res.status(404).json({ error: "NOT_FOUND" });
+
+  if (target.role === "owner" && actor.role !== "owner") {
+    return res.status(403).json({ error: "FORBIDDEN" });
+  }
+
+  if (target.role === "owner") {
+    const ownerCount = await countWorkspaceOwners(workspaceId);
+    if (ownerCount <= 1) {
+      return res.status(409).json({ error: "LAST_OWNER" });
+    }
+  }
+
+  await prisma.workspaceMember.delete({
+    where: { workspaceId_userId: { workspaceId, userId: targetUserId } }
+  });
+
+  try {
+    await removeMembership({ workspaceId, userId: targetUserId });
+  } catch (err) {
+    console.log("[rtdb] remove member failed", {
+      workspaceId,
+      userId: targetUserId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+    logAction({
+      workspaceId,
+      actorUserId,
+      targetUserId,
+      action: "workspace_member_remove",
+      result: "error",
+      reason: "RTDB_MIRROR_FAILED",
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return res.status(500).json({ error: "RTDB_MIRROR_FAILED" });
+  }
+
+  logAction({
+    workspaceId,
+    actorUserId,
+    targetUserId,
+    action: "workspace_member_remove",
+    result: "ok"
+  });
+
+  return res.json({ ok: true });
+});
+
+app.post("/api/workspaces/:id/projects", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const workspaceId = getParam(req.params.id);
 
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId }
@@ -611,9 +954,9 @@ app.post("/api/workspaces/:id/projects", async (req: AuthenticatedRequest, res) 
   });
 });
 
-app.get("/api/projects/:id/work-items", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const projectId = req.params.id;
+app.get("/api/projects/:id/work-items", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const projectId = getParam(req.params.id);
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -638,9 +981,9 @@ app.get("/api/projects/:id/work-items", async (req: AuthenticatedRequest, res) =
   });
 });
 
-app.patch("/api/work-items/:id", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const workItemId = req.params.id;
+app.patch("/api/work-items/:id", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const workItemId = getParam(req.params.id);
 
   const workItem = await prisma.workItem.findUnique({
     where: { id: workItemId },
@@ -740,9 +1083,9 @@ app.patch("/api/work-items/:id", async (req: AuthenticatedRequest, res) => {
   return res.json(updated);
 });
 
-app.post("/api/projects/:id/baselines", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const projectId = req.params.id;
+app.post("/api/projects/:id/baselines", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const projectId = getParam(req.params.id);
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -847,9 +1190,9 @@ app.post("/api/projects/:id/baselines", async (req: AuthenticatedRequest, res) =
   });
 });
 
-app.get("/api/projects/:id/baselines", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const projectId = req.params.id;
+app.get("/api/projects/:id/baselines", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const projectId = getParam(req.params.id);
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -872,9 +1215,9 @@ app.get("/api/projects/:id/baselines", async (req: AuthenticatedRequest, res) =>
   });
 });
 
-app.get("/api/projects/:id/risks", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const projectId = req.params.id;
+app.get("/api/projects/:id/risks", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const projectId = getParam(req.params.id);
 
   const project = await prisma.project.findUnique({
     where: { id: projectId }
@@ -892,9 +1235,9 @@ app.get("/api/projects/:id/risks", async (req: AuthenticatedRequest, res) => {
   return res.json({ risks });
 });
 
-app.get("/api/projects/:id/interventions", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const projectId = req.params.id;
+app.get("/api/projects/:id/interventions", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const projectId = getParam(req.params.id);
 
   const project = await prisma.project.findUnique({
     where: { id: projectId }
@@ -915,8 +1258,8 @@ app.get("/api/projects/:id/interventions", async (req: AuthenticatedRequest, res
   return res.json({ interventions });
 });
 
-app.get("/api/interventions", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
+app.get("/api/interventions", async (req: Request, res) => {
+  const userId = getUserId(req);
   const workspaceId = typeof req.query.workspaceId === "string" ? req.query.workspaceId : "";
   if (!workspaceId) {
     return res.status(400).json({ error: "WORKSPACE_ID_REQUIRED" });
@@ -985,9 +1328,9 @@ app.get("/api/interventions", async (req: AuthenticatedRequest, res) => {
   return res.json({ interventions: [...overdue, ...nonOverdue] });
 });
 
-app.patch("/api/interventions/:id", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const interventionId = req.params.id;
+app.patch("/api/interventions/:id", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const interventionId = getParam(req.params.id);
 
   const intervention = await prisma.intervention.findUnique({
     where: { id: interventionId },
@@ -1061,9 +1404,9 @@ app.patch("/api/interventions/:id", async (req: AuthenticatedRequest, res) => {
   return res.json(updated);
 });
 
-app.post("/api/projects/:id/seen", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const projectId = req.params.id;
+app.post("/api/projects/:id/seen", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const projectId = getParam(req.params.id);
 
   const project = await prisma.project.findUnique({
     where: { id: projectId }
@@ -1082,9 +1425,9 @@ app.post("/api/projects/:id/seen", async (req: AuthenticatedRequest, res) => {
   return res.json({ ok: true });
 });
 
-app.get("/api/workspaces/:id/projects", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const workspaceId = req.params.id;
+app.get("/api/workspaces/:id/projects", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const workspaceId = getParam(req.params.id);
 
   const member = await requireWorkspaceMember(res, workspaceId, userId);
   if (!member) return;
@@ -1164,7 +1507,7 @@ app.get("/api/workspaces/:id/projects", async (req: AuthenticatedRequest, res) =
   return res.json({ projects: payload });
 });
 
-app.get("/api/ops/worker", async (_req: AuthenticatedRequest, res) => {
+app.get("/api/ops/worker", async (_req: Request, res) => {
   const queueDepth = await prisma.recomputeQueue.count();
   const oldest = await prisma.recomputeQueue.findFirst({
     orderBy: { nextRunAt: "asc" },
@@ -1191,9 +1534,9 @@ app.get("/api/ops/worker", async (_req: AuthenticatedRequest, res) => {
   });
 });
 
-app.get("/api/projects/:id/recompute-runs", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const projectId = req.params.id;
+app.get("/api/projects/:id/recompute-runs", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const projectId = getParam(req.params.id);
 
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) return res.status(404).json({ error: "NOT_FOUND" });
@@ -1212,9 +1555,9 @@ app.get("/api/projects/:id/recompute-runs", async (req: AuthenticatedRequest, re
   return res.json({ runs });
 });
 
-app.get("/api/projects/:id/audit-events", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const projectId = req.params.id;
+app.get("/api/projects/:id/audit-events", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const projectId = getParam(req.params.id);
 
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) return res.status(404).json({ error: "NOT_FOUND" });
@@ -1256,9 +1599,9 @@ app.get("/api/projects/:id/audit-events", async (req: AuthenticatedRequest, res)
   return res.json({ events, nextBefore });
 });
 
-app.get("/api/projects/:id/baseline-diff", async (req: AuthenticatedRequest, res) => {
-  const userId = req.userId;
-  const projectId = req.params.id;
+app.get("/api/projects/:id/baseline-diff", async (req: Request, res) => {
+  const userId = getUserId(req);
+  const projectId = getParam(req.params.id);
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -1339,3 +1682,6 @@ const port = Number(process.env.PORT) || 3001;
 app.listen(port, () => {
   console.log(`server up on ${port}`);
 });
+
+
+

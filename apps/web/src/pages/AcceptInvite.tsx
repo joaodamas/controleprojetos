@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { endpoints } from "../api/endpoints";
@@ -38,3 +38,4 @@ export function AcceptInvite() {
     </div>
   );
 }
+

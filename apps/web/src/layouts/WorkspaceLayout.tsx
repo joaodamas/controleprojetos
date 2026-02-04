@@ -1,4 +1,3 @@
-import React from "react";
 import { NavLink, Outlet, useLoaderData, useNavigate } from "react-router-dom";
 import type { WorkspaceDTO } from "../loaders";
 import { clearAuthToken } from "../api/client";
@@ -86,3 +85,4 @@ export function WorkspaceLayout() {
     </div>
   );
 }
+

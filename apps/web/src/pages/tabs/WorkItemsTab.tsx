@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useLoaderData, useRevalidator } from "react-router-dom";
 import { api } from "../../api/client";
 import { endpoints } from "../../api/endpoints";
@@ -89,3 +89,4 @@ export function WorkItemsTab() {
     </div>
   );
 }
+

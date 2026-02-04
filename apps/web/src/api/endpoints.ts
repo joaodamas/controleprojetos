@@ -6,9 +6,16 @@ export const endpoints = {
   installBlueprint: (id: string) => `/api/workspaces/${id}/blueprint/install`,
   createProject: (workspaceId: string) => `/api/workspaces/${workspaceId}/projects`,
   workspaceInvites: (workspaceId: string) => `/api/workspaces/${workspaceId}/invites`,
+  workspaceInvitesByStatus: (workspaceId: string, status: string) =>
+    `/api/workspaces/${workspaceId}/invites?status=${encodeURIComponent(status)}`,
   createWorkspaceInvite: (workspaceId: string) => `/api/workspaces/${workspaceId}/invites`,
   revokeWorkspaceInvite: (workspaceId: string, inviteId: string) =>
     `/api/workspaces/${workspaceId}/invites/${inviteId}/revoke`,
+  workspaceMembers: (workspaceId: string) => `/api/workspaces/${workspaceId}/members`,
+  patchWorkspaceMember: (workspaceId: string, userId: string) =>
+    `/api/workspaces/${workspaceId}/members/${userId}`,
+  deleteWorkspaceMember: (workspaceId: string, userId: string) =>
+    `/api/workspaces/${workspaceId}/members/${userId}`,
   acceptInvite: () => `/api/invites/accept`,
 
   projectWorkItems: (projectId: string) => `/api/projects/${projectId}/work-items`,

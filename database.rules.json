@@ -11,13 +11,24 @@
     "groups": {
       ".read": "auth != null",
       ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')"
+      ,
+      "$groupId": {
+        "members": {
+          ".read": "auth != null && root.child('groups').child($groupId).child('members').child(auth.uid).exists()",
+          ".write": false
+        }
+      }
     },
     "users": {
       ".read": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
       ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
       "$uid": {
         ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
-        ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin' || (auth.uid === $uid && (!data.exists() || newData.child('role').val() == data.child('role').val()) && (!newData.child('groups').exists() || newData.child('groups').val() == data.child('groups').val())))"
+        ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin' || (auth.uid === $uid && (!data.exists() || newData.child('role').val() == data.child('role').val()) && (!newData.child('groups').exists() || newData.child('groups').val() == data.child('groups').val())))",
+        "groups": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        }
       }
     },
     "tenants": {

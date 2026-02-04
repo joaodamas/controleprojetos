@@ -6,65 +6,185 @@
   <title>AXON - Projects</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="styles.css?v=20260101-4">
 </head>
 <body>
   <div id="login-screen" class="login-screen">
-    <div class="login-card">
-      <div class="login-brand">
-        <img src="public/axon-projects.jpg" alt="AXON - Projects" class="login-logo">
+    <div class="login-shell">
+      <aside class="login-visual">
+        <div class="login-visual-inner">
+          <div class="logo-type logo-type--lg logo-type--light">
+            <div class="logo-type-title">
+              <span class="logo-type-axon">Axon</span>
+              <span class="logo-type-projects">Projects</span>
+            </div>
+            <span class="logo-type-tagline">Inteligencia em Gestao</span>
+          </div>
+          <p class="login-visual-title">Gestao enterprise para portfolios exigentes.</p>
+          <p class="login-visual-sub">GAP analysis, Curva S e GANTT em um unico painel.</p>
+          <ul class="login-visual-list">
+            <li>Alertas e SLA em tempo real</li>
+            <li>Monitor de atividades com prioridades</li>
+            <li>Seguranca e LGPD</li>
+          </ul>
+        </div>
+      </aside>
+
+      <div class="login-card" id="login-card" data-mode="login">
+        <div class="login-brand">
+          <div class="logo-type logo-type--md">
+            <div class="logo-type-title">
+              <span class="logo-type-axon">Axon</span>
+              <span class="logo-type-projects">Projects</span>
+            </div>
+            <span class="logo-type-tagline">Inteligencia em Gestao</span>
+          </div>
+        </div>
+
+        <form id="login-form" class="login-form">
+          <div class="login-header">
+            <h1 class="login-title" id="login-title">Entrar</h1>
+            <p class="login-subtitle">Acesse seu dashboard</p>
+          </div>
+
+          <label class="login-label signup-only" for="login-name">Nome completo</label>
+          <input id="login-name" type="text" class="login-input signup-only" placeholder="Seu nome" autocomplete="name">
+
+          <label class="login-label" for="login-email">E-mail</label>
+          <input id="login-email" type="email" class="login-input" placeholder="seu@email.com" required autocomplete="username">
+
+          <label class="login-label" for="login-password">Senha</label>
+          <input id="login-password" type="password" class="login-input" placeholder="Sua senha" required autocomplete="current-password">
+
+          <label class="login-label signup-only" for="login-password-confirm">Confirmar senha</label>
+          <input id="login-password-confirm" type="password" class="login-input signup-only" placeholder="Repita sua senha" autocomplete="new-password">
+
+          <button class="login-button" id="login-submit" type="submit">Entrar</button>
+
+          <div class="login-divider">ou</div>
+
+          <button class="login-button google" id="login-google" type="button">Entrar com Google</button>
+
+          <p id="login-error" class="login-error hidden"></p>
+        </form>
+
+        <div class="login-switch">
+          <span id="login-switch-text">Nao tem conta?</span>
+          <button type="button" class="login-link" id="login-switch-btn">Criar conta</button>
+        </div>
+
+        <div class="login-footer">(c) 2025 - AXON - Projects</div>
       </div>
-
-      <form id="login-form" class="login-form">
-        <label class="login-label" for="login-email">E-mail</label>
-        <input id="login-email" type="email" class="login-input" placeholder="seu@email.com" required autocomplete="username">
-
-        <label class="login-label" for="login-password">Senha</label>
-        <input id="login-password" type="password" class="login-input" placeholder="Sua senha" required autocomplete="current-password">
-
-        <button class="login-button" type="submit">Entrar</button>
-        <p id="login-error" class="login-error hidden"></p>
-      </form>
-
-      <div class="login-footer">(c) 2025 - AXON - Projects</div>
     </div>
   </div>
 
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar">
       <div class="brand">
-        <img class="brand-logo" src="public/axon-projects.jpg" alt="AXON - Projects">
+        <div class="logo-type logo-type--md logo-type--sidebar">
+          <div class="logo-type-title">
+            <span class="logo-type-axon logo-italic">Axon</span>
+            <span class="logo-type-projects logo-italic">Projects</span>
+          </div>
+          <span class="logo-type-tagline">Inteligencia em Gestao</span>
+        </div>
       </div>
       <nav class="nav">
-        <button class="nav-link active" data-section="inicio">Inicio</button>
-        <button class="nav-link" data-section="dashboard">Dashboard Projetos</button>
-        <button class="nav-link" data-section="monitor">Monitor de Atividades</button>
+        <button class="nav-link active" data-section="inicio">
+          <span class="nav-link-content">
+            <i data-lucide="home" class="nav-icon"></i>
+            <span>Inicio</span>
+          </span>
+        </button>
+        <button class="nav-link" data-section="dashboard">
+          <span class="nav-link-content">
+            <i data-lucide="layout-dashboard" class="nav-icon"></i>
+            <span>Dashboard Projetos</span>
+          </span>
+        </button>
+        <button class="nav-link" data-section="monitor">
+          <span class="nav-link-content">
+            <i data-lucide="activity" class="nav-icon"></i>
+            <span>Monitor de Atividades</span>
+          </span>
+        </button>
+        <button class="nav-link hidden" data-section="dev-board" id="nav-dev-board">
+          <span class="nav-link-content">
+            <i data-lucide="code-2" class="nav-icon"></i>
+            <span>Painel Desenvolvedor</span>
+          </span>
+        </button>
+        <button class="nav-link hidden" data-section="audit" id="nav-audit">
+          <span class="nav-link-content">
+            <i data-lucide="shield-alert" class="nav-icon"></i>
+            <span>Audit Logs</span>
+          </span>
+        </button>
         <div class="nav-group">
           <button class="nav-link with-caret" data-section="meus-projetos">
-            Meus Projetos
-            <span class="caret">›</span>
+            <span class="nav-link-content">
+              <i data-lucide="folder-kanban" class="nav-icon"></i>
+              <span>Meus Projetos</span>
+            </span>
+            <span class="caret">></span>
           </button>
           <div class="nav-sub" id="client-list"></div>
         </div>
       </nav>
-      <div class="footer-links">
-        <button class="nav-link ghost" data-section="config">Configuracoes</button>
-        <button class="nav-link ghost" data-section="sair" id="nav-logout">Encerrar</button>
+      <div class="sidebar-footer">
+        <button class="theme-toggle" type="button" data-theme-toggle aria-pressed="false">
+          <span class="theme-toggle-label">
+            <i data-lucide="moon" class="theme-icon theme-icon--dark"></i>
+            <i data-lucide="sun" class="theme-icon theme-icon--light"></i>
+            <span class="theme-toggle-text" data-theme-text>Dark mode</span>
+          </span>
+          <span class="theme-toggle-switch">
+            <span class="theme-toggle-knob"></span>
+          </span>
+        </button>
+
+        <div class="sidebar-user">
+          <div class="sidebar-user-avatar" data-sidebar-avatar>AX</div>
+          <div class="sidebar-user-info">
+            <div class="sidebar-user-name" data-sidebar-name>Administrador</div>
+            <div class="sidebar-user-role" data-sidebar-role>Administrator</div>
+          </div>
+          <button class="sidebar-user-logout" type="button" data-section="sair" aria-label="Encerrar sessao">
+            <i data-lucide="log-out" class="nav-icon"></i>
+          </button>
+        </div>
+
+        <div class="footer-links">
+          <button class="nav-link ghost" data-section="config">
+            <span class="nav-link-content">
+              <i data-lucide="settings" class="nav-icon"></i>
+              <span>Configuracoes</span>
+            </span>
+          </button>
+        </div>
       </div>
     </aside>
 
     <div class="main">
       <header class="topbar">
-        <div class="crumbs">
-          <span>Home</span>
-          <span>/</span>
-          <span id="crumb-path">Inicio</span>
-        </div>
+        <nav class="crumbs" aria-label="breadcrumb">
+          <button type="button" class="crumb-link" data-crumb="home">Home</button>
+          <span class="crumb-sep">/</span>
+          <span id="crumb-path" class="crumb-current">Inicio</span>
+        </nav>
         <div class="top-actions">
+          <button class="btn" data-section="relatorio">Gerar Relatório</button>
+          <button class="btn ghost" id="open-gantt-btn" type="button">Gerar GANTT</button>
           <button class="btn ghost" id="open-employee-modal">Cadastrar Funcionarios</button>
           <button class="btn ghost" id="edit-project-btn">Editar Projeto</button>
           <button class="btn primary" id="open-project-modal">+ Adicionar Projeto</button>
@@ -113,6 +233,7 @@
           </label>
         </div>
         <div class="modal-actions">
+          <button type="button" class="btn ghost danger hidden" id="delete-project-btn">Excluir Projeto</button>
           <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
           <button type="submit" class="btn primary">Salvar Projeto</button>
         </div>
@@ -199,16 +320,24 @@
           <select name="package" id="activity-package-select"></select>
         </label>
         <label>
-          Vencimento
+          Data inicio
+          <input type="date" name="start">
+        </label>
+        <label>
+          Data fim
           <input type="date" name="due" required>
+        </label>
+        <label>
+          Percentual (%)
+          <input type="number" name="progress" min="0" max="100" step="1" placeholder="0">
         </label>
         <label>
           Status
           <select name="status" required>
-            <option value="planejado" selected>Planejado</option>
+            <option value="planejado" selected>Nao iniciado</option>
             <option value="em_andamento">Em andamento</option>
             <option value="em_validacao">Em validacao</option>
-            <option value="atrasado">Atrasado</option>
+            <option value="parado">Parado</option>
             <option value="concluido">Concluido</option>
           </select>
         </label>
@@ -285,6 +414,35 @@
     </div>
   </div>
 
+  <div class="modal gantt-modal" id="gantt-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-content gantt-content">
+      <div class="gantt-header">
+        <div>
+          <h2 id="gantt-title">Cronograma do Projeto</h2>
+          <p id="gantt-subtitle">Visualização por Épicos e Dependências</p>
+        </div>
+        <div class="gantt-header-actions">
+          <div class="gantt-legend">
+            <span><span class="dot ok"></span>Concluido</span>
+            <span><span class="dot done"></span>Em andamento</span>
+            <span><span class="dot late"></span>Em atraso</span>
+          </div>
+          <button class="icon-btn" data-close-modal>&times;</button>
+        </div>
+      </div>
+
+      <div class="gantt-body">
+        <div id="gantt-content"></div>
+      </div>
+
+      <div class="gantt-footer">
+        <div id="gantt-footer-left">Dica: as barras seguem as datas de inicio e fim das atividades.</div>
+        <div id="gantt-footer-right"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal" id="monitor-task-modal">
     <div class="modal-backdrop" data-close-modal></div>
     <div class="modal-content">
@@ -319,6 +477,11 @@
     <select id="status-select"></select>
   </div>
 
+  <div class="progress-popover" id="progress-popover">
+    <input type="number" id="progress-input" min="0" max="100" step="1">
+    <button type="button" class="btn sm primary" id="progress-save-btn">Salvar</button>
+  </div>
+
   <div class="task-actions-popover" id="task-actions-popover">
     <button class="action-item" id="task-edit-action">Editar</button>
     <button class="action-item danger" id="task-delete-action">Excluir</button>
@@ -326,6 +489,21 @@
 
   </div>
 
-  <script src="./app.js?v=20260101-5" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+  <script src="./app.js?v=20260204-8" defer></script>
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      if (window.lucide) {
+        window.lucide.createIcons();
+      }
+    });
+  </script>
 </body>
 </html>
+
+
+
+
+

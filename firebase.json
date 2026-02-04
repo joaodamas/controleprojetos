@@ -25,10 +25,17 @@
     ],
     "rewrites": [
       {
+        "source": "/onepage.html",
+        "destination": "/onepage.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
     ]
+  },
+  "functions": {
+    "source": "functions"
   },
   "database": {
     "rules": "database.rules.json"

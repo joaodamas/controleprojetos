@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useLoaderData, useNavigate } from "react-router-dom";
 import type { WorkspaceDTO } from "../loaders";
 import { api } from "../api/client";
@@ -132,3 +132,4 @@ export function Dashboard() {
     </div>
   );
 }
+

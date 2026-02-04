@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "concurrently -n server,web \"npm -w apps/server run dev\" \"npm -w apps/web run dev\"",
     "dev:all": "concurrently -k \"npm -w apps/server run dev:all\" \"npm -w apps/web run dev\"",
+    "dev:firebase": "firebase emulators:start --only hosting",
     "build": "npm -w apps/server run build && npm -w apps/web run build",
     "start": "npm -w apps/server run start"
   }

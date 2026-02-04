@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useLoaderData, useNavigate } from "react-router-dom";
 import type { WorkspaceDTO } from "../loaders";
 import { api } from "../api/client";
@@ -47,3 +47,4 @@ export function Onboarding() {
     </div>
   );
 }
+

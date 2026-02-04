@@ -1,17 +1,22 @@
 import { PrismaClient } from "@prisma/client";
-
 import { loadEnv } from "./env";
 
-// Ensure DATABASE_URL is available for PrismaClient at runtime.
 loadEnv();
 
+if (!process.env.PRISMA_CLIENT_ENGINE_TYPE) {
+  process.env.PRISMA_CLIENT_ENGINE_TYPE = "binary";
+}
+
+console.log("[DB] DATABASE_URL=", process.env.DATABASE_URL);
+console.log("[DB] ACCELERATE_URL=", process.env.ACCELERATE_URL);
+console.log("[DB] PRISMA_ACCELERATE_URL=", process.env.PRISMA_ACCELERATE_URL);
+console.log("[DB] PRISMA_CLIENT_ENGINE_TYPE=", process.env.PRISMA_CLIENT_ENGINE_TYPE);
+
 const url = process.env.DATABASE_URL;
-if (!url || typeof url !== "string" || url.trim().length === 0) {
+if (!url) {
   throw new Error(
-    'DATABASE_URL is missing. Create "apps/server/.env.local" with DATABASE_URL=... or set it in the environment.'
+    "DATABASE_URL ausente. Crie apps/server/.env.local com DATABASE_URL=prisma+postgres://..."
   );
 }
 
-export const prisma = new PrismaClient({
-  datasources: { db: { url } },
-});
+export const prisma = new PrismaClient();

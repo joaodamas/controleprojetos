@@ -196,3 +196,9 @@ Ajuste o caminho do Python conforme seu ambiente.
   - Subcolecao `tasks` em cada projeto (campos: `title`, `due`, `status`)
 - Criar projeto/atividade usa Firestore; alterar status no pill tambem atualiza o documento da tarefa.
 - Se o Firebase nao estiver configurado, a UI cai no modo local (dados mock em memoria).
+
+---
+
+## Fonte de verdade de membership
+- Postgres e a API sao a fonte de verdade para workspace/members/roles.
+- RTDB e apenas espelho de compatibilidade (rules/legado). Nao escreva membership pelo client.

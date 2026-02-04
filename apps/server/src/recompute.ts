@@ -1,5 +1,5 @@
 import { prisma } from "./db";
-import { InterventionStatus, RiskSeverity, RiskStatus, WorkItemType } from "@prisma/client";
+import { InterventionStatus, Prisma, RiskSeverity, RiskStatus, WorkItemType } from "@prisma/client";
 
 type RecomputeReason = string;
 
@@ -158,14 +158,14 @@ async function recomputeProject(projectId: string, reason: RecomputeReason) {
           severity: d.severity,
           status: nextStatus,
           explanation: d.explanation,
-          evidenceJson: null
+          evidenceJson: Prisma.DbNull
         },
         update: {
           targetWorkItemId: d.targetWorkItemId,
           severity: d.severity,
           status: nextStatus,
           explanation: d.explanation,
-          resolvedAt: nextStatus === RiskStatus.resolved ? new Date() : null
+          resolvedAt: null
         },
         select: { id: true, status: true, severity: true }
       });
