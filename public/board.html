@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AXON - Board Agile</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet" />
+  <style>
+    body { background-color: #020617; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
+    .color-scheme-dark { color-scheme: dark; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/lucide-react@0.379.0/dist/lucide-react.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const {
+      Search,
+      Calendar,
+      Clock,
+      ChevronRight,
+      ChevronDown,
+      X,
+      Plus,
+      Layers,
+      GripVertical,
+      Archive,
+      PanelLeftClose,
+      PanelLeftOpen,
+      UserPlus
+    } = lucide;
+
+    const USERS = [
+      { id: 1, name: 'João Damas (eu)', email: 'joao.damas@bbpaper.com.br', avatar: 'https://i.pravatar.cc/150?u=joao' },
+      { id: 2, name: 'Aline Oshiro', email: 'aline.oshiro@bbpaper.com.br', avatar: 'https://i.pravatar.cc/150?u=aline' },
+      { id: 3, name: 'Lucas Svizzero', email: 'lucas.svizzero@bbpaper.com.br', avatar: 'https://i.pravatar.cc/150?u=lucas' },
+      { id: 4, name: 'Mariana Silva', email: 'mariana.silva@bbpaper.com.br', avatar: 'https://i.pravatar.cc/150?u=mari' }
+    ];
+
+    const CLIENTS = ['KPMG - BPO', 'KPMG - FORD', 'BBP Geral', 'Auricchio', 'KPMG - ILLUMINA', 'KPMG - J&J', 'KPMG Ford - SAP', 'Wheaton'];
+
+    const TYPES = [
+      { label: 'Demanda Interna', color: 'bg-blue-500' },
+      { label: 'Projeto', color: 'bg-purple-500' },
+      { label: 'Reunião', color: 'bg-amber-500' },
+      { label: 'Change', color: 'bg-emerald-500' },
+      { label: 'Pré Venda', color: 'bg-slate-500' },
+      { label: 'Levantamento', color: 'bg-indigo-500' }
+    ];
+
+    const SPRINTS = ['Sprint 008', 'Sprint 009', 'Sprint 010 (Backlog)'];
+
+    const INITIAL_TASKS = [
+      {
+        id: 'BBP-1083',
+        title: 'KPMG BPO - RECON - Desenvolvimento - Criação Config por Arquivo - DIFAL',
+        client: 'KPMG - BPO',
+        type: 'Projeto',
+        priority: 'Média',
+        dueDate: '2026-02-20',
+        assignee: USERS[2],
+        sprint: 'Sprint 009',
+        status: 'Em andamento',
+        timeSpent: '5h',
+        estimate: '2d 4h',
+        description: '',
+        checklist: [],
+        comments: []
+      }
+    ];
+
+    const PriorityBadge = ({ priority }) => {
+      const colors = {
+        'Alta': 'bg-red-500/20 text-red-400 border-red-500/30',
+        'Média': 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+        'Baixa': 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+      };
+      return (
+        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${colors[priority]}`}>
+          {priority?.toUpperCase()}
+        </span>
+      );
+    };
+
+    const AttributeField = ({ label, children }) => (
+      <div className="space-y-1.5">
+        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{label}</p>
+        {children}
+      </div>
+    );
+
+    const TaskModal = ({ task, isOpen, onClose, onSave, mode = 'edit' }) => {
+      const [formData, setFormData] = React.useState({
+        title: '',
+        description: '',
+        client: 'Nenhum cliente',
+        type: 'Sem Tipo',
+        priority: 'Média',
+        dueDate: '',
+        assignee: null,
+        status: 'Não Iniciado',
+        estimate: '',
+        sprint: 'Sprint 009'
+      });
+
+      React.useEffect(() => {
+        if (task && mode === 'edit') {
+          setFormData({ ...task });
+        } else {
+          setFormData({
+            title: '',
+            description: '',
+            client: 'Nenhum cliente',
+            type: 'Sem Tipo',
+            priority: 'Média',
+            dueDate: '',
+            assignee: null,
+            status: 'Não Iniciado',
+            estimate: '',
+            sprint: 'Sprint 009'
+          });
+        }
+      }, [task, mode, isOpen]);
+
+      if (!isOpen) return null;
+
+      const handleSave = () => {
+        if (!formData.title) return;
+        onSave({
+          ...formData,
+          id: mode === 'create' ? `BBP-${Math.floor(Math.random() * 1000 + 1000)}` : formData.id,
+          comments: formData.comments || [],
+          checklist: formData.checklist || [],
+          timeSpent: formData.timeSpent || '0h'
+        });
+        onClose();
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700 w-full max-w-6xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between p-4 border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="bg-blue-600/20 p-2 rounded-lg">
+                  <Plus className="text-blue-400" size={20} />
+                </div>
+                <h2 className="text-lg font-bold text-slate-100">
+                  {mode === 'create' ? 'Novo Card' : `Editar ${formData.id}`}
+                </h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSave}
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg text-sm font-bold transition-all"
+                >
+                  {mode === 'create' ? 'Criar' : 'Salvar Alterações'}
+                </button>
+                <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400">
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-1 overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-8 border-r border-slate-800 custom-scrollbar">
+                <div className="space-y-6">
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Resumo</label>
+                    <input
+                      type="text"
+                      placeholder="Digite o título da atividade..."
+                      className="w-full bg-transparent text-2xl font-bold text-slate-100 outline-none placeholder:text-slate-700 border-b border-transparent focus:border-blue-500/30 pb-2 transition-all"
+                      value={formData.title}
+                      onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-4 mb-2 border-b border-slate-800">
+                      <button className="px-4 py-2 text-sm font-bold text-blue-400 border-b-2 border-blue-500">Visual</button>
+                      <button className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-300 transition-colors">Markdown</button>
+                    </div>
+                    <textarea
+                      placeholder="Digite ou cole a descrição aqui..."
+                      className="w-full bg-slate-800/30 border border-slate-700/50 rounded-xl p-6 text-slate-300 min-h-[300px] outline-none focus:ring-1 focus:ring-blue-500/50 resize-none leading-relaxed"
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-4 flex items-center gap-4 cursor-pointer hover:bg-blue-500/10 transition-all">
+                    <div className="bg-blue-500/20 p-2 rounded-lg"><UserPlus size={20} className="text-blue-400" /></div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-200">Adicionar anexos</p>
+                      <p className="text-xs text-slate-500">Clique para navegar ou arraste os arquivos aqui</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <aside className="w-80 overflow-y-auto p-6 space-y-6 bg-slate-900/50 shrink-0 custom-scrollbar">
+                <AttributeField label="Projeto">
+                  <div className="flex items-center gap-2 text-slate-300 text-sm font-medium">
+                    <div className="w-5 h-5 bg-purple-600 rounded flex items-center justify-center text-[10px] font-black italic">D</div>
+                    Demandas BBP
+                  </div>
+                </AttributeField>
+
+                <AttributeField label="Cliente">
+                  <select
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none focus:ring-1 focus:ring-blue-500"
+                    value={formData.client}
+                    onChange={(e) => setFormData({ ...formData, client: e.target.value })}
+                  >
+                    <option>Nenhum cliente</option>
+                    {CLIENTS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </AttributeField>
+
+                <AttributeField label="Tipo">
+                  <select
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none focus:ring-1 focus:ring-blue-500"
+                    value={formData.type}
+                    onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                  >
+                    <option>Sem Tipo</option>
+                    {TYPES.map(t => <option key={t.label} value={t.label}>{t.label}</option>)}
+                  </select>
+                </AttributeField>
+
+                <AttributeField label="Prioridade">
+                  <select
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none focus:ring-1 focus:ring-blue-500"
+                    value={formData.priority}
+                    onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
+                  >
+                    <option>Baixa</option>
+                    <option>Média</option>
+                    <option>Alta</option>
+                  </select>
+                </AttributeField>
+
+                <AttributeField label="Data de Entrega">
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+                    <input
+                      type="date"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200 outline-none focus:ring-1 focus:ring-blue-500 color-scheme-dark"
+                      value={formData.dueDate}
+                      onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
+                    />
+                  </div>
+                </AttributeField>
+
+                <AttributeField label="Responsável">
+                  <select
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none focus:ring-1 focus:ring-blue-500"
+                    value={formData.assignee?.id || ''}
+                    onChange={(e) => setFormData({ ...formData, assignee: USERS.find(u => u.id === parseInt(e.target.value, 10)) })}
+                  >
+                    <option value="">Não atribuída</option>
+                    {USERS.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                </AttributeField>
+
+                <AttributeField label="Situação">
+                  <select
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                    value={formData.status}
+                    onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                  >
+                    <option>Não Iniciado</option>
+                    <option>Em andamento</option>
+                    <option>Finalizada</option>
+                  </select>
+                </AttributeField>
+
+                <AttributeField label="Estimativa">
+                  <div className="relative">
+                    <Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+                    <input
+                      type="text"
+                      placeholder="Ex: 1w 1d 1h"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200 outline-none focus:ring-1 focus:ring-blue-500"
+                      value={formData.estimate}
+                      onChange={(e) => setFormData({ ...formData, estimate: e.target.value })}
+                    />
+                  </div>
+                </AttributeField>
+
+                <AttributeField label="Boards / Sprint">
+                  <select
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 outline-none focus:ring-1 focus:ring-blue-500"
+                    value={formData.sprint}
+                    onChange={(e) => setFormData({ ...formData, sprint: e.target.value })}
+                  >
+                    <option value="Backlog">Backlog</option>
+                    {SPRINTS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </AttributeField>
+              </aside>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const TaskCard = ({ task, onClick, onDragStart }) => (
+      <div
+        draggable
+        onDragStart={(e) => onDragStart(e, task.id)}
+        onClick={() => onClick(task)}
+        className="group bg-slate-800/40 border border-slate-700/50 hover:border-blue-500/50 rounded-xl p-4 transition-all cursor-grab active:cursor-grabbing hover:shadow-lg hover:shadow-blue-500/5"
+      >
+        <div className="flex justify-between items-start mb-3">
+          <div className="flex items-center gap-2">
+            <GripVertical size={14} className="text-slate-600 group-hover:text-slate-400" />
+            <span className="text-xs font-mono text-slate-500">{task.id}</span>
+          </div>
+          <PriorityBadge priority={task.priority} />
+        </div>
+        <h3 className="text-sm font-semibold text-slate-200 line-clamp-2 mb-4 group-hover:text-blue-400 transition-colors">
+          {task.title}
+        </h3>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <span className="bg-slate-700 text-slate-300 text-[10px] px-2 py-1 rounded flex items-center gap-1">
+            <Layers size={10} /> {task.sprint}
+          </span>
+          {task.dueDate && (
+            <span className="bg-slate-700 text-slate-300 text-[10px] px-2 py-1 rounded flex items-center gap-1">
+              <Calendar size={10} /> {task.dueDate}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center justify-between pt-3 border-t border-slate-700/50">
+          <div className="flex items-center gap-2">
+            {task.assignee ? (
+              <img src={task.assignee.avatar} className="w-7 h-7 rounded-full border-2 border-slate-800" alt="" />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-[10px] text-slate-400 font-bold border-2 border-slate-800">?</div>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-[11px] text-slate-400 font-medium">
+            <Clock size={12} className="text-slate-500" /> {task.estimate || '--'}
+          </div>
+        </div>
+      </div>
+    );
+
+    const Column = ({ title, count, tasks, onTaskClick, onDragStart, onDrop, columnId }) => {
+      const [isOver, setIsOver] = React.useState(false);
+      return (
+        <div
+          className={`flex flex-col w-80 shrink-0 p-2 rounded-xl transition-all duration-200 ${isOver ? 'bg-blue-500/5 ring-2 ring-blue-500/20' : 'bg-transparent'}`}
+          onDragOver={(e) => { e.preventDefault(); setIsOver(true); }}
+          onDragLeave={() => setIsOver(false)}
+          onDrop={(e) => { setIsOver(false); onDrop(e, columnId); }}
+        >
+          <div className="flex items-center justify-between mb-4 px-1">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">{title}</h2>
+              <span className="bg-slate-800 text-slate-500 text-[10px] px-1.5 py-0.5 rounded-md font-bold">{count}</span>
+            </div>
+            <Plus size={16} className="text-slate-600 hover:text-slate-300 cursor-pointer transition-colors" />
+          </div>
+          <div className="flex flex-col gap-3 min-h-[150px]">
+            {tasks.map(task => <TaskCard key={task.id} task={task} onClick={onTaskClick} onDragStart={onDragStart} />)}
+            {tasks.length === 0 && (
+              <div className="flex-1 border-2 border-dashed border-slate-800/20 rounded-xl flex items-center justify-center text-slate-800 text-xs italic">
+                Coluna vazia
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const BacklogSidebar = ({ tasks, isOpen, onTaskClick, onDragStart }) => {
+      const [backlogSearch, setBacklogSearch] = React.useState('');
+      const backlogTasks = tasks.filter(t =>
+        t.sprint === 'Backlog' &&
+        (t.title.toLowerCase().includes(backlogSearch.toLowerCase()) || t.id.toLowerCase().includes(backlogSearch.toLowerCase()))
+      );
+
+      return (
+        <div className={`bg-slate-900 border-r border-slate-800 transition-all duration-300 flex flex-col overflow-hidden ${isOpen ? 'w-80 opacity-100' : 'w-0 opacity-0'}`}>
+          <div className="p-4 border-b border-slate-800 flex items-center justify-between min-w-[320px]">
+            <h2 className="font-bold flex items-center gap-2 text-slate-200"><Archive size={18} className="text-blue-400" /> Backlog</h2>
+            <span className="text-xs bg-slate-800 text-slate-500 px-2 py-1 rounded-full font-mono">{backlogTasks.length}</span>
+          </div>
+          <div className="p-4 min-w-[320px]">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
+              <input
+                type="text" placeholder="Filtrar backlog..."
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-4 py-2 text-xs outline-none"
+                value={backlogSearch} onChange={(e) => setBacklogSearch(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 min-w-[320px] custom-scrollbar">
+            {backlogTasks.map(task => (
+              <div
+                key={task.id} draggable onDragStart={(e) => onDragStart(e, task.id)} onClick={() => onTaskClick(task)}
+                className="bg-slate-800/40 border border-slate-800 p-3 rounded-lg hover:border-slate-600 transition-all cursor-pointer group"
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-[10px] font-mono text-slate-500">{task.id}</span>
+                  <PriorityBadge priority={task.priority} />
+                </div>
+                <p className="text-xs text-slate-300 font-medium line-clamp-2 group-hover:text-blue-400">{task.title}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    function App() {
+      const [tasks, setTasks] = React.useState(INITIAL_TASKS);
+      const [selectedTaskId, setSelectedTaskId] = React.useState(null);
+      const [isCreating, setIsCreating] = React.useState(false);
+      const [search, setSearch] = React.useState('');
+      const [isBacklogOpen, setIsBacklogOpen] = React.useState(false);
+
+      const selectedTask = tasks.find(t => t.id === selectedTaskId);
+
+      const handleSaveTask = (newTask) => {
+        if (tasks.find(t => t.id === newTask.id)) {
+          setTasks(tasks.map(t => t.id === newTask.id ? newTask : t));
+        } else {
+          setTasks([...tasks, newTask]);
+        }
+        setIsCreating(false);
+        setSelectedTaskId(null);
+      };
+
+      const onDragStart = (e, taskId) => {
+        e.dataTransfer.setData('taskId', taskId);
+      };
+
+      const onDrop = (e, newStatus) => {
+        const taskId = e.dataTransfer.getData('taskId');
+        const taskToUpdate = tasks.find(t => t.id === taskId);
+        if (taskToUpdate) {
+          const newSprint = taskToUpdate.sprint === 'Backlog' ? 'Sprint 009' : taskToUpdate.sprint;
+          handleSaveTask({ ...taskToUpdate, status: newStatus, sprint: newSprint });
+        }
+      };
+
+      const columns = [
+        { id: 'Não Iniciado', title: 'Não Iniciado' },
+        { id: 'Em andamento', title: 'Em andamento' },
+        { id: 'Finalizada', title: 'Finalizada' },
+      ];
+
+      const filteredTasks = tasks.filter(t =>
+        t.sprint !== 'Backlog' &&
+        (t.title.toLowerCase().includes(search.toLowerCase()) || t.id.toLowerCase().includes(search.toLowerCase()))
+      );
+
+      return (
+        <div className="h-screen bg-slate-950 text-slate-200 font-sans flex flex-col overflow-hidden">
+          <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md shrink-0 z-40">
+            <div className="max-w-[1800px] mx-auto px-6 h-16 flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold shadow-lg shadow-blue-600/20">B</div>
+                  <h1 className="font-bold text-lg hidden sm:block">Boards Pro</h1>
+                </div>
+                <button
+                  onClick={() => setIsBacklogOpen(!isBacklogOpen)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${isBacklogOpen ? 'bg-blue-600' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                >
+                  {isBacklogOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+                  <span className="hidden lg:block">Backlog</span>
+                </button>
+                <nav className="hidden xl:flex items-center gap-2 text-xs font-medium text-slate-500">
+                  <ChevronRight size={14} /> <span className="text-slate-300">Sprint 009</span>
+                </nav>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                  <input
+                    type="text" placeholder="Pesquisar..."
+                    className="bg-slate-800 border border-slate-700 rounded-full pl-10 pr-4 py-2 text-sm w-48 focus:ring-1 focus:ring-blue-500 outline-none"
+                    value={search} onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <button
+                  onClick={() => setIsCreating(true)}
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-blue-600/20 active:scale-95 transition-all"
+                >
+                  Novo Card
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div className="flex flex-1 overflow-hidden relative">
+            <BacklogSidebar
+              tasks={tasks}
+              isOpen={isBacklogOpen}
+              onTaskClick={(t) => setSelectedTaskId(t.id)}
+              onDragStart={onDragStart}
+            />
+
+            <main className="flex-1 p-6 flex flex-col overflow-hidden">
+              <div className="flex gap-6 overflow-x-auto pb-6 custom-scrollbar flex-1 items-start">
+                {columns.map(col => (
+                  <Column
+                    key={col.id} columnId={col.id} title={col.title}
+                    count={filteredTasks.filter(t => t.status === col.id).length}
+                    tasks={filteredTasks.filter(t => t.status === col.id)}
+                    onTaskClick={(t) => setSelectedTaskId(t.id)}
+                    onDragStart={onDragStart} onDrop={onDrop}
+                  />
+                ))}
+              </div>
+            </main>
+          </div>
+
+          <TaskModal
+            mode="create"
+            isOpen={isCreating}
+            onClose={() => setIsCreating(false)}
+            onSave={handleSaveTask}
+          />
+
+          <TaskModal
+            mode="edit"
+            task={selectedTask}
+            isOpen={!!selectedTaskId}
+            onClose={() => setSelectedTaskId(null)}
+            onSave={handleSaveTask}
+          />
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

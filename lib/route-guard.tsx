@@ -1,40 +1,57 @@
-import { useEffect } from 'react';
-// O hook de roteamento pode variar (ex: 'next/router', 'react-router-dom')
-// import { useRouter } from 'next/router'; 
-
-// Mock do useRouter para o exemplo funcionar
-const useRouter = () => ({
-  pathname: window.location.pathname,
-  push: (path: string) => {
-    console.log(`Redirecting to ${path}`);
-    // Em uma aplicação real, isso mudaria a URL
-    // window.location.pathname = path;
-  }
-});
+import { useEffect, useState } from 'react';
 
 interface RouteGuardProps {
   user: {
     has_completed_onboarding?: boolean;
   } | null;
   children: React.ReactNode;
+  loginPath?: string;
+  onboardingPath?: string;
+  dashboardPath?: string;
 }
 
-export function RouteGuard({ user, children }: RouteGuardProps) {
-  const router = useRouter();
+const PUBLIC_PATHS = new Set(['/', '/login', '/landing', '/pricing']);
+
+export function RouteGuard({
+  user,
+  children,
+  loginPath = '/login',
+  onboardingPath = '/onboarding',
+  dashboardPath = '/dashboard',
+}: RouteGuardProps) {
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    if (user) {
-      // Se não completou o onboarding, trava ele na tela de configuração
-      if (!user.has_completed_onboarding && router.pathname !== '/onboarding') {
-        router.push('/onboarding');
+    const currentPath = window.location.pathname;
+
+    if (!user) {
+      if (!PUBLIC_PATHS.has(currentPath)) {
+        window.location.href = loginPath;
+        return;
       }
-      
-      // Se já completou, não deixa voltar pro onboarding
-      if (user.has_completed_onboarding && router.pathname === '/onboarding') {
-        router.push('/dashboard');
-      }
+      setIsReady(true);
+      return;
     }
-  }, [user, router.pathname]);
+
+    const hasCompletedOnboarding = user.has_completed_onboarding ?? false;
+    const isOnboardingPage = currentPath === onboardingPath;
+
+    if (!hasCompletedOnboarding && !isOnboardingPage) {
+      window.location.href = onboardingPath;
+      return;
+    }
+
+    if (hasCompletedOnboarding && isOnboardingPage) {
+      window.location.href = dashboardPath;
+      return;
+    }
+
+    setIsReady(true);
+  }, [user, loginPath, onboardingPath, dashboardPath]);
+
+  if (!isReady) {
+    return null;
+  }
 
   return <>{children}</>;
 }

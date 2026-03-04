@@ -1,31 +1,70 @@
 {
   "rules": {
-    "clients": {
-      ".read": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
-      ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
-      "$clientId": {
-        ".read": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin' || (data.child('groupId').exists() && root.child('groups').child(data.child('groupId').val()).child('members').child(auth.uid).val() === true))",
-        ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')"
+    "workspaces": {
+      "$workspaceId": {
+        ".read": "auth != null && (root.child('workspaces/' + $workspaceId + '/ownerId').val() === auth.uid || root.child('users/' + auth.uid + '/workspaces/' + $workspaceId).exists())",
+        ".write": "auth != null && (newData.child('ownerId').val() === auth.uid || root.child('workspaces/' + $workspaceId + '/ownerId').val() === auth.uid || root.child('users/' + auth.uid + '/workspaces/' + $workspaceId).exists())",
+        "clients": {
+          ".read": "auth != null && (root.child('workspaces/' + $workspaceId + '/ownerId').val() === auth.uid || root.child('users/' + auth.uid + '/workspaces/' + $workspaceId).exists())",
+          ".write": "auth != null && (root.child('workspaces/' + $workspaceId + '/ownerId').val() === auth.uid || root.child('users/' + auth.uid + '/workspaces/' + $workspaceId).exists())",
+          "$clientId": {
+            ".read": "auth != null && (root.child('workspaces/' + $workspaceId + '/ownerId').val() === auth.uid || root.child('users/' + auth.uid + '/workspaces/' + $workspaceId).exists())",
+            ".write": "auth != null && (root.child('workspaces/' + $workspaceId + '/ownerId').val() === auth.uid || root.child('users/' + auth.uid + '/workspaces/' + $workspaceId).exists())"
+          }
+        },
+        "groups": {
+          ".read": "auth != null && (root.child('workspaces/' + $workspaceId + '/ownerId').val() === auth.uid || root.child('users/' + auth.uid + '/workspaces/' + $workspaceId).exists())",
+          ".write": "auth != null && (root.child('workspaces/' + $workspaceId + '/ownerId').val() === auth.uid || root.child('users/' + auth.uid + '/workspaces/' + $workspaceId).exists())",
+          "$groupId": {
+            ".read": "auth != null && (root.child('workspaces/' + $workspaceId + '/ownerId').val() === auth.uid || root.child('users/' + auth.uid + '/workspaces/' + $workspaceId).exists())",
+            ".write": "auth != null && (root.child('workspaces/' + $workspaceId + '/ownerId').val() === auth.uid || root.child('users/' + auth.uid + '/workspaces/' + $workspaceId).exists())"
+          }
+        }
       }
     },
+
+    "clients": {
+      ".read": "auth != null && root.child('users/' + auth.uid + '/isAdmin').val() === true",
+      ".write": "auth != null && root.child('users/' + auth.uid + '/isAdmin').val() === true",
+      "$clientId": {
+        ".read": "auth != null && root.child('users/' + auth.uid + '/isAdmin').val() === true",
+        ".write": "auth != null && root.child('users/' + auth.uid + '/isAdmin').val() === true"
+      }
+    },
+
     "groups": {
       ".read": "auth != null",
-      ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')"
+      ".write": "auth != null && root.child('users/' + auth.uid + '/isAdmin').val() === true"
     },
+
     "users": {
-      ".read": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
-      ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
       "$uid": {
-        ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
-        ".write": "auth != null && (auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin' || (auth.uid === $uid && (!data.exists() || newData.child('role').val() == data.child('role').val()) && (!newData.child('groups').exists() || newData.child('groups').val() == data.child('groups').val())))"
+        ".read": "auth != null && (auth.uid === $uid || root.child('users/' + auth.uid + '/isAdmin').val() === true)",
+        ".write": "auth != null && (auth.uid === $uid || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
       }
     },
+
     "tenants": {
       "$uid": {
-        ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
-        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'joaodamasit@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')"
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        "$child": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid"
+        }
       }
     },
+
+    "audit_logs": {
+      "$tenantId": {
+        ".read": "auth != null && (auth.uid === $tenantId || root.child('users/' + auth.uid + '/isAdmin').val() === true)",
+        ".write": "auth != null && auth.uid === $tenantId",
+        "$logId": {
+          ".validate": "newData.hasChildren(['action', 'timestamp', 'userId'])"
+        }
+      }
+    },
+
     ".read": false,
     ".write": false
   }

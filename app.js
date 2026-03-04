@@ -18,195 +18,12 @@ let db = null;
 let auth = null;
 let appInitialized = false;
 
+// ATENÇÃO: O objeto 'state' com dados fixos deve ser removido em produção.
+// Ele serve como um bom exemplo da estrutura de dados, mas em um ambiente real,
+// os dados devem ser carregados exclusivamente do Firebase para o tenant correto.
+// Manter isso pode causar confusão e sobrepor dados reais.
 const state = {
-  clients: [
-    {
-      name: "KPMG",
-      projects: [
-        {
-          name: "EPAYS",
-          developer: "DEV Alovado",
-          start: "2025-02-12",
-          end: "2025-02-26",
-          progress: 0,
-          tasks: [
-            { title: "DESENVOLVIMENTO", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-02-12", due: "2025-02-26" },
-            { title: "Adequar retorno dos detalhes da NF", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-02-12", due: "2025-02-26" },
-            { title: "Adequar item para retorno do Processamento do ePAYS", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-02-12", due: "2025-02-26" },
-            { title: "Atualizacao de Processo e Implementacao de Regras", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-22", due: "2026-01-09" },
-            { title: "Gerenciador Busca Geral de NF", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-19", due: "2026-01-09" },
-            { title: "Agendar Teste com Cliente", phase: "GESTAO", status: "concluido", start: "2025-11-03", due: "2025-11-03" },
-            { title: "Agendar reuniao de levantamento para Mario e Hanna", phase: "LEVANTAMENTO", status: "planejado", start: "2025-12-29", due: "2025-12-29" },
-            { title: "TESTE INTEGRADO", phase: "TESTES", status: "planejado", start: "2026-01-05", due: "2026-01-08" },
-            { title: "Testes Integrado", phase: "TESTES", status: "planejado", start: "2026-01-05", due: "2026-01-08" },
-            { title: "Testes Unitarios", phase: "TESTES", status: "planejado", start: "2026-01-06", due: "2026-01-08" },
-            { title: "DEPLOY", phase: "DEPLOY", status: "planejado", start: "2026-01-06", due: "2026-01-08" },
-            { title: "Deploy Ambiente de Producao", phase: "DEPLOY", status: "planejado", start: "2026-01-06", due: "2026-01-08" },
-            { title: "Planejar com o cliente a virada para producao", phase: "DEPLOY", status: "planejado", start: "2026-01-06", due: "2026-01-08" },
-            { title: "DEFINICOES", phase: "LEVANTAMENTO", status: "concluido", start: "2025-10-22", due: "2025-11-06" },
-            { title: "Definicao integracao CAPS das notas de ePays", phase: "LEVANTAMENTO", status: "concluido", start: "2025-11-06", due: "2025-11-06" },
-            { title: "Especificar campos de retorno na consulta detalhada e geral", phase: "LEVANTAMENTO", status: "concluido", start: "2025-11-05", due: "2025-11-05" },
-            { title: "Definicao de Atualizacao de Processo e Determinacoes Fiscais", phase: "LEVANTAMENTO", status: "concluido", start: "2025-11-04", due: "2025-11-04" }
-          ]
-        },
-        { name: "BAIXA EM LOTE – Demais Clientes", developer: "A definir", start: "", end: "", progress: 0, tasks: [] },
-        { name: "JnJ", developer: "A definir", start: "", end: "", progress: 0, tasks: [] },
-        {
-          name: "OBI",
-          developer: "A definir",
-          start: "2025-10-13",
-          end: "2026-01-12",
-          progress: 0,
-          tasks: [
-            { title: "BBP-KPMG-OBI", phase: "GESTAO", status: "planejado", start: "2025-10-13", due: "2026-01-12" },
-            { title: "ATUALIZACAO STATUS REPORT", phase: "GESTAO", status: "concluido", start: "2025-10-23", due: "2025-12-03" },
-            { title: "Enviar Status Email - Posicao 03", phase: "GESTAO", status: "concluido", start: "2025-12-03", due: "2025-12-03" },
-            { title: "Enviar Status Email - Posicao 02", phase: "GESTAO", status: "concluido", start: "2025-11-07", due: "2025-11-07" },
-            { title: "Enviar Status Email - Posicao 01", phase: "GESTAO", status: "concluido", start: "2025-10-23", due: "2025-10-23" },
-            { title: "DESENVOLVIMENTO - PACOTE 02", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-10-28", due: "2026-01-12" },
-            { title: "Servico para Callback da Execucao", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-15", due: "2025-12-15" },
-            { title: "Servico de Distribuicao", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-31", due: "2025-10-31" },
-            { title: "Motor para Classificacao e Compactacao dos XML", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-28", due: "2025-10-29" },
-            { title: "GO LIVE", phase: "DEPLOY", status: "planejado", start: "2025-12-17", due: "2025-12-22" },
-            { title: "Operacao Assistida", phase: "DEPLOY", status: "planejado", start: "2025-12-18", due: "2025-12-22" },
-            { title: "Preparacao Go Live", phase: "DEPLOY", status: "planejado", start: "2025-12-17", due: "2025-12-17" },
-            { title: "TESTES INTEGRADOS E AJUSTES", phase: "TESTES", status: "planejado", start: "2025-10-29", due: "2025-12-17" },
-            { title: "PACOTE 02 - Testes e Ajustes", phase: "TESTES", status: "planejado", start: "2025-12-16", due: "2025-12-17" },
-            { title: "PACOTE 01 - Testes e Ajustes", phase: "TESTES", status: "concluido", start: "2025-10-29", due: "2025-10-30" },
-            { title: "DESENVOLVIMENTO - PACOTE 01", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-13", due: "2025-10-28" },
-            { title: "Disponibilizar o Download XML OBI", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-28", due: "2025-10-28" },
-            { title: "Liberar Botao em \"Acoes\"", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-28", due: "2025-10-28" },
-            { title: "Servico de Enriquecimento XML NFSe", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-27", due: "2025-10-28" },
-            { title: "Upload e Salvamento do XML enriquecido", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-28", due: "2025-10-28" },
-            { title: "Enriquecer XML com Metadata", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-28", due: "2025-10-28" },
-            { title: "Enriquecer XML com Evento de Cancelamento", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-28", due: "2025-10-28" },
-            { title: "Filtrar NF (invoices) por data de Atualizacao", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-27", due: "2025-10-27" },
-            { title: "Servico de Enriquecimento XML NFe", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-24", due: "2025-10-27" },
-            { title: "Enriquecer XML com Metadata", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-27", due: "2025-10-27" },
-            { title: "Upload e Salvamento do XML enriquecido", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-27", due: "2025-10-27" },
-            { title: "Filtrar NF (emissions) por data de Atualizacao", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-24", due: "2025-10-24" },
-            { title: "Enriquecer os Itens da NF", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-24", due: "2025-10-24" },
-            { title: "Enriquecer XML com Evento de Cancelamento", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-24", due: "2025-10-24" },
-            { title: "Criar Endpoint de Enfileiramento OBI Saida", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-13", due: "2025-10-23" }
-          ]
-        }
-      ]
-    },
-    {
-      name: "JEQUITI",
-      projects: [
-        {
-          name: "BBP-JEQUITI-WS360",
-          developer: "A definir",
-          start: "2025-10-06",
-          end: "2025-12-04",
-          progress: 0,
-          tasks: [
-            { title: "BBP-JEQUITI-WS360", phase: "GESTAO", status: "em_andamento", start: "2025-10-06", due: "2025-12-04" },
-            { title: "TESTES E AJUSTES", phase: "TESTES", status: "em_andamento", start: "2025-10-15", due: "2025-12-04" },
-            { title: "Pacote 02", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-10-27", due: "2025-12-04" },
-            { title: "Motor de Calculo - Tatico - MRP", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-04", due: "2025-12-04" },
-            { title: "Motor de Calculo - Geral - Planejamento", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-11-04", due: "2025-11-04" },
-            { title: "Motor de Calculo - Tatico - Projecao", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-10-27", due: "2025-10-27" },
-            { title: "Pacote 03", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-15", due: "2025-11-19" },
-            { title: "Motor de Calculo - Giro de Estoque", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-11-19", due: "2025-11-19" },
-            { title: "Motor de Calculo - Geral - INA", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-11-04", due: "2025-11-04" },
-            { title: "Pacote 04", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-15", due: "2025-11-19" },
-            { title: "Motor de Calculo - Informativo", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-11-19", due: "2025-11-19" },
-            { title: "Motor de Calculo - Geral - Diagnostico", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-11-19", due: "2025-11-19" },
-            { title: "Pacote 01", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-15", due: "2025-10-17" },
-            { title: "Motor de Calculo - Mercadologico - Produtos", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-17", due: "2025-10-17" },
-            { title: "Motor de Calculo - Mercadologico - Geral", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-17", due: "2025-10-17" },
-            { title: "Motor de Calculo - Avaliacao de Demanda", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-17", due: "2025-10-17" },
-            { title: "MOTOR DE CALCULO", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-10-15", due: "2025-12-03" },
-            { title: "Pacote 03", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-29", due: "2025-10-31" },
-            { title: "Motor de Calculo - Giro de Estoque", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-29", due: "2025-10-31" },
-            { title: "Motor de Calculo - Geral - INA", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-29", due: "2025-10-30" },
-            { title: "Pacote 02", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-10-29", due: "2025-12-03" },
-            { title: "Motor de Calculo - Tatico - MRP", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-11-19", due: "2025-12-03" },
-            { title: "Motor de Calculo - Tatico - Projecao", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-11-19", due: "2025-12-03" },
-            { title: "Motor de Calculo - Geral - Planejamento", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-10-29", due: "2025-12-03" },
-            { title: "Pacote 04", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-11-17", due: "2025-11-17" },
-            { title: "Motor de Calculo - Informativo", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-11-17", due: "2025-11-17" },
-            { title: "Motor de Calculo - Geral - Diagnostico", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-11-17", due: "2025-11-17" },
-            { title: "Pacote 01", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-15", due: "2025-10-17" },
-            { title: "Motor de Calculo - Mercadologico - Produtos", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-17", due: "2025-10-17" },
-            { title: "Motor de Calculo - Mercadologico - Geral", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-16", due: "2025-10-16" },
-            { title: "Motor de Calculo - Avaliacao de Demanda", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-10-15", due: "2025-10-15" },
-            { title: "GO LIVE", phase: "DEPLOY", status: "em_andamento", start: "2025-10-06", due: "2025-12-04" },
-            { title: "Producao Pacote 2", phase: "DEPLOY", status: "planejado", start: "2025-12-04", due: "2025-12-04" },
-            { title: "Operacao Assistida Pacote 1, 2, 3 e 4", phase: "DEPLOY", status: "planejado", start: "2025-12-08", due: "2025-12-19" },
-            { title: "ENTRADA EM PRODUCAO 2", phase: "DEPLOY", status: "planejado", start: "2025-12-05", due: "2025-12-05" },
-            { title: "Preparacao para Virada Pacote 2", phase: "DEPLOY", status: "planejado", start: "2025-12-04", due: "2025-12-04" },
-            { title: "Producao Pacotes 1, 3 e 4", phase: "DEPLOY", status: "concluido", start: "2025-10-06", due: "2025-11-14" },
-            { title: "ENTRADA EM PRODUCAO 1", phase: "DEPLOY", status: "concluido", start: "2025-10-06", due: "2025-11-07" },
-            { title: "Preparacao para Virada Pacote 1, 3 e 4", phase: "DEPLOY", status: "concluido", start: "2025-10-06", due: "2025-10-28" },
-            { title: "Operacao Assistida Pacote 1, 3 e 4", phase: "DEPLOY", status: "concluido", start: "2025-10-10", due: "2025-11-14" },
-            { title: "Gestao", phase: "GESTAO", status: "planejado", start: "2025-10-21", due: "2025-10-21" },
-            { title: "Reuniao interna do Projeto", phase: "GESTAO", status: "planejado", start: "2025-10-21", due: "2025-10-21" },
-            { title: "Pacote 1 - Reuniao de trabalho com o cliente", phase: "GESTAO", status: "planejado", start: "2025-10-21", due: "2025-10-21" }
-          ]
-        }
-      ]
-    },
-    {
-      name: "BYEBYEPAPER",
-      projects: [
-        { name: "Demandas Internas", developer: "A definir", start: "", end: "", progress: 0, tasks: [] },
-        { name: "Pendente Execucao", developer: "A definir", start: "", end: "", progress: 0, tasks: [] },
-        { name: "BBP - Melhorias", developer: "A definir", start: "", end: "", progress: 0, tasks: [] }
-      ]
-    },
-    {
-      name: "ASCENTY",
-      projects: [
-        {
-          name: "Monitoramento NFSe",
-          developer: "A definir",
-          start: "2025-12-17",
-          end: "2025-12-30",
-          progress: 0,
-          tasks: [
-            { title: "ASCENTY - MONITORAMENTO NOTAS DE SERVICO", phase: "LEVANTAMENTO", status: "planejado", start: "2025-12-17", due: "2025-12-30" },
-            { title: "DESENVOLVIMENTO", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-18", due: "2025-12-29" },
-            { title: "PACOTE 01 - PRIORIDADE", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-18", due: "2025-12-24" },
-            { title: "Configuracao SSO", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-12-22", due: "2025-12-22" },
-            { title: "Desenvolvimento de Integracao - Rio de Janeiro", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-23", due: "2025-12-23" },
-            { title: "Desenvolvimento de Integracao - Campinas", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-22", due: "2025-12-22" },
-            { title: "Desenvolvimento de Integracao - Vinhedo", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-22", due: "2025-12-24" },
-            { title: "Desenvolvimento de Integracao - NFCON", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-22", due: "2025-12-23" },
-            { title: "Desenvolvimento de Integracao - Maracanau", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-23", due: "2025-12-23" },
-            { title: "Desenvolvimento de Integracao - Osasco", phase: "DESENVOLVIMENTO", status: "concluido", start: "2025-12-18", due: "2025-12-19" },
-            { title: "PACOTE 03 - PRIORIDADE 3", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-26", due: "2025-12-29" },
-            { title: "Desenvolvimento de Integracao - Ambiente Nacional", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-29", due: "2025-12-29" },
-            { title: "Concluir Fluxo de Consulta", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-26", due: "2025-12-26" },
-            { title: "PACOTE 02 - PRIORIDADE 2", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-24", due: "2025-12-29" },
-            { title: "Desenvolvimento de Integracao - Sumare", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-24", due: "2025-12-24" },
-            { title: "Desenvolvimento de Integracao - Jundiai", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-24", due: "2025-12-24" },
-            { title: "Desenvolvimento de Integracao - Hortolandia", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-24", due: "2025-12-24" },
-            { title: "Desenvolvimento de Integracao - Paulinia", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-24", due: "2025-12-24" },
-            { title: "INFRAESTRUTURA", phase: "DESENVOLVIMENTO", status: "planejado", start: "2025-12-23", due: "2025-12-29" },
-            { title: "Configuracao Ambiente Nacional", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-26", due: "2025-12-29" },
-            { title: "Configuracao NFCom", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-22", due: "2025-12-23" },
-            { title: "Configuracao NFSe", phase: "DESENVOLVIMENTO", status: "em_andamento", start: "2025-12-22", due: "2025-12-23" },
-            { title: "DEPLOY", phase: "DEPLOY", status: "planejado", start: "2025-12-30", due: "2025-12-30" },
-            { title: "Homologacao", phase: "DEPLOY", status: "planejado", start: "2025-12-30", due: "2025-12-30" },
-            { title: "TESTES", phase: "TESTES", status: "planejado", start: "2025-12-26", due: "2025-12-30" },
-            { title: "PACOTE 03 - PRIORIZACAO 3", phase: "TESTES", status: "planejado", start: "2025-12-30", due: "2025-12-30" },
-            { title: "PACOTE 01 - PRIORIZACAO 1", phase: "TESTES", status: "planejado", start: "2025-12-24", due: "2025-12-24" },
-            { title: "PACOTE 02 - PRIORIZACAO 2", phase: "TESTES", status: "planejado", start: "2025-12-26", due: "2025-12-26" },
-            { title: "LEVANTAMENTO", phase: "LEVANTAMENTO", status: "planejado", start: "2025-12-17", due: "2025-12-18" },
-            { title: "Credenciais de Acesso SFTP", phase: "LEVANTAMENTO", status: "em_andamento", start: "2025-12-18", due: "2025-12-18" },
-            { title: "Credenciais SSO", phase: "LEVANTAMENTO", status: "em_andamento", start: "2025-12-18", due: "2025-12-18" },
-            { title: "Pegar os CNPJs e cadastrar as Companies", phase: "LEVANTAMENTO", status: "concluido", start: "2025-12-18", due: "2025-12-18" },
-            { title: "Credenciais Prefeituras", phase: "LEVANTAMENTO", status: "concluido", start: "2025-12-18", due: "2025-12-18" },
-            { title: "Criacao Grupo - TEAMS", phase: "LEVANTAMENTO", status: "concluido", start: "2025-12-18", due: "2025-12-18" },
-            { title: "Envio Endpoint e APIKEY para Carga do Certificado Digital", phase: "LEVANTAMENTO", status: "concluido", start: "2025-12-18", due: "2025-12-18" }
-          ]
-        }
-      ]
-    }
-  ],
+  clients: [],
   employees: [
     { name: "DEV Alovado", role: "Desenvolvedor", email: "dev.alovado@empresa.com" },
     { name: "Ana Lima", role: "Gestora de Projetos", email: "ana.lima@empresa.com" }
@@ -244,9 +61,13 @@ function isAdminEmail(email) {
 }
 
 function clientDataRootPath(user = auth?.currentUser) {
+  // Para um administrador, permite acesso a todos os tenants.
+  // Em um app real, a UI de admin teria uma forma de selecionar qual tenant visualizar.
   if (isAdminEmail(user?.email)) return "clients";
+  
+  // Para um usuário comum, o caminho é sempre dentro do seu próprio tenant, usando seu UID.
   const uid = user?.uid;
-  return uid ? `tenants/${uid}/clients` : "clients";
+  return uid ? `tenants/${uid}/clients` : null; // Retorna null se não houver UID, impedindo acesso.
 }
 
 function clientDataRootRef(user = auth?.currentUser) {
@@ -342,6 +163,22 @@ const MOTIVATIONAL_QUOTES = [
 ];
 
 const byId = (id) => document.getElementById(id);
+
+function showLoader(message = "Processando...") {
+  const loader = byId("global-loader");
+  if (loader) {
+    const textEl = loader.querySelector(".loader-text");
+    if (textEl) textEl.textContent = message;
+    loader.classList.remove("hidden");
+  }
+}
+
+function hideLoader() {
+  const loader = byId("global-loader");
+  if (loader) {
+    loader.classList.add("hidden");
+  }
+}
 
 function formatDateTime(date) {
   const dd = String(date.getDate()).padStart(2, "0");
@@ -965,6 +802,7 @@ function wireModals() {
   const projectForm = byId("project-form");
   if (projectForm) {
     projectForm.addEventListener("submit", (e) => {
+    projectForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const data = new FormData(projectForm);
       let clientName = data.get("client");
@@ -999,6 +837,18 @@ function wireModals() {
               console.error(err);
               alert("Erro ao atualizar projeto no Firebase.");
             });
+          showLoader("Atualizando projeto...");
+          try {
+            await updateProjectOnDb(state.selectedProject.clientId, state.selectedProject.id, payload);
+            await loadStateFromDb();
+            resetProjectModal();
+            if (projectModal) hideModal(projectModal);
+          } catch (err) {
+            console.error(err);
+            alert("Erro ao atualizar projeto no Firebase.");
+          } finally {
+            hideLoader();
+          }
         } else {
           updateProjectInState(payload);
           saveLocalState();
@@ -1021,6 +871,18 @@ function wireModals() {
             console.error(err);
             alert("Erro ao salvar projeto no Firebase.");
           });
+        showLoader("Salvando projeto...");
+        try {
+          await saveProjectToDb(payload);
+          await loadStateFromDb();
+          resetProjectModal();
+          if (projectModal) hideModal(projectModal);
+        } catch (err) {
+          console.error(err);
+          alert("Erro ao salvar projeto no Firebase.");
+        } finally {
+          hideLoader();
+        }
       } else {
         const client = state.clients.find((c) => c.name === clientName);
         if (!client) {
@@ -1095,6 +957,7 @@ function wireModals() {
   const activityForm = byId("activity-form");
   if (activityForm) {
     activityForm.addEventListener("submit", (e) => {
+    activityForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const keepClientId = state.selectedClient?.id;
       const keepProjectId = state.selectedProject?.id;
@@ -1109,26 +972,42 @@ function wireModals() {
       const task = {
         title: data.get("title"),
         phase: data.get("phase"),
-        package: data.get("package") || "",
+        package: data.get("package") || "", // Corrigido para "package"
         due: data.get("due"),
         status: data.get("status")
       };
       applyTaskStatus(task, task.status);
+
       if (state.editingTaskIndex !== null && state.editingTaskIndex !== undefined) {
         const idx = Number(state.editingTaskIndex);
         const currentTask = selectedProject.tasks?.[idx];
         if (!currentTask) return;
+
         const payload = { ...currentTask, ...task };
         applyTaskStatus(payload, payload.status);
+        
+        // Atualiza o estado local imediatamente para uma UI responsiva
+        selectedProject.tasks[idx] = payload;
+        saveLocalState();
+        renderMain();
+
+        // Salva no Firebase em segundo plano, sem recarregar tudo
         if (db && selectedProject.id && selectedProject.clientId && currentTask.id) {
+          updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload).catch((err) => {
+          showLoader("Atualizando atividade...");
+          try {
+            await updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload);
+            await loadStateFromDb({ clientId: keepClientId, projectId: keepProjectId });
+            resetActivityModal();
+            if (activityModal) hideModal(activityModal);
+          } catch (err) {
+            console.error(err);
+            alert("Erro ao sincronizar atualização com o Firebase. A alteração foi salva localmente.");
+          });
+          // Abordagem robusta: Salva e recarrega o estado do DB.
           updateTaskOnDb(selectedProject.clientId, selectedProject.id, currentTask.id, payload)
             .then(async () => {
-              await loadStateFromDb({
-                clientId: keepClientId,
-                projectId: keepProjectId,
-                clientName: keepClientName,
-                projectName: keepProjectName
-              });
+              await loadStateFromDb({ clientId: keepClientId, projectId: keepProjectId });
               resetActivityModal();
               if (activityModal) hideModal(activityModal);
             })
@@ -1136,39 +1015,69 @@ function wireModals() {
               console.error(err);
               alert("Erro ao atualizar atividade no Firebase.");
             });
+            alert("Erro ao atualizar atividade no Firebase.");
+          } finally {
+            hideLoader();
+          }
         } else {
+          // Fallback para modo offline
           selectedProject.tasks[idx] = payload;
           saveLocalState();
           renderMain();
           resetActivityModal();
           if (activityModal) hideModal(activityModal);
         }
+        resetActivityModal();
+        if (activityModal) hideModal(activityModal);
         return;
       }
 
+      // Garante que a lista de tarefas exista antes de adicionar
+      if (!Array.isArray(selectedProject.tasks)) {
+        selectedProject.tasks = [];
+      }
+      selectedProject.tasks.push(task);
+      saveLocalState();
+      renderMain();
+
+      // Salva no Firebase em segundo plano, sem recarregar tudo
       if (db && selectedProject.id && selectedProject.clientId) {
+        // Abordagem robusta: Salva e recarrega o estado do DB.
         saveTaskToDb(selectedProject.clientId, selectedProject.id, task)
+          .then((newId) => {
+            if (newId) task.id = newId; // Atualiza o ID localmente para permitir edição/exclusão imediata
           .then(async () => {
-            await loadStateFromDb({
-              clientId: keepClientId,
-              projectId: keepProjectId,
-              clientName: keepClientName,
-              projectName: keepProjectName
-            });
+            await loadStateFromDb({ clientId: keepClientId, projectId: keepProjectId });
             resetActivityModal();
             if (activityModal) hideModal(activityModal);
           })
           .catch((err) => {
             console.error(err);
-            alert("Erro ao salvar atividade no Firebase.");
+            alert("Erro ao sincronizar nova atividade com o Firebase. A alteração foi salva localmente.");
+            alert("Erro ao salvar nova atividade no Firebase.");
           });
+        showLoader("Salvando atividade...");
+        try {
+          await saveTaskToDb(selectedProject.clientId, selectedProject.id, task);
+          await loadStateFromDb({ clientId: keepClientId, projectId: keepProjectId });
+          resetActivityModal();
+          if (activityModal) hideModal(activityModal);
+        } catch (err) {
+          console.error(err);
+          alert("Erro ao salvar nova atividade no Firebase.");
+        } finally {
+          hideLoader();
+        }
       } else {
+        // Fallback para modo offline
         selectedProject.tasks.push(task);
         saveLocalState();
         renderMain();
         resetActivityModal();
         if (activityModal) hideModal(activityModal);
       }
+      resetActivityModal();
+      if (activityModal) hideModal(activityModal);
     });
   }
 
@@ -1379,6 +1288,45 @@ function resetExpenseModal() {
 }
 
 function deleteTaskByIndex(idx) {
+function handleDeleteProject() {
+  const { selectedProject, selectedClient } = state;
+  if (!selectedProject || !selectedClient) return;
+
+  const confirmed = window.confirm(`Tem certeza que deseja excluir o projeto "${selectedProject.name}"? Esta ação não pode ser desfeita.`);
+  if (!confirmed) return;
+
+  if (db && selectedProject.id && selectedClient.id) {
+    showLoader("Excluindo projeto...");
+    deleteProjectFromDb(selectedClient.id, selectedProject.id)
+      .then(async () => {
+        await loadStateFromDb(); // Recarrega tudo, seleciona o primeiro projeto
+      })
+      .catch(err => {
+        console.error(err);
+        alert("Erro ao excluir projeto no Firebase.");
+      })
+      .finally(() => {
+        hideLoader();
+      });
+  } else {
+    const clientIdx = state.clients.findIndex(c => c === selectedClient);
+    if (clientIdx === -1) return;
+    const projectIdx = state.clients[clientIdx].projects.findIndex(p => p === selectedProject);
+    if (projectIdx === -1) return;
+
+    state.clients[clientIdx].projects.splice(projectIdx, 1);
+    state.selectedProject = state.clients[clientIdx].projects[0] || null;
+    if (!state.selectedProject) {
+      state.selectedClient = state.clients[0] || null;
+      state.selectedProject = state.selectedClient?.projects[0] || null;
+    }
+    saveLocalState();
+    renderClientList();
+    renderMain();
+  }
+}
+
+async function deleteTaskByIndex(idx) {
   const project = state.selectedProject;
   if (!project || !project.tasks || !project.tasks[idx]) return;
   const keepClientId = state.selectedClient?.id;
@@ -1386,25 +1334,41 @@ function deleteTaskByIndex(idx) {
   const keepClientName = state.selectedClient?.name;
   const keepProjectName = state.selectedProject?.name;
   const task = project.tasks[idx];
+
+  // Remoção Otimista: Atualiza a UI imediatamente
+  project.tasks.splice(idx, 1);
+  saveLocalState();
+  renderMain();
+
+  // Sincroniza com o Firebase em segundo plano
   if (db && project.id && project.clientId && task.id) {
+    deleteTaskFromDb(project.clientId, project.id, task.id).catch((err) => {
+    showLoader("Excluindo atividade...");
+    try {
+      await deleteTaskFromDb(project.clientId, project.id, task.id);
+      await loadStateFromDb({ clientId: keepClientId, projectId: keepProjectId });
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao excluir atividade no Firebase.");
+    });
+    // Abordagem robusta: Exclui e recarrega o estado do DB.
     deleteTaskFromDb(project.clientId, project.id, task.id)
       .then(async () => {
-        await loadStateFromDb({
-          clientId: keepClientId,
-          projectId: keepProjectId,
-          clientName: keepClientName,
-          projectName: keepProjectName
-        });
+        await loadStateFromDb({ clientId: keepClientId, projectId: keepProjectId });
       })
       .catch((err) => {
         console.error(err);
         alert("Erro ao excluir atividade no Firebase.");
       });
-    return;
+    } finally {
+      hideLoader();
+    }
+  } else {
+    // Fallback para modo offline
+    project.tasks.splice(idx, 1);
+    saveLocalState();
+    renderMain();
   }
-  project.tasks.splice(idx, 1);
-  saveLocalState();
-  renderMain();
 }
 
 function findClientByName(name) {
@@ -1636,6 +1600,7 @@ function setupStatusPopover() {
   });
 
   document.body.addEventListener("click", (e) => {
+  document.body.addEventListener("click", async (e) => {
     const phaseBtn = e.target.closest("[data-phase-toggle]");
     if (phaseBtn) {
       const phase = phaseBtn.dataset.phaseToggle;
@@ -1662,6 +1627,7 @@ function setupStatusPopover() {
   });
 
   select.addEventListener("change", () => {
+  select.addEventListener("change", async () => {
     const context = popover.dataset.context || "project";
     if (context === "monitor") {
       const resolved = resolveMonitorTaskFromDataset(popover.dataset);
@@ -1682,6 +1648,17 @@ function setupStatusPopover() {
             alert("Erro ao atualizar status no Firebase.");
           });
         return;
+        showLoader("Atualizando status...");
+        try {
+          await updateTaskStatusOnDb(resolved.project.clientId, resolved.project.id, resolved.task.id, statusPayload);
+          hideStatusPopover();
+          renderMain();
+        } catch (err) {
+          console.error(err);
+          alert("Erro ao atualizar status no Firebase.");
+        } finally {
+          hideLoader();
+        }
       }
       saveLocalState();
       hideStatusPopover();
@@ -1704,6 +1681,17 @@ function setupStatusPopover() {
           alert("Erro ao atualizar status no Firebase.");
         });
       return;
+      showLoader("Atualizando status...");
+      try {
+        await updateTaskStatusOnDb(state.selectedProject.clientId, state.selectedProject.id, task.id, statusPayload);
+        await loadStateFromDb({ clientId: state.selectedClient.id, projectId: state.selectedProject.id });
+        hideStatusPopover();
+      } catch (err) {
+        console.error(err);
+        alert("Erro ao atualizar status no Firebase.");
+      } finally {
+        hideLoader();
+      }
     }
     saveLocalState();
     hideStatusPopover();
@@ -1735,12 +1723,14 @@ function setupTaskActions() {
   });
 
   deleteBtn.addEventListener("click", () => {
+  deleteBtn.addEventListener("click", async () => {
     const idx = Number(popover.dataset.taskIndex);
     if (Number.isNaN(idx)) return;
     const confirmed = window.confirm("Excluir esta atividade?");
     if (!confirmed) return;
     deleteTaskByIndex(idx);
     hideTaskActionsPopover();
+    await deleteTaskByIndex(idx);
   });
 }
 
@@ -2133,6 +2123,7 @@ async function saveTaskToDb(clientId, projectId, task) {
     ...(task.dataConclusao ? { dataConclusao: task.dataConclusao } : {}),
     createdAt: firebase.database.ServerValue.TIMESTAMP
   });
+  return taskRef.key; // Retorna o ID gerado para uso local
 }
 
 async function updateTaskStatusOnDb(clientId, projectId, taskId, payload) {
@@ -2187,6 +2178,7 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
     ...t,
     _idx: idx,
     phase: (t.phase || "OUTROS").toUpperCase()
+    phase: (t.phase || "OUTROS").toUpperCase(),
   }));
   const required = requiredPhases.map((phase) => phase.toUpperCase());
   const ordered = [...required, ...PHASE_ORDER.filter((phase) => !required.includes(phase))];
@@ -2194,6 +2186,7 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
 
   ordered.forEach((phase) => {
     const items = normalized.filter((t) => t.phase === phase);
+    // Só exibe épicos padrão vazios se eles forem requeridos pelo projeto
     if (!items.length && !required.includes(phase)) return;
     const { subEpics, flatTasks } = groupBySubEpic(items);
     grouped.push({
@@ -2201,6 +2194,7 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
       tasks: sortTasksForDisplay(flatTasks),
       subEpics: subEpics.sort((a, b) => b.latest - a.latest),
       isEmpty: items.length === 0
+      isEmpty: items.length === 0,
     });
   });
 
@@ -2213,13 +2207,35 @@ function groupTasksByPhase(tasks, requiredPhases = []) {
       existing.subEpics = existing.subEpics.concat(subEpics).sort((a, b) => b.latest - a.latest);
       existing.isEmpty = existing.tasks.length === 0 && existing.subEpics.length === 0;
     } else {
+  // CORREÇÃO: Trata épicos personalizados (não padrão) individualmente.
+  // O código anterior agrupava todos os épicos não padrão em uma única categoria "OUTROS",
+  // o que causava a fusão de macros com o mesmo nome de épicos diferentes.
+  // Trata épicos personalizados (que não estão na lista padrão)
+  const remainingTasks = normalized.filter((t) => !ordered.includes(t.phase));
+  if (remainingTasks.length) {
+    const remainingPhases = Array.from(new Set(remainingTasks.map(t => t.phase)));
+    
+    remainingPhases.forEach(phase => {
+      const itemsInPhase = remainingTasks.filter(t => t.phase === phase);
+    const remainingPhases = Array.from(new Set(remainingTasks.map((t) => t.phase)));
+
+    remainingPhases.forEach((phase) => {
+      const itemsInPhase = remainingTasks.filter((t) => t.phase === phase);
+      if (!itemsInPhase.length) return;
+
+      const { subEpics, flatTasks } = groupBySubEpic(itemsInPhase);
       grouped.push({
         phase: "OUTROS",
+        phase: phase, // Usa o nome real do épico personalizado
+        phase: phase,
         tasks: sortTasksForDisplay(flatTasks),
         subEpics: subEpics.sort((a, b) => b.latest - a.latest),
         isEmpty: remaining.length === 0
+        isEmpty: false
+        isEmpty: false, // Um épico personalizado só aparece se tiver tarefas, então nunca está "vazio"
       });
     }
+    });
   }
 
   return grouped;

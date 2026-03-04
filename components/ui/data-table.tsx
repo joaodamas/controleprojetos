@@ -58,7 +58,7 @@ export function DataTable<TData, TValue>({
         <Input
           placeholder="Filtrar por nome..."
           value={(table.getColumn("name")?.getFilterValue() as string) ?? ""}
-          onChange={(event) =>
+          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
             table.getColumn("name")?.setFilterValue(event.target.value)
           }
           className="max-w-sm bg-slate-900 border-slate-700 placeholder:text-slate-500"

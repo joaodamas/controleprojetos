@@ -1,331 +1,45 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AXON - Projects</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
-  <link rel="stylesheet" href="styles.css?v=20260101-4">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AXON - Redirect</title>
+  <meta http-equiv="refresh" content="0; url=./public/index.html" />
+  <style>
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: #0b1220;
+      color: #e2e8f0;
+      display: grid;
+      place-items: center;
+    }
+    .card {
+      width: min(720px, calc(100vw - 32px));
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(15, 23, 42, 0.72);
+      border-radius: 14px;
+      padding: 18px 18px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.35);
+    }
+    .title { font-weight: 700; font-size: 16px; margin: 0 0 8px; }
+    .muted { margin: 0 0 12px; color: rgba(226,232,240,.8); font-size: 13px; }
+    a { color: #60a5fa; text-decoration: none; font-weight: 600; }
+    a:hover { text-decoration: underline; }
+  </style>
 </head>
 <body>
-  <div id="login-screen" class="login-screen">
-    <div class="login-card">
-      <div class="login-brand">
-        <img src="public/axon-projects.jpg" alt="AXON - Projects" class="login-logo">
-      </div>
-
-      <form id="login-form" class="login-form">
-        <label class="login-label" for="login-email">E-mail</label>
-        <input id="login-email" type="email" class="login-input" placeholder="seu@email.com" required autocomplete="username">
-
-        <label class="login-label" for="login-password">Senha</label>
-        <input id="login-password" type="password" class="login-input" placeholder="Sua senha" required autocomplete="current-password">
-
-        <button class="login-button" type="submit">Entrar</button>
-        <p id="login-error" class="login-error hidden"></p>
-      </form>
-
-      <div class="login-footer">(c) 2025 - AXON - Projects</div>
-    </div>
+  <div class="card">
+    <p class="title">Redirecionando...</p>
+    <p class="muted">
+      Se nada acontecer, abra:
+      <a href="./public/index.html">public/index.html</a>
+    </p>
   </div>
-
-  <div id="app-shell" class="app-shell hidden">
-    <aside class="sidebar">
-      <div class="brand">
-        <img class="brand-logo" src="public/axon-projects.jpg" alt="AXON - Projects">
-      </div>
-      <nav class="nav">
-        <button class="nav-link active" data-section="inicio">Inicio</button>
-        <button class="nav-link" data-section="dashboard">Dashboard Projetos</button>
-        <button class="nav-link" data-section="monitor">Monitor de Atividades</button>
-        <div class="nav-group">
-          <button class="nav-link with-caret" data-section="meus-projetos">
-            Meus Projetos
-            <span class="caret">›</span>
-          </button>
-          <div class="nav-sub" id="client-list"></div>
-        </div>
-      </nav>
-      <div class="footer-links">
-        <button class="nav-link ghost" data-section="config">Configuracoes</button>
-        <button class="nav-link ghost" data-section="sair" id="nav-logout">Encerrar</button>
-      </div>
-    </aside>
-
-    <div class="main">
-      <header class="topbar">
-        <div class="crumbs">
-          <span>Home</span>
-          <span>/</span>
-          <span id="crumb-path">Inicio</span>
-        </div>
-        <div class="top-actions">
-          <button class="btn ghost" id="open-employee-modal">Cadastrar Funcionarios</button>
-          <button class="btn ghost" id="edit-project-btn">Editar Projeto</button>
-          <button class="btn primary" id="open-project-modal">+ Adicionar Projeto</button>
-          <div class="user">
-            <div class="user-name">Administrador</div>
-            <div class="user-avatar">AL</div>
-          </div>
-        </div>
-      </header>
-
-      <section class="content" id="content-area">
-        <div class="grid" id="dashboard-panels">
-          <!-- Cards preenchidos via JS -->
-        </div>
-      </section>
-    </div>
-
-  <div class="modal" id="project-modal">
-    <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Novo Projeto</h2>
-        <button class="icon-btn" data-close-modal>&times;</button>
-      </div>
-      <form id="project-form" class="form">
-        <label>
-          Nome do Projeto
-          <input type="text" name="name" required placeholder="Ex.: Armazem Industrial">
-        </label>
-        <label>
-          Cliente
-          <select name="client" id="project-client-select" required></select>
-        </label>
-        <label>
-          Responsavel
-          <input type="text" name="developer" required placeholder="Responsavel pelo projeto">
-        </label>
-        <div class="form-grid">
-          <label>
-            Data inicio
-            <input type="date" name="start" required>
-          </label>
-          <label>
-            Go Live previsto
-            <input type="date" name="end" required>
-          </label>
-        </div>
-        <div class="modal-actions">
-          <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
-          <button type="submit" class="btn primary">Salvar Projeto</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal" id="employee-modal">
-    <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Cadastrar Funcionario</h2>
-        <button class="icon-btn" data-close-modal>&times;</button>
-      </div>
-      <form id="employee-form" class="form">
-        <label>
-          Nome completo
-          <input type="text" name="name" required placeholder="Ex.: Ana Lima">
-        </label>
-        <label>
-          Cargo / Funcao
-          <input type="text" name="role" required placeholder="Gestor de Projetos">
-        </label>
-        <label>
-          E-mail
-          <input type="email" name="email" required placeholder="ana@empresa.com">
-        </label>
-        <div class="modal-actions">
-          <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
-          <button type="submit" class="btn primary">Salvar Funcionario</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal" id="client-modal">
-    <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Editar Cliente</h2>
-        <button class="icon-btn" data-close-modal>&times;</button>
-      </div>
-      <form id="client-form" class="form">
-        <label>
-          Nome do cliente
-          <input type="text" name="name" required placeholder="Ex.: ACME">
-        </label>
-        <div class="modal-actions">
-          <button type="button" class="btn ghost danger" id="delete-client-btn">Excluir Cliente</button>
-          <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
-          <button type="submit" class="btn primary">Salvar Cliente</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal" id="activity-modal">
-    <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Nova Atividade</h2>
-        <button class="icon-btn" data-close-modal>&times;</button>
-      </div>
-      <form id="activity-form" class="form">
-        <label>
-          Projeto atual
-          <input type="text" id="activity-project" disabled>
-        </label>
-        <label>
-          Titulo da atividade
-          <input type="text" name="title" required placeholder="Ex.: Integracao com WMS">
-        </label>
-        <label>
-          Epico
-          <select name="phase" id="activity-phase-select" required>
-            <option value="LEVANTAMENTO">LEVANTAMENTO</option>
-            <option value="DESENVOLVIMENTO">DESENVOLVIMENTO</option>
-            <option value="TESTES">TESTES</option>
-            <option value="DEPLOY">DEPLOY</option>
-          </select>
-        </label>
-        <label id="activity-package-field" class="hidden">
-          Pacote (opcional)
-          <select name="package" id="activity-package-select"></select>
-        </label>
-        <label>
-          Vencimento
-          <input type="date" name="due" required>
-        </label>
-        <label>
-          Status
-          <select name="status" required>
-            <option value="planejado" selected>Planejado</option>
-            <option value="em_andamento">Em andamento</option>
-            <option value="em_validacao">Em validacao</option>
-            <option value="atrasado">Atrasado</option>
-            <option value="concluido">Concluido</option>
-          </select>
-        </label>
-        <div class="modal-actions">
-          <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
-          <button type="submit" class="btn primary">Salvar Atividade</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal" id="finance-modal">
-    <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Financeiro do projeto</h2>
-        <button class="icon-btn" data-close-modal>&times;</button>
-      </div>
-      <div class="finance-summary" data-finance-summary></div>
-      <div class="modal-actions">
-        <button type="button" class="btn primary" data-open-expense>Adicionar despesa</button>
-      </div>
-      <div class="table-card">
-        <table>
-          <thead>
-            <tr>
-              <th>Data</th>
-              <th>Tipo</th>
-              <th>Descricao</th>
-              <th>Valor</th>
-              <th>Saldo</th>
-            </tr>
-          </thead>
-          <tbody data-finance-history></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal" id="expense-modal">
-    <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Adicionar movimento</h2>
-        <button class="icon-btn" data-close-modal>&times;</button>
-      </div>
-      <form id="expense-form" class="form">
-        <label>
-          Tipo
-          <select name="type" required>
-            <option value="despesa">Despesa</option>
-            <option value="receita">Receita</option>
-          </select>
-        </label>
-        <label>
-          Descricao
-          <input type="text" name="description" placeholder="Ex.: Licenca, Setup, Mensalidade">
-        </label>
-        <div class="form-grid">
-          <label>
-            Valor
-            <input type="number" name="amount" step="0.01" min="0" required>
-          </label>
-          <label>
-            Data
-            <input type="date" name="date" required>
-          </label>
-        </div>
-        <div class="modal-actions">
-          <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
-          <button type="submit" class="btn primary">Salvar</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal" id="monitor-task-modal">
-    <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Editar Atividade</h2>
-        <button class="icon-btn" data-close-modal>&times;</button>
-      </div>
-      <form class="form" id="monitor-task-form">
-        <label>
-          Nome da Atividade
-          <input type="text" id="monitor-task-name" name="name" required>
-        </label>
-        <div class="form-grid">
-          <label>
-            Prazo
-            <input type="date" id="monitor-task-due" name="due">
-          </label>
-          <label>
-            Responsavel
-            <select id="monitor-task-responsible" name="responsible"></select>
-          </label>
-        </div>
-      </form>
-      <div class="modal-actions">
-        <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
-        <button type="submit" class="btn primary" form="monitor-task-form">Salvar Alteracoes</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="status-popover" id="status-popover">
-    <select id="status-select"></select>
-  </div>
-
-  <div class="task-actions-popover" id="task-actions-popover">
-    <button class="action-item" id="task-edit-action">Editar</button>
-    <button class="action-item danger" id="task-delete-action">Excluir</button>
-  </div>
-
-  </div>
-
-  <script src="./app.js?v=20260101-5" defer></script>
+  <script>
+    // Some environments ignore meta refresh; JS redirect is the fallback.
+    try { window.location.replace("./public/index.html"); } catch (_err) {}
+  </script>
 </body>
 </html>

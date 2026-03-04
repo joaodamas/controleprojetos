@@ -1,5 +1,9 @@
 "use client"
 
+// ARQUITETURA: Importe as funções do Firebase e um hook de autenticação.
+// A implementação exata do hook pode variar conforme a configuração do seu projeto React.
+import { getDatabase, ref, onValue, off } from "firebase/database";
+import { useUser } from '../../hooks/useUser'; // Exemplo de hook de autenticação
 import React, { useState, useEffect } from 'react';
 import { X, Clock, Download, Loader, AlertTriangle, Activity } from 'lucide-react';
 
@@ -32,38 +36,56 @@ export function AuditTrailDrawer({
   const [logs, setLogs] = useState<AuditLog[]>(mockAuditLogs);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Obtenha o usuário do seu sistema de autenticação React.
+  const { user } = useUser(); 
 
   useEffect(() => {
     if (!isOpen) return;
-    const controller = new AbortController();
 
-    const fetchLogs = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const targetProjectId = projectId || 'OBI-KPMG';
-        const response = await fetch(`http://localhost:8000/api/audit-logs/${targetProjectId}`, {
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error('Não foi possível carregar o histórico de auditoria.');
-        const data = await response.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setLogs(data);
-        } else {
-          setLogs(mockAuditLogs);
-        }
-      } catch (err: any) {
-        if (err.name === 'AbortError') return;
-        setError(err.message || 'Erro desconhecido na leitura do log.');
-        setLogs(mockAuditLogs);
-      } finally {
-        setIsLoading(false);
+    if (!user) {
+      setError("Usuário não autenticado.");
+      setLogs([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    const db = getDatabase();
+    const tenantId = user.uid; // O UID do usuário é o ID do tenant.
+    
+    // SUGESTÃO: A auditoria deveria ser gravada por Cloud Functions em um caminho como `audit_logs/{tenantId}`
+    // Por enquanto, vamos simular a leitura de um caminho de exemplo.
+    const logsRef = ref(db, `audit_logs/${tenantId}`);
+
+    const listener = onValue(logsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const logsArray = Object.values(data) as AuditLog[];
+        // Filtra os logs pelo projetoId, se fornecido
+        const filteredLogs = projectId 
+          ? logsArray.filter(log => log.action.includes(projectId))
+          : logsArray;
+        setLogs(filteredLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+      } else {
+        // Se não houver dados, exibe os mockados como fallback de demonstração
+        setLogs(mockAuditLogs.filter(log => log.action.includes(projectId || 'OBI')));
       }
+      setIsLoading(false);
+    }, (err) => {
+      console.error(err);
+      setError("Falha ao conectar com o Firebase.");
+      setLogs([]); // Limpa os logs em caso de erro
+      setIsLoading(false);
+    });
+
+    // Função de limpeza para remover o listener quando o componente for desmontado ou o drawer fechar
+    return () => {
+      off(logsRef, 'value', listener);
     };
 
-    fetchLogs();
-    return () => controller.abort();
-  }, [isOpen, projectId]);
+  }, [isOpen, projectId, user]);
 
   const renderTimeline = () => {
     if (isLoading) {

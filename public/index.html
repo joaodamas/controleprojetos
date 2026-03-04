@@ -11,8 +11,11 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <link rel="stylesheet" href="styles.css?v=20260101-4">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <link rel="stylesheet" href="styles.css?v=20260213-5">
 </head>
 <body>
   <div id="login-screen" class="login-screen">
@@ -108,10 +111,22 @@
             <span>Dashboard Projetos</span>
           </span>
         </button>
+        <button class="nav-link hidden" data-section="portfolio">
+          <span class="nav-link-content">
+            <i data-lucide="layers" class="nav-icon"></i>
+            <span>Projetos Consolidados</span>
+          </span>
+        </button>
         <button class="nav-link" data-section="monitor">
           <span class="nav-link-content">
             <i data-lucide="activity" class="nav-icon"></i>
             <span>Monitor de Atividades</span>
+          </span>
+        </button>
+        <button class="nav-link hidden" data-section="board">
+          <span class="nav-link-content">
+            <i data-lucide="layout-grid" class="nav-icon"></i>
+            <span>Board Agile</span>
           </span>
         </button>
         <button class="nav-link hidden" data-section="dev-board" id="nav-dev-board">
@@ -136,6 +151,13 @@
           </button>
           <div class="nav-sub" id="client-list"></div>
         </div>
+
+        <button class="nav-link" data-section="melhorias">
+          <span class="nav-link-content">
+            <i data-lucide="sparkles" class="nav-icon"></i>
+            <span>Melhorias</span>
+          </span>
+        </button>
       </nav>
       <div class="sidebar-footer">
         <button class="theme-toggle" type="button" data-theme-toggle aria-pressed="false">
@@ -150,7 +172,6 @@
         </button>
 
         <div class="sidebar-user">
-          <div class="sidebar-user-avatar" data-sidebar-avatar>AX</div>
           <div class="sidebar-user-info">
             <div class="sidebar-user-name" data-sidebar-name>Administrador</div>
             <div class="sidebar-user-role" data-sidebar-role>Administrator</div>
@@ -184,10 +205,7 @@
           <button class="btn ghost" id="open-employee-modal">Cadastrar Funcionarios</button>
           <button class="btn ghost" id="edit-project-btn">Editar Projeto</button>
           <button class="btn primary" id="open-project-modal">+ Adicionar Projeto</button>
-          <div class="user">
-            <div class="user-name">Administrador</div>
-            <div class="user-avatar">AL</div>
-          </div>
+          <button class="btn primary hidden" id="open-improvement-modal">+ Nova Melhoria</button>
         </div>
       </header>
 
@@ -218,6 +236,19 @@
           Responsavel
           <input type="text" name="developer" required placeholder="Responsavel pelo projeto">
         </label>
+        <label>
+          Squad
+          <select name="squadId" id="project-squad-select">
+            <option value="">Sem squad</option>
+          </select>
+        </label>
+        <div class="project-team">
+          <div class="project-team-head">
+            <div class="project-team-title">Equipe do projeto</div>
+            <div class="muted">Selecione quem participa e qual funcao desempenha.</div>
+          </div>
+          <div id="project-team-picker" class="project-team-picker"></div>
+        </div>
         <div class="form-grid">
           <label>
             Data inicio
@@ -277,6 +308,20 @@
           Nome do cliente
           <input type="text" name="name" required placeholder="Ex.: ACME">
         </label>
+        <div class="client-squads">
+          <div class="client-squads-head">
+            <div>
+              <div class="client-squads-title">Squads</div>
+              <div class="muted">Cadastre squads e selecione no projeto.</div>
+            </div>
+          </div>
+          <div class="client-squads-create">
+            <input class="config-input" id="client-squad-name" type="text" placeholder="Nome do squad (ex.: Squad A)">
+            <input class="config-input" id="client-squad-members" type="text" placeholder="Membros (separe por ; ou ,)">
+            <button class="btn sm primary" type="button" id="client-squad-add-btn">Adicionar</button>
+          </div>
+          <div id="client-squads-list" class="client-squads-list">Nenhum squad cadastrado.</div>
+        </div>
         <div class="modal-actions">
           <button type="button" class="btn ghost danger" id="delete-client-btn">Excluir Cliente</button>
           <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
@@ -410,6 +455,206 @@
     </div>
   </div>
 
+  <div class="modal" id="improvement-modal">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-content imprm-content">
+      <div class="imprm-header">
+        <div class="imprm-head-left">
+          <div class="imprm-ico imprm-ico--emerald" aria-hidden="true"><i data-lucide="code"></i></div>
+          <div>
+            <div class="imprm-meta">
+              <span class="imprm-pill imprm-pill--nova" data-improvement-code>NOVA MELHORIA</span>
+              <span class="imprm-meta-sub" data-improvement-project>Ticket #---</span>
+            </div>
+            <h2 id="improvement-modal-title" class="imprm-title">Registar Nova Melhoria</h2>
+          </div>
+        </div>
+        <button class="icon-btn imprm-close" data-close-modal aria-label="Fechar"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="imprm-body">
+        <div class="imprm-main">
+          <div class="imprm-tabs">
+            <button type="button" class="imprm-tab imprm-tab--active" data-imprm-tab="detalhes"><i data-lucide="file-text"></i>Informações Gerais</button>
+            <button type="button" class="imprm-tab" data-imprm-tab="etapas"><i data-lucide="activity"></i>Ações por Etapa</button>
+          </div>
+
+          <form id="improvement-form" class="imprm-form">
+            <div class="imprm-panel imprm-panel--detalhes imprm-panel--active" data-imprm-panel="detalhes">
+              <div class="imprm-sections">
+                <section class="imprm-section">
+                  <div class="imprm-section-head imprm-section-head--blue">
+                    <div class="imprm-section-ico"><i data-lucide="briefcase"></i></div>
+                    <h3 class="imprm-section-title">Identificação do Pedido</h3>
+                  </div>
+                  <div class="imprm-section-body imprm-section-grid">
+                    <label class="imprm-field imprm-field--8">
+                      Nome da melhoria
+                      <input type="text" name="name" required placeholder="Ex: Otimizar dashboard principal">
+                    </label>
+                    <label class="imprm-field imprm-field--4">
+                      Cliente
+                      <input type="text" name="client" placeholder="Ex: KPMG">
+                    </label>
+                    <label class="imprm-field imprm-field--full">
+                      Descrição Detalhada
+                      <textarea name="description" rows="4" placeholder="Descreva detalhadamente o que será feito..."></textarea>
+                    </label>
+                  </div>
+                </section>
+
+                <section class="imprm-section">
+                  <div class="imprm-section-head imprm-section-head--amber">
+                    <div class="imprm-section-ico"><i data-lucide="users"></i></div>
+                    <h3 class="imprm-section-title">Planeamento e Responsáveis</h3>
+                  </div>
+                  <div class="imprm-section-body">
+                    <div class="imprm-section-row imprm-section-row--3">
+                      <label class="imprm-field imprm-field--icon">
+                        Responsável
+                        <span class="imprm-input-wrap">
+                          <i data-lucide="user" class="imprm-input-icon"></i>
+                          <input type="text" name="owner" placeholder="Ex: Vanessa Martinez">
+                        </span>
+                      </label>
+                      <label class="imprm-field">
+                        Canal de Origem
+                        <select name="origin" required>
+                          <option value="email">E-mail</option>
+                          <option value="chamado">Chamado</option>
+                          <option value="chamado_interno">Chamado Interno</option>
+                          <option value="reuniao">Reunião de Review</option>
+                          <option value="diretoria">Solicitação Directa</option>
+                        </select>
+                      </label>
+                      <label class="imprm-field imprm-field--icon">
+                        Estimativa
+                        <span class="imprm-input-wrap">
+                          <i data-lucide="clock" class="imprm-input-icon"></i>
+                          <input type="number" name="estimateHours" min="0" step="0.5" placeholder="Ex: 8 horas">
+                        </span>
+                      </label>
+                    </div>
+                    <label class="imprm-field hidden" data-improvement-origin-ref>
+                      Número / link do chamado
+                      <input type="text" name="originRef" placeholder="Ex: #4492 ou https://...">
+                    </label>
+                    <div class="imprm-section-row imprm-section-row--2">
+                      <label class="imprm-field">
+                        Responsável Técnico (Lead)
+                        <input type="text" name="estimator" placeholder="Ex: Fernando Barrozo">
+                      </label>
+                      <label class="imprm-field">
+                        Executor / Desenvolvedor
+                        <input type="text" name="executor" placeholder="Ex: Ana Luiza">
+                      </label>
+                    </div>
+                  </div>
+                </section>
+              </div>
+              <div class="imprm-row imprm-row--hidden" data-imprm-extra>
+                <label class="imprm-field"><input type="date" name="start"></label>
+                <label class="imprm-field"><input type="date" name="end"></label>
+              </div>
+              <label class="imprm-field imprm-field--hidden" data-imprm-stage-wrap>
+                Etapa
+                <select name="stage" required>
+                  <option value="triagem" selected>Triagem</option>
+                  <option value="analise_tecnica">Análise Técnica</option>
+                  <option value="implementacao">Implementação</option>
+                  <option value="validacao">Validação</option>
+                  <option value="concluido">Concluído</option>
+                </select>
+              </label>
+              <div class="imprm-approval hidden" data-improvement-approval>
+                <label class="imprm-field">De acordo do cliente (anexo)<input type="file" name="clientApproval" accept=".pdf,image/*"></label>
+                <div class="imprm-approval-meta" data-improvement-approval-meta></div>
+              </div>
+            </div>
+
+            <div class="imprm-panel imprm-panel--etapas" data-imprm-panel="etapas">
+              <div class="imprm-evolucao-head">
+                <h3 class="imprm-evolucao-title">Evolução do Processo</h3>
+                <span class="imprm-evolucao-sub">Registe as acções efectuadas em cada etapa</span>
+              </div>
+              <div class="imprm-timeline imprm-timeline--evolucao">
+                <div class="imprm-timeline-item" data-improvement-stage-note="triagem">
+                  <div class="imprm-timeline-icon-wrap">
+                    <div class="imprm-timeline-icon"><i data-lucide="search"></i></div>
+                    <div class="imprm-timeline-line"></div>
+                  </div>
+                  <div class="imprm-timeline-content">
+                    <div class="imprm-timeline-head"><span>Triagem</span><span class="imprm-timeline-status">STATUS: PENDENTE</span></div>
+                    <textarea name="stageNote_triagem" rows="2" placeholder="Descreva o que foi realizado em triagem..."></textarea>
+                  </div>
+                </div>
+                <div class="imprm-timeline-item" data-improvement-stage-note="analise_tecnica">
+                  <div class="imprm-timeline-icon-wrap">
+                    <div class="imprm-timeline-icon"><i data-lucide="file-text"></i></div>
+                    <div class="imprm-timeline-line"></div>
+                  </div>
+                  <div class="imprm-timeline-content">
+                    <div class="imprm-timeline-head"><span>Análise Técnica</span><span class="imprm-timeline-status">STATUS: PENDENTE</span></div>
+                    <textarea name="stageNote_analise_tecnica" rows="2" placeholder="Descreva o que foi realizado em análise técnica..."></textarea>
+                  </div>
+                </div>
+                <div class="imprm-timeline-item" data-improvement-stage-note="implementacao">
+                  <div class="imprm-timeline-icon-wrap">
+                    <div class="imprm-timeline-icon"><i data-lucide="code"></i></div>
+                    <div class="imprm-timeline-line"></div>
+                  </div>
+                  <div class="imprm-timeline-content">
+                    <div class="imprm-timeline-head"><span>Implementação</span><span class="imprm-timeline-status">STATUS: PENDENTE</span></div>
+                    <textarea name="stageNote_implementacao" rows="2" placeholder="Descreva o que foi realizado em implementação..."></textarea>
+                  </div>
+                </div>
+                <div class="imprm-timeline-item" data-improvement-stage-note="validacao">
+                  <div class="imprm-timeline-icon-wrap">
+                    <div class="imprm-timeline-icon"><i data-lucide="clock"></i></div>
+                    <div class="imprm-timeline-line"></div>
+                  </div>
+                  <div class="imprm-timeline-content">
+                    <div class="imprm-timeline-head"><span>Validação</span><span class="imprm-timeline-status">STATUS: PENDENTE</span></div>
+                    <textarea name="stageNote_validacao" rows="2" placeholder="Descreva o que foi realizado em validação..."></textarea>
+                  </div>
+                </div>
+                <div class="imprm-timeline-item" data-improvement-stage-note="concluido">
+                  <div class="imprm-timeline-icon-wrap">
+                    <div class="imprm-timeline-icon imprm-timeline-icon--ok"><i data-lucide="check-circle-2"></i></div>
+                  </div>
+                  <div class="imprm-timeline-content">
+                    <div class="imprm-timeline-head"><span>Concluído</span><span class="imprm-timeline-status">STATUS: PENDENTE</span></div>
+                    <textarea name="stageNote_concluido" rows="2" placeholder="Descreva o que foi realizado em concluído..."></textarea>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <aside class="imprm-side">
+          <div class="imprm-side-head">
+            <div class="imprm-side-title">Histórico & Log</div>
+            <div class="imprm-side-ico"><i data-lucide="history"></i></div>
+          </div>
+          <div class="imprm-log" data-improvement-log-list></div>
+          <div class="imprm-log-new">
+            <textarea rows="2" data-improvement-log-input placeholder="Adicionar nota..."></textarea>
+            <button type="button" class="btn primary imprm-log-send" data-improvement-log-add><i data-lucide="send"></i></button>
+          </div>
+        </aside>
+      </div>
+
+      <div class="imprm-footer">
+        <button type="button" class="btn imprm-delete" data-improvement-delete>Remover Melhoria</button>
+        <div class="imprm-footer-actions">
+          <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
+          <button type="submit" class="btn primary imprm-save" form="improvement-form"><i data-lucide="check-circle-2"></i>Guardar Alterações</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal gantt-modal" id="gantt-modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal></div>
     <div class="modal-content gantt-content">
@@ -479,8 +724,36 @@
   </div>
 
   <div class="task-actions-popover" id="task-actions-popover">
+    <button class="action-item" id="task-add-action">Adicionar atividade aqui</button>
+    <button class="action-item" id="task-macro-create-action">Criar macro</button>
+    <button class="action-item" id="task-macro-undo-action">Desfazer macro</button>
+    <button class="action-item danger" id="macro-undo-action">Desfazer macro</button>
+    <button class="action-item danger hidden" id="epic-clear-outros-action">Excluir atividades de OUTROS</button>
     <button class="action-item" id="task-edit-action">Editar</button>
     <button class="action-item danger" id="task-delete-action">Excluir</button>
+  </div>
+
+  <div class="task-actions-popover" id="members-popover"></div>
+
+  <div class="modal impr-report-modal" id="improvements-report-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-content impr-report-content">
+      <div class="impr-report-header">
+        <div>
+          <h2>Relatório de Melhorias</h2>
+          <p class="impr-report-subtitle" data-improvements-report-date></p>
+        </div>
+        <button class="icon-btn" data-close-modal aria-label="Fechar">&times;</button>
+      </div>
+      <div class="impr-report-body" data-improvements-report-body>
+        <!-- Preenchido via JS -->
+      </div>
+      <div class="impr-report-actions">
+        <button type="button" class="btn ghost" data-close-modal>Fechar</button>
+        <button type="button" class="btn ghost" data-improvements-report-print>Imprimir</button>
+        <button type="button" class="btn primary" data-improvements-report-pdf>Exportar PDF</button>
+      </div>
+    </div>
   </div>
 
   </div>
@@ -488,12 +761,23 @@
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
-  <script src="./app.js?v=20260101-5" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="./app.js" defer></script>
   <script>
     window.addEventListener("DOMContentLoaded", () => {
       if (window.lucide) {
         window.lucide.createIcons();
       }
+    });
+
+    document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "F12") { e.preventDefault(); return false; }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "I" || e.key === "i")) { e.preventDefault(); return false; }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "J" || e.key === "j")) { e.preventDefault(); return false; }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "U" || e.key === "u")) { e.preventDefault(); return false; }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "C" || e.key === "c")) { e.preventDefault(); return false; }
     });
   </script>
 </body>

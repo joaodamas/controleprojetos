@@ -1,4 +1,4 @@
-import { columns } from "./columns"
+import { columns, type UserAccount } from "./columns"
 import { DataTable } from "@/components/ui/data-table"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -7,7 +7,7 @@ import { Plus, Users, ShieldAlert, Settings2 } from "lucide-react"
 
 export default function UserManagementPage() {
   // Dados mockados
-  const data = [
+  const data: UserAccount[] = [
     { id: "1", name: "Dague Martin", email: "daguemartin@gmail.com", role: "Usuario", status: "ativo" },
     { id: "2", name: "Hanna Kodama", email: "hanna.bb@gmail.com", role: "Usuario", status: "ativo" },
     { id: "3", name: "João Damas", email: "joaodamasit@gmail.com", role: "Administrador", status: "ativo" },

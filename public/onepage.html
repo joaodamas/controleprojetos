@@ -3,16 +3,22 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>OnePage — Monitoramento NFSe</title>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <style>
     :root{
-      --bg:#f6f8fb;
+      --bg:#F8FAFC;
       --card:#ffffff;
       --text:#0f172a;
       --muted:#64748b;
       --border:rgba(15,23,42,.08);
       --shadow:0 6px 18px rgba(15,23,42,.06);
       --radius:14px;
+      --radius-xl: 28px;
 
       --ok:#2f8f61;
       --warn:#c76b1a;
@@ -23,9 +29,6 @@
 
       --baseline:#0f172a;
       --real:#c76b1a;
-
-      --canvas-w: 1040px;
-      --canvas-pad: 14px;
       --shell-bg: #f3f6f9;
     }
 
@@ -33,20 +36,39 @@
     body{
       margin:0;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      font-weight: 600;
       background:var(--bg);
       color:var(--text);
     }
+    /* Default: strong typography, but not washed out. */
+    b, strong{ font-weight: 700; }
+
+    /* Contrast tuning (labels were getting too pale). */
+    .bi-sub,
+    .curveHeader p,
+    .curveLegend,
+    .metaBlock .k,
+    .kpiTitle,
+    .kpiSub2,
+    .noteMeta,
+    .miniTag{ color: #64748b; }
+
+    .bi-title,
+    .kpiValue,
+    .kpiValue2,
+    .noteTitle{ font-weight: 750; }
 
     .op-shell{
       min-height: 100vh;
       background: var(--shell-bg);
-      padding: 18px 0 28px;
+      padding: 20px 0 30px;
     }
 
     .op-canvas{
-      width: var(--canvas-w);
+      width: 100%;
+      max-width: 1440px;
       margin: 0 auto;
-      padding: 0 var(--canvas-pad);
+      padding: 0 16px;
     }
 
     .page,
@@ -56,6 +78,1806 @@
       padding: 0;
       display:grid;
       gap:12px;
+    }
+
+    /* ------------------------------------------------------------------
+       New OnePage layout (React-like UI) - uses existing colors/rules
+    ------------------------------------------------------------------ */
+
+    /* ------------------------------------------------------------------
+       OnePage BI layout (new model)
+    ------------------------------------------------------------------ */
+    .bi{
+      display:grid;
+      gap: 16px;
+    }
+
+    .bi-card{
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      border-radius: var(--radius-xl);
+      padding: 18px;
+      min-width: 0;
+    }
+
+    .bi-header{
+      display:flex;
+      align-items:flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .bi-brand{
+      display:flex;
+      align-items:center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .bi-logo{
+      width: 56px;
+      height: 56px;
+      border-radius: 22px;
+      background: #0f172a;
+      box-shadow: 0 18px 40px rgba(15,23,42,.10);
+      display:grid;
+      place-items:center;
+      color: #ffffff;
+      flex: 0 0 auto;
+    }
+
+    .bi-brandTop{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .bi-live{
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #2563eb;
+      color: #fff;
+      flex: 0 0 auto;
+    }
+
+    .bi-title{
+      font-size: clamp(22px, 2.5vw, 32px);
+      font-weight: 450;
+      letter-spacing: -0.02em;
+      text-transform: uppercase;
+      color: #0f172a;
+      white-space: nowrap;
+    }
+
+    .bi-sub{
+      margin-top: 4px;
+      font-size: 13px;
+      font-weight: 450;
+      color: #94a3b8;
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      min-width: 0;
+      white-space: nowrap;
+      overflow:hidden;
+      text-overflow: ellipsis;
+      max-width: 520px;
+    }
+
+    .bi-projectName{
+      margin-top: 6px;
+      font-size: clamp(14px, 1.6vw, 18px);
+      font-weight: 450;
+      letter-spacing: -0.01em;
+      color: #0f172a;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 520px;
+    }
+
+    .bi-headPills{
+      display:flex;
+      align-items:stretch;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: rgba(255,255,255,.92);
+      border: 1px solid rgba(226,232,240,.9);
+      box-shadow: 0 18px 60px rgba(15,23,42,.08);
+      border-radius: 22px;
+      padding: 10px;
+    }
+
+    .bi-pill{
+      padding: 6px 12px;
+      border-right: 1px solid rgba(226,232,240,.9);
+      display:flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 4px;
+      min-width: 220px;
+      max-width: 360px;
+    }
+    .bi-pill:last-of-type{ border-right: 0; }
+    .bi-pill small{
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: #94a3b8;
+    }
+    .bi-pill b{
+      font-size: 12px;
+      font-weight: 450;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: #0f172a;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .bi-pillRow{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .bi-dot{
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #10b981;
+      box-shadow: 0 0 0 0 rgba(59,130,246,.0);
+      animation: biPulse 1.6s infinite;
+      flex: 0 0 auto;
+    }
+    .bi-dot.warn{ background: #f59e0b; }
+    .bi-dot.bad{ background: #ef4444; }
+    @keyframes biPulse{
+      0%{ box-shadow:0 0 0 0 rgba(59,130,246,.0); }
+      40%{ box-shadow:0 0 0 6px rgba(59,130,246,.12); }
+      100%{ box-shadow:0 0 0 0 rgba(59,130,246,.0); }
+    }
+
+    .bi-export{
+      display:inline-flex;
+      align-items:center;
+      gap: 10px;
+      padding: 12px 16px;
+      border-radius: 18px;
+      background: #0f172a;
+      border: 0;
+      color: #fff;
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      box-shadow: 0 10px 30px rgba(15,23,42,.16);
+      white-space: nowrap;
+    }
+    .bi-export:hover{ background: #111c33; }
+
+    .bi-cardHead{
+      margin-bottom: 14px;
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      padding: 0 6px;
+    }
+
+    .bi-milestones{
+      display:grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .bi-ms{
+      display:flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .bi-rail{
+      display:flex;
+      align-items:center;
+      gap: 0;
+      width: 100%;
+    }
+
+    .bi-seg{
+      height: 6px;
+      flex: 1 1 auto;
+      background: rgba(226,232,240,.9);
+      position: relative;
+    }
+    .bi-seg.left{ border-radius: 999px 0 0 999px; }
+    .bi-seg.right{ border-radius: 0 999px 999px 0; }
+    .bi-seg.done{ background: rgba(16,185,129,.95); }
+    .bi-seg.pending{ background: rgba(226,232,240,.9); }
+    .bi-seg.active{ background: rgba(226,232,240,.9); }
+    .bi-seg.active > i{
+      position:absolute;
+      inset:0 auto 0 0;
+      width: 0%;
+      height: 100%;
+      background: #2563eb;
+      border-radius: inherit;
+    }
+
+    .bi-node{
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      border: 2px solid rgba(226,232,240,.95);
+      background: #fff;
+      flex: 0 0 auto;
+    }
+    .bi-node.done{ background: rgba(16,185,129,.95); border-color: rgba(16,185,129,.95); }
+    .bi-node.active{ border-color: #2563eb; background:#fff; }
+
+    .bi-msLabel{
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      text-align: center;
+      color: #94a3b8;
+      white-space: nowrap;
+      overflow:hidden;
+      text-overflow: ellipsis;
+      padding: 0 6px;
+    }
+    .bi-msLabel.active{ color: #2563eb; }
+
+    /* Flowcards pipeline (executivo) */
+    .bi-flowWrap{
+      position: relative;
+      padding: 8px 4px 2px;
+    }
+    .bi-flowLine{
+      position:absolute;
+      left: 6%;
+      right: 6%;
+      top: 46px;
+      height: 1px;
+      background: rgba(226,232,240,.95);
+      z-index: 0;
+    }
+    .bi-flow{
+      position: relative;
+      z-index: 1;
+      display:grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px;
+      align-items: stretch;
+    }
+    .bi-flowCard{
+      background: #fff;
+      border: 1px solid rgba(226,232,240,.95);
+      border-radius: 24px;
+      padding: 14px 14px 12px;
+      display:flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+      box-shadow: 0 10px 26px rgba(15,23,42,.06);
+      transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+    .bi-flowCard.pending{ opacity: .72; }
+    .bi-flowCard.active{
+      border-color: rgba(37,99,235,.45);
+      box-shadow: 0 18px 40px rgba(37,99,235,.12);
+      transform: translateY(-2px);
+    }
+    .bi-flowCard.completed{
+      border-color: rgba(16,185,129,.26);
+      box-shadow: 0 14px 36px rgba(16,185,129,.10);
+    }
+    .bi-flowTop{
+      display:flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .bi-flowIcon{
+      width: 42px;
+      height: 42px;
+      border-radius: 18px;
+      display:grid;
+      place-items:center;
+      background: rgba(148,163,184,.10);
+      color: #94a3b8;
+      flex: 0 0 auto;
+    }
+    .bi-flowIcon svg{ width: 18px; height: 18px; }
+    .bi-flowCard.completed .bi-flowIcon{ background: rgba(16,185,129,.12); color:#10b981; }
+    .bi-flowCard.active .bi-flowIcon{ background: rgba(37,99,235,.12); color:#2563eb; }
+    .bi-flowMeta{
+      text-align:right;
+      display:flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      min-width: 0;
+    }
+    .bi-flowDate{
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .bi-flowTag{
+      font-size: 8px;
+      font-weight: 450;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      padding: 4px 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(226,232,240,.95);
+      background: rgba(248,250,252,.9);
+      color: #64748b;
+      white-space: nowrap;
+    }
+    .bi-flowCard.completed .bi-flowTag{ background: rgba(16,185,129,.10); border-color: rgba(16,185,129,.18); color:#065f46; }
+    .bi-flowCard.active .bi-flowTag{ background: rgba(37,99,235,.10); border-color: rgba(37,99,235,.18); color:#1d4ed8; }
+    .bi-flowName{
+      font-size: 12px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color: #0f172a;
+      white-space: nowrap;
+      overflow:hidden;
+      text-overflow: ellipsis;
+    }
+    .bi-flowDesc{
+      font-size: 11px;
+      font-weight: 450;
+      color: #475569;
+      line-height: 1.35;
+      min-height: 44px;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+      overflow: hidden;
+    }
+    .bi-flowFoot{
+      padding-top: 10px;
+      border-top: 1px solid rgba(226,232,240,.85);
+      display:flex;
+      align-items:center;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .bi-flowOwner{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .bi-flowOwner b{
+      font-size: 10px;
+      font-weight: 450;
+      color: #64748b;
+      white-space: nowrap;
+      overflow:hidden;
+      text-overflow: ellipsis;
+      max-width: 140px;
+    }
+    .bi-flowPct{
+      font-size: 11px;
+      font-weight: 450;
+      color: #0f172a;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .bi-flowBar{
+      height: 6px;
+      width: 100%;
+      background: rgba(226,232,240,.85);
+      border-radius: 999px;
+      overflow:hidden;
+    }
+    .bi-flowBar i{
+      display:block;
+      height: 100%;
+      width: 0%;
+      background: #cbd5e1;
+      border-radius: 999px;
+    }
+    .bi-flowCard.completed .bi-flowBar i{ background: rgba(16,185,129,.95); }
+    .bi-flowCard.active .bi-flowBar i{ background: #2563eb; }
+
+    .bi-kpis{
+      display:grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .bi-perf{ grid-column: span 12; }
+    .bi-deadline{ grid-column: span 12; }
+    .bi-actions{ grid-column: span 12; }
+    .bi-deadlineWide{ grid-column: span 12; }
+
+    .bi-kpiTop{
+      display:flex;
+      align-items:flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .bi-kpiTitle{
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+
+    .bi-rating{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(226,232,240,.9);
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color: #0f172a;
+      background: rgba(248,250,252,.9);
+      white-space: nowrap;
+    }
+    .bi-rating.ok{ background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.20); color:#065f46; }
+    .bi-rating.warn{ background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.20); color:#92400e; }
+    .bi-rating.delayed{ background: rgba(234,88,12,.14); border-color: rgba(234,88,12,.26); color:#c2410c; }
+    .bi-rating.bad{ background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.20); color:#991b1b; }
+
+    .bi-perfGrid{
+      display:grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      align-items: end;
+    }
+
+    .bi-metric small{
+      display:block;
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+
+    .bi-metric b{
+      display:block;
+      font-size: clamp(22px, 2.5vw, 34px);
+      font-weight: 450;
+      letter-spacing: -0.02em;
+      color: #0f172a;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bi-metric.bordered{
+      border-left: 1px solid rgba(226,232,240,.9);
+      padding-left: 14px;
+    }
+
+    .bi-perfBar{
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(226,232,240,.8);
+    }
+
+    .bi-progress{
+      width: 100%;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(226,232,240,.95);
+      overflow:hidden;
+      position: relative;
+    }
+    .bi-progress > i{
+      display:block;
+      height: 100%;
+      width: 0%;
+      background: #6366f1;
+      border-radius: 999px;
+    }
+
+    .bi-big{
+      font-size: clamp(26px, 3vw, 42px);
+      font-weight: 450;
+      letter-spacing: -0.02em;
+      color: #0f172a;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bi-subline{
+      margin-top: 4px;
+      font-size: 11px;
+      font-weight: 450;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: #94a3b8;
+    }
+
+    .bi-chip{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(226,232,240,.9);
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color:#0f172a;
+      background: rgba(248,250,252,.9);
+      white-space: nowrap;
+    }
+    .bi-chip.bad{ background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.20); color:#991b1b; }
+    .bi-chip.ok{ background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.20); color:#065f46; }
+
+    .bi-main{
+      display:grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 16px;
+      align-items: stretch;
+    }
+    .bi-curve{ grid-column: span 12; padding: 22px; }
+    /* Right column: single Action Plan card (impediments card removed by request) */
+    .bi-side{ grid-column: span 12; display:flex; flex-direction:column; gap: 16px; min-width: 0; }
+    .bi-planCard{ flex: 1 1 auto; display:flex; flex-direction:column; min-height: clamp(340px, 48vh, 560px); }
+
+    .bi-curveHead{
+      display:flex;
+      align-items:flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .bi-curveTitleTop{
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+    .bi-curveTitle{
+      font-size: clamp(16px, 1.8vw, 22px);
+      font-weight: 450;
+      letter-spacing: -0.02em;
+      text-transform: uppercase;
+      color: #0f172a;
+    }
+
+    .bi-legend{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .bi-legendItem{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(226,232,240,.9);
+      background: rgba(248,250,252,.85);
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color: #64748b;
+      white-space: nowrap;
+    }
+
+    .bi-key{
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #cbd5e1;
+    }
+    .bi-key.trend{ background: #2563eb; }
+    .bi-key.real{ background: var(--warn); }
+    .bi-key.today{
+      background: transparent;
+      width: 14px;
+      height: 0;
+      border-top: 2px dashed #ef4444;
+      border-radius: 0;
+    }
+
+    /* Override legacy .svgBox defaults inside the BI layout */
+    .bi .svgBox{
+      /* Responsive height to avoid oversized cards on smaller screens */
+      height: clamp(260px, 46vh, 420px);
+      border-radius: 26px;
+    }
+
+    .bi-blockersList{
+      display:grid;
+      gap: 10px;
+    }
+    .bi-blocker{
+      padding: 12px 12px;
+      border-radius: 18px;
+      border: 1px solid rgba(239,68,68,.20);
+      background: rgba(239,68,68,.06);
+      display:grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .bi-blockerTop{
+      display:flex;
+      justify-content: space-between;
+      align-items:flex-start;
+      gap: 10px;
+    }
+    .bi-blockerTitle{
+      font-size: 12px;
+      font-weight: 450;
+      color: #0f172a;
+      line-height: 1.1;
+      min-width: 0;
+      overflow:hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .bi-badgeDays{
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.8);
+      border: 1px solid rgba(239,68,68,.25);
+      color: #b91c1c;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .bi-blockerMeta{
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      white-space: nowrap;
+      overflow:hidden;
+      text-overflow: ellipsis;
+    }
+
+    .bi-bars{
+      display:grid;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .bi-barRow{
+      display:grid;
+      grid-template-columns: 70px 1fr;
+      gap: 10px;
+      align-items:center;
+    }
+    .bi-barRow b{
+      font-size: 11px;
+      font-weight: 450;
+      color: #0f172a;
+      overflow:hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .bi-bar{
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(226,232,240,.95);
+      overflow:hidden;
+      position: relative;
+    }
+    .bi-bar > i{
+      position:absolute;
+      inset: 0 auto 0 0;
+      width: 0%;
+      height: 100%;
+      border-radius: 999px;
+      background: #6366f1;
+    }
+
+    /* Activity columns (Kanban-like) */
+    .bi-lists{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(241,245,249,.95);
+      border: 1px solid rgba(226,232,240,.95);
+      padding-bottom: 16px;
+    }
+    @media (min-width: 980px){
+      .bi-lists{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+
+    .bi-listCol{
+      background: rgba(248,250,252,.95);
+      border: 1px solid rgba(226,232,240,.95);
+      border-radius: 16px;
+      padding: 12px;
+      min-width: 0;
+    }
+
+    .bi-listHead{
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 2px 2px 10px;
+      margin-bottom: 2px;
+    }
+    .bi-listHeadLeft{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .bi-listHead h3{
+      margin:0;
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: #64748b;
+      white-space: nowrap;
+      overflow:hidden;
+      text-overflow: ellipsis;
+    }
+    .bi-listCount{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width: 22px;
+      height: 18px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: rgba(148,163,184,.18);
+      color: #0f172a;
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .04em;
+      font-variant-numeric: tabular-nums;
+      flex: 0 0 auto;
+    }
+    .bi-listWrap{ display:grid; gap: 10px; padding-top: 4px; }
+
+    /* List header icons */
+    .bi-listIcon{
+      width: 14px;
+      height: 14px;
+      display:inline-block;
+      flex: 0 0 auto;
+    }
+    .bi-listHead.done .bi-listIcon{ color: #10b981; }
+    .bi-listHead.doing .bi-listIcon{ color: #3b82f6; }
+    .bi-listHead.next .bi-listIcon{ color: #ef4444; }
+
+    /* Activity cards (Kanban style like reference) */
+    .bi-item{
+      position: relative;
+      background: #ffffff;
+      border: 1px solid rgba(226,232,240,.95);
+      box-shadow: 0 6px 18px rgba(15,23,42,.05);
+      border-radius: 14px;
+      padding: 12px;
+      display:flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .bi-item::before{
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 3px;
+      height: 100%;
+      background: rgba(148,163,184,.8);
+    }
+    .bi-item--done::before{ background: #10b981; }
+    .bi-item--doing::before{ background: #3b82f6; }
+    .bi-item--next::before{ background: #94a3b8; }
+    .bi-item:hover{
+      box-shadow: 0 10px 26px rgba(15,23,42,.08);
+      border-color: rgba(148,163,184,.55);
+    }
+    .bi-itemTitle{
+      font-size: 12px;
+      font-weight: 650;
+      color: #0f172a;
+      line-height: 1.18;
+      overflow:hidden;
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+      max-width: 100%;
+      margin-top: 2px;
+    }
+
+    .bi-itemHead{
+      display:flex;
+      align-items:flex-start;
+      justify-content: flex-start;
+      gap: 10px;
+      min-width: 0;
+    }
+    .bi-itemTags{
+      display:flex;
+      flex-direction: column;
+      align-items:flex-start;
+      gap: 6px;
+      min-width: 0;
+    }
+    .bi-statusTag{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(226,232,240,.95);
+      background: rgba(248,250,252,.95);
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: #64748b;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .bi-statusTag.em-dia{ border-color: rgba(16,185,129,.25); background: rgba(16,185,129,.08); color:#065f46; }
+    .bi-statusTag.em-risco{ border-color: rgba(245,158,11,.25); background: rgba(245,158,11,.10); color:#92400e; }
+    .bi-statusTag.atrasado{ border-color: rgba(239,68,68,.25); background: rgba(239,68,68,.10); color:#991b1b; }
+
+    .bi-itemFoot{
+      display:flex;
+      align-items:flex-end;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+    .bi-itemDates{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .bi-dateChip{
+      display:inline-flex;
+      align-items:center;
+      gap: 6px;
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .bi-dateChip svg{ width: 13px; height: 13px; opacity: .65; }
+    .bi-assignee{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      min-width: 0;
+      flex: 0 0 auto;
+    }
+    .bi-assigneeAvatar{
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      border: 1px solid rgba(59,130,246,.22);
+      background: rgba(59,130,246,.06);
+      color: #1d4ed8;
+      display:grid;
+      place-items:center;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      font-variant-numeric: tabular-nums;
+    }
+    .bi-assigneeName{
+      font-size: 11px;
+      font-weight: 650;
+      color: #1d4ed8;
+      letter-spacing: .02em;
+      text-transform: none;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+      max-width: 220px;
+      line-height: 1.1;
+      text-align: right;
+    }
+    .bi-epicTag{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(226,232,240,.95);
+      background: rgba(248,250,252,.95);
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: #64748b;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .bi-epicTag.dev{ border-color: rgba(59,130,246,.22); background: rgba(59,130,246,.06); color:#1d4ed8; }
+    .bi-epicTag.disc{ border-color: rgba(16,185,129,.22); background: rgba(16,185,129,.06); color:#065f46; }
+    .bi-epicTag.test{ border-color: rgba(245,158,11,.22); background: rgba(245,158,11,.08); color:#92400e; }
+    .bi-epicTag.dep{ border-color: rgba(239,68,68,.22); background: rgba(239,68,68,.08); color:#991b1b; }
+
+    .bi-macroTag{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px dashed rgba(148,163,184,.55);
+      background: rgba(148,163,184,.08);
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: #475569;
+      white-space: nowrap;
+      flex: 0 0 auto;
+      max-width: 260px;
+      overflow:hidden;
+      text-overflow: ellipsis;
+    }
+    .bi-cardPct{
+      font-size: 12px;
+      font-weight: 450;
+      color: #2563eb;
+      letter-spacing: .02em;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      flex: 0 0 auto;
+      padding-top: 1px;
+    }
+    .bi-progress{
+      height: 4px;
+      width: 100%;
+      border-radius: 999px;
+      background: rgba(226,232,240,.95);
+      overflow:hidden;
+    }
+    .bi-progress > i{
+      display:block;
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: #2563eb;
+    }
+    .bi-cardBottom{
+      display:flex;
+      align-items:flex-end;
+      justify-content: space-between;
+      gap: 12px;
+      min-width: 0;
+    }
+    .bi-kv{
+      display:flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+    .bi-k{
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      display:flex;
+      align-items:center;
+      gap: 6px;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .bi-k svg{ width: 13px; height: 13px; opacity: .65; }
+    .bi-v{
+      font-size: 12px;
+      font-weight: 450;
+      color: #0f172a;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .bi-datesGrid{
+      display:grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 14px;
+      align-items:end;
+      min-width: 0;
+    }
+    .bi-clockDot{
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      border: 1px solid rgba(239,68,68,.25);
+      background: rgba(239,68,68,.06);
+      color: #ef4444;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      flex: 0 0 auto;
+    }
+    .bi-clockDot svg{ width: 15px; height: 15px; opacity: .9; }
+
+    .bi-delayBadge{
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .06em;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(226,232,240,.95);
+      background: rgba(248,250,252,.95);
+      color: #64748b;
+      white-space: nowrap;
+      flex: 0 0 auto;
+      font-variant-numeric: tabular-nums;
+    }
+    .bi-delayBadge.bad{ border-color: rgba(239,68,68,.24); background: rgba(239,68,68,.10); color: #b91c1c; }
+    .bi-delayBadge.warn{ border-color: rgba(245,158,11,.24); background: rgba(245,158,11,.10); color: #92400e; }
+
+    .bi-nextFoot{
+      display:flex;
+      justify-content:flex-end;
+      margin-top: 10px;
+    }
+
+    .bi-ownerPill2{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(59,130,246,.18);
+      background: rgba(59,130,246,.04);
+      color: #1d4ed8;
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .bi-ownerPill2 svg{ width: 14px; height: 14px; opacity: .65; }
+
+    /* Action plan card */
+    .bi-plan{
+      display:grid;
+      gap: 12px;
+    }
+    .bi-planLead{
+      font-size: 12px;
+      font-weight: 450;
+      color: #0f172a;
+      line-height: 1.2;
+    }
+    .bi-planLead .bad{
+      color: #b91c1c;
+      font-variant-numeric: tabular-nums;
+    }
+    .bi-planList{
+      margin: 0;
+      padding: 0 0 0 18px;
+      display:grid;
+      gap: 10px;
+    }
+    .bi-planList li{
+      font-size: 11px;
+      font-weight: 450;
+      color: #334155;
+      line-height: 1.25;
+    }
+    .bi-planList b{
+      font-weight: 450;
+      color: #0f172a;
+    }
+    .bi-planHint{
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: #94a3b8;
+    }
+    .bi-planMeta{
+      font-size: 11px;
+      font-weight: 450;
+      color: #475569;
+      line-height: 1.25;
+    }
+    .bi-planOpt{
+      margin: 0;
+      padding: 0 0 0 14px;
+      display: grid;
+      gap: 8px;
+    }
+    .bi-planOpt li{
+      font-size: 11px;
+      font-weight: 450;
+      color: #334155;
+      line-height: 1.25;
+    }
+    .bi-planProblems{
+      margin: 0;
+      padding: 0 0 0 14px;
+      display: grid;
+      gap: 8px;
+    }
+    .bi-planProblems li{
+      font-size: 11px;
+      font-weight: 450;
+      color: #334155;
+      line-height: 1.25;
+    }
+    .bi-planFoot{
+      padding-top: 10px;
+      border-top: 1px solid rgba(226,232,240,.9);
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .bi-planFoot .goal{
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color: #64748b;
+      white-space: nowrap;
+    }
+    .bi-planFoot .date{
+      font-size: 12px;
+      font-weight: 450;
+      color: #0f172a;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .bi-tag{
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(226,232,240,.9);
+      background: rgba(248,250,252,.9);
+      color: #64748b;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .bi-tag.ok{ background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.20); color:#065f46; }
+    .bi-tag.warn{ background: rgba(59,130,246,.08); border-color: rgba(59,130,246,.20); color:#1d4ed8; }
+    .bi-tag.bad{ background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.20); color:#991b1b; }
+
+    .bi-footer{
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      padding: 18px 18px;
+    }
+    .bi-footerLeft{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .bi-footerTitle{
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: #0f172a;
+    }
+    .bi-footLegend{
+      display:flex;
+      align-items:center;
+      gap: 18px;
+      flex-wrap: wrap;
+      color: #64748b;
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .bi-footLegend span{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+    .bi-dotSmall{
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #10b981;
+    }
+    .bi-dotSmall.ok{ background:#10b981; }
+    .bi-dotSmall.low{ background:#fbbf24; }
+    .bi-dotSmall.risk{ background:#f59e0b; }
+    .bi-dotSmall.delayed{ background:#ea580c; }
+    .bi-dotSmall.bad{ background:#ef4444; }
+
+    @media screen and (min-width: 1024px){
+      .bi-perf{ grid-column: span 6; }
+      .bi-deadline{ grid-column: span 3; }
+      .bi-actions{ grid-column: span 3; }
+      .bi-deadlineWide{ grid-column: span 6; }
+
+      .bi-curve{ grid-column: span 8; }
+      .bi-side{ grid-column: span 4; }
+    }
+
+    .deadlineWide{
+      position: relative;
+      overflow: hidden;
+    }
+    .deadlineWide::before{
+      content:"";
+      position:absolute;
+      left:0; top:0; bottom:0;
+      width: 6px;
+      background: rgba(148,163,184,.6);
+    }
+    .deadlineWide.tone-ok::before{ background: rgba(16,185,129,.95); }
+    .deadlineWide.tone-warn::before{ background: rgba(245,158,11,.95); }
+    .deadlineWide.tone-delayed::before{ background: rgba(234,88,12,.95); }
+    .deadlineWide.tone-bad::before{ background: rgba(239,68,68,.95); }
+
+    .dw-topMeta{
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .dw-chip{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      border: 1px solid rgba(226,232,240,.9);
+      background: rgba(248,250,252,.9);
+      color:#0f172a;
+      white-space: nowrap;
+    }
+    .dw-chip.ok{ background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.20); color:#065f46; }
+    .dw-chip.warn{ background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.20); color:#92400e; }
+    .dw-chip.delayed{ background: rgba(234,88,12,.14); border-color: rgba(234,88,12,.26); color:#c2410c; }
+    .dw-chip.bad{ background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.20); color:#991b1b; }
+
+    .dw-dates{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+    @media screen and (min-width: 820px){
+      .dw-dates{ grid-template-columns: 1fr 1fr; gap: 16px; }
+    }
+    .dw-dateLabel{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color:#94a3b8;
+      margin-bottom: 6px;
+      white-space: nowrap;
+    }
+    .dw-dateValue{
+      font-size: 26px;
+      font-weight: 750;
+      letter-spacing: -0.03em;
+      color:#0f172a;
+      font-variant-numeric: tabular-nums;
+    }
+    .dw-delta{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 10px;
+      font-weight: 450;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+      color:#64748b;
+    }
+    .dw-delta b{
+      font-weight: 750;
+      font-variant-numeric: tabular-nums;
+      color:#0f172a;
+    }
+
+    .dw-confidence{
+      margin-top: 6px;
+      display:grid;
+      gap: 8px;
+    }
+    .dw-bar{
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(226,232,240,.85);
+      overflow:hidden;
+      position: relative;
+    }
+    .dw-bar i{
+      display:block;
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: rgba(148,163,184,.95);
+    }
+    .deadlineWide.tone-ok .dw-bar i{ background: rgba(16,185,129,.95); }
+    .deadlineWide.tone-warn .dw-bar i{ background: rgba(245,158,11,.95); }
+    .deadlineWide.tone-delayed .dw-bar i{ background: rgba(234,88,12,.95); }
+    .deadlineWide.tone-bad .dw-bar i{ background: rgba(239,68,68,.95); }
+
+    /* Deprecated: previously we rendered "Causas provaveis" / "Impacto agora" under Prazo Estimado.
+       Keep CSS defs for compatibility, but never show those panels. */
+    .deadlineWide .dw-split{ display:none !important; }
+
+    .dw-split{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    @media screen and (min-width: 820px){
+      .dw-split{ grid-template-columns: 1.4fr 1fr; }
+    }
+    .dw-panel{
+      border: 1px solid rgba(226,232,240,.9);
+      background: rgba(248,250,252,.95);
+      border-radius: 16px;
+      padding: 12px;
+      min-height: 86px;
+    }
+    .dw-panelHead{
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color:#94a3b8;
+      margin-bottom: 8px;
+    }
+    .dw-reasons{
+      margin:0;
+      padding-left: 16px;
+      display:grid;
+      gap: 6px;
+      color:#475569;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.2;
+    }
+    .dw-metrics{
+      display:grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .dw-metricCard{
+      border: 1px solid rgba(226,232,240,.9);
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 10px;
+      min-width: 0;
+    }
+    .dw-metricCard small{
+      display:block;
+      font-size: 9px;
+      font-weight: 450;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color:#94a3b8;
+      white-space: nowrap;
+      overflow:hidden;
+      text-overflow: ellipsis;
+    }
+    .dw-metricCard b{
+      display:block;
+      margin-top: 6px;
+      font-size: 16px;
+      font-weight: 750;
+      color:#0f172a;
+      font-variant-numeric: tabular-nums;
+    }
+
+    @media screen and (max-width: 640px){
+      .bi-pill{ min-width: 0; width: 100%; border-right: 0; border-top: 1px solid rgba(226,232,240,.9); padding-top: 10px; }
+      .bi-pill:first-of-type{ border-top: 0; padding-top: 6px; }
+      .bi-headPills{ width: 100%; }
+      .bi-perfGrid{ grid-template-columns: 1fr; }
+      .bi-metric.bordered{ border-left: 0; padding-left: 0; border-top: 1px solid rgba(226,232,240,.9); padding-top: 12px; }
+      .bi-milestones{ grid-template-columns: 1fr; }
+      .bi .svgBox{ height: clamp(240px, 44vh, 340px); border-radius: 24px; }
+      .bi-ownerName{ max-width: 120px; }
+    }
+    .topbar{
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      border-radius: 16px;
+      padding: 12px 14px;
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .topbar-left{
+      display:flex;
+      align-items:center;
+      gap: 16px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .topbar-split{
+      width: 1px;
+      height: 28px;
+      background: rgba(15,23,42,.08);
+    }
+
+    .metaBlock{
+      display:flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .metaBlock .k{ font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #94a3b8; font-weight: 450; }
+    .metaBlock .v{ font-size: 13px; font-weight: 450; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+
+    .topbar-right{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .chipPill{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(148,163,184,.10);
+      font-size: 11px;
+      font-weight: 450;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #475569;
+      white-space: nowrap;
+    }
+
+    .chipPill .dot{
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #3b82f6;
+    }
+
+    .chipPill.status{ background: rgba(59,130,246,.08); border-color: rgba(59,130,246,.16); color: #2563eb; }
+    .chipPill.status .dot{ background:#3b82f6; }
+    .chipPill.health.ok{ background: rgba(47,143,97,.10); border-color: rgba(47,143,97,.18); color:#1f6b4b; }
+    .chipPill.health.ok .dot{ background: var(--ok); }
+    .chipPill.health.warn{ background: rgba(199,107,26,.10); border-color: rgba(199,107,26,.18); color:#9a5a12; }
+    .chipPill.health.warn .dot{ background: var(--warn); }
+    .chipPill.health.bad{ background: rgba(155,28,35,.10); border-color: rgba(155,28,35,.18); color:#9b1c23; }
+    .chipPill.health.bad .dot{ background: var(--bad); }
+    .chipPill.golive{ background: rgba(15,23,42,.92); border-color: rgba(15,23,42,.92); color:#fff; }
+    .chipPill.golive .dot{ background: #fff; }
+
+    .iconBtn{
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(15,23,42,.02);
+      display:grid;
+      place-items: center;
+      cursor: pointer;
+    }
+    .iconBtn:hover{ background: rgba(15,23,42,.05); }
+
+    .kpiGrid{
+      display:grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .kpi{
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      border-radius: 16px;
+      padding: 16px;
+      min-height: 120px;
+      display:flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-width: 0;
+    }
+    .kpiTopRow{ display:flex; align-items:flex-start; justify-content: space-between; gap: 10px; }
+    .kpiTitle{ font-size: 11px; font-weight: 450; color: #94a3b8; text-transform: uppercase; letter-spacing: .14em; }
+    .kpiBadge{
+      font-size: 10px;
+      font-weight: 450;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .kpiBadge.bad{ background: rgba(155,28,35,.10); border-color: rgba(155,28,35,.18); color:#9b1c23; }
+    .kpiBadge.warn{ background: rgba(199,107,26,.10); border-color: rgba(199,107,26,.18); color:#9a5a12; }
+    .kpiBadge.ok{ background: rgba(47,143,97,.10); border-color: rgba(47,143,97,.18); color:#1f6b4b; }
+    .kpiValue2{ margin-top: 8px; font-size: 26px; font-weight: 450; letter-spacing: -0.02em; }
+    .kpiSub2{ margin-top: 4px; font-size: 11px; color: #94a3b8; font-weight: 450; }
+    .kpiBar{ margin-top: 10px; width: 100%; height: 6px; border-radius: 999px; background: rgba(148,163,184,.25); overflow: hidden; }
+    .kpiBar > i{ display:block; height:100%; width:0%; background: #3b82f6; border-radius: 999px; }
+
+    .kpi.kpi-gap.gap-ok{
+      background: rgba(47,143,97,.08);
+      border-color: rgba(47,143,97,.18);
+    }
+    .kpi.kpi-gap.gap-low{
+      background: rgba(253,230,138,.35);
+      border-color: rgba(245,158,11,.30);
+    }
+    .kpi.kpi-gap.gap-risk{
+      background: rgba(245,158,11,.16);
+      border-color: rgba(245,158,11,.34);
+    }
+    .kpi.kpi-gap.gap-delayed{
+      background: rgba(234,88,12,.18);
+      border-color: rgba(234,88,12,.34);
+    }
+    .kpi.kpi-gap.gap-critical{
+      background: rgba(155,28,35,.08);
+      border-color: rgba(155,28,35,.18);
+    }
+
+    .panelGrid{
+      display:grid;
+      grid-template-columns: 1fr 2.6fr;
+      gap: 12px;
+      align-items: stretch;
+      min-width: 0;
+    }
+    .stack{
+      display:grid;
+      gap: 12px;
+      min-width: 0;
+    }
+    .panelCard{
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      border-radius: 16px;
+      padding: 16px;
+      min-width: 0;
+    }
+    .panelTitle{
+      font-size: 12px;
+      font-weight: 450;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      margin: 0 0 12px;
+    }
+
+    .note{
+      background: rgba(148,163,184,.12);
+      border: 1px solid rgba(148,163,184,.18);
+      border-radius: 14px;
+      padding: 10px 12px;
+      display:flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .noteTitle{ font-size: 12px; font-weight: 450; color: #334155; }
+    .noteMeta{ font-size: 10px; font-weight: 450; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; }
+    .noteMeta.bad{ color:#9b1c23; }
+    .noteMeta.warn{ color:#9a5a12; }
+    .noteMeta.ok{ color:#1f6b4b; }
+
+    .emptyHint{
+      color: #94a3b8;
+      font-weight: 450;
+      font-size: 12px;
+      padding: 8px 0;
+    }
+
+    .curveWrap{
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      border-radius: 16px;
+      padding: 16px;
+      min-width: 0;
+    }
+    .curveHeader{
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .curveHeader h3{
+      margin: 0;
+      font-size: 12px;
+      font-weight: 450;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+    }
+    .curveHeader p{
+      margin: 2px 0 0;
+      font-size: 11px;
+      color: #94a3b8;
+      font-weight: 450;
+    }
+    .curveLegend{
+      display:flex;
+      gap: 14px;
+      align-items:center;
+      font-size: 10px;
+      font-weight: 450;
+      text-transform: uppercase;
+      letter-spacing: .14em;
+      color:#94a3b8;
+      flex-wrap: wrap;
+    }
+    .legendLine{ width: 14px; height: 2px; background: rgba(148,163,184,.6); border-radius: 999px; }
+    .legendLine.real{ background: var(--warn); }
+    .legendLine.today{ background: transparent; border-top: 2px dashed #ef4444; width: 14px; height: 0; }
+
+    .listGrid{
+      display:grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      min-width: 0;
+    }
+    .listCard{
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      border-radius: 16px;
+      padding: 16px;
+      display:flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .listHead{
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .listHead h4{
+      margin:0;
+      font-size: 11px;
+      font-weight: 450;
+      color:#94a3b8;
+      text-transform: uppercase;
+      letter-spacing: .14em;
+    }
+    .miniTag{
+      font-size: 10px;
+      font-weight: 450;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,.18);
+      background: rgba(148,163,184,.12);
+      color:#64748b;
+      white-space: nowrap;
+    }
+    .miniTag.blue{ background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.18); color:#2563eb; }
+    .miniTag.red{ background: rgba(155,28,35,.10); border-color: rgba(155,28,35,.18); color:#9b1c23; }
+
+    .listBody{ display:grid; gap: 8px; margin-top: 2px; flex: 1; }
+    .rowItem{
+      background: rgba(148,163,184,.10);
+      border: 1px solid rgba(148,163,184,.14);
+      border-radius: 14px;
+      padding: 10px 12px;
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+    .rowItem:hover{ border-color: rgba(47,143,97,.22); }
+    .rowItemText{ min-width: 0; display:flex; flex-direction: column; gap: 4px; }
+    /* Activities: keep normal weight (no bold) */
+    .rowItemTitle{ font-size: 12px; font-weight: 500 !important; color:#334155; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
+    .rowItemMeta{ font-size: 10px; font-weight: 450 !important; color:#64748b; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
+    .rowItem b, .rowItem strong{ font-weight: inherit !important; }
+    .rowItemRight{ display:flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+    .statusSmall{
+      font-size: 10px;
+      font-weight: 450 !important;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .statusSmall.ok{ background: rgba(47,143,97,.10); border-color: rgba(47,143,97,.18); color:#1f6b4b; }
+    .statusSmall.warn{ background: rgba(59,130,246,.10); border-color: rgba(59,130,246,.18); color:#2563eb; }
+    .statusSmall.bad{ background: rgba(155,28,35,.10); border-color: rgba(155,28,35,.18); color:#9b1c23; }
+
+    @media (max-width: 1040px){
+      .op-canvas{ width: 100%; }
+    }
+    @media (max-width: 980px){
+      .kpiGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .panelGrid{ grid-template-columns: 1fr; }
+      .listGrid{ grid-template-columns: 1fr; }
     }
 
     /* Header */
@@ -98,7 +1920,7 @@
     }
     .chip b{
       font-size: 12px;
-      font-weight: 700;
+      font-weight: 450;
     }
 
     .headerRight{
@@ -141,7 +1963,7 @@
       border-radius:999px;
       padding: 8px 12px;
       font-size:12px;
-      font-weight:600;
+      font-weight: 450;
       color:var(--text);
       cursor:pointer;
       box-shadow: var(--shadow);
@@ -172,7 +1994,7 @@
       letter-spacing:.6px;
       text-transform: uppercase;
       color: var(--muted);
-      font-weight: 700;
+      font-weight: 450;
     }
     .cardBody{ padding: 12px 14px; }
 
@@ -191,7 +2013,7 @@
     }
     .kpiValue{
       font-size: 26px;
-      font-weight: 800;
+      font-weight: 450;
       letter-spacing:-.4px;
     }
     .kpiSub{
@@ -250,18 +2072,18 @@
     .healthTag.bad{ background: rgba(155,28,35,.12); color: #9b1c23; }
 
     .gap-card.gap-ok{ background: rgba(47,143,97,.10); border-color: rgba(47,143,97,.24); }
-    .gap-card.gap-low{ background: rgba(100,116,139,.12); border-color: rgba(100,116,139,.28); }
-    .gap-card.gap-risk{ background: rgba(199,107,26,.12); border-color: rgba(199,107,26,.28); }
-    .gap-card.gap-delayed{ background: rgba(199,107,26,.18); border-color: rgba(199,107,26,.32); }
+    .gap-card.gap-low{ background: rgba(253,230,138,.35); border-color: rgba(245,158,11,.30); }
+    .gap-card.gap-risk{ background: rgba(245,158,11,.16); border-color: rgba(245,158,11,.34); }
+    .gap-card.gap-delayed{ background: rgba(234,88,12,.18); border-color: rgba(234,88,12,.34); }
     .gap-card.gap-critical{ background: rgba(155,28,35,.12); border-color: rgba(155,28,35,.3); }
     .gap-card.gap-ok .kpiValue,
     .gap-card.gap-ok .kpiSub{ color: #2f8f61; }
     .gap-card.gap-low .kpiValue,
-    .gap-card.gap-low .kpiSub{ color: #64748b; }
+    .gap-card.gap-low .kpiSub{ color: #92400e; }
     .gap-card.gap-risk .kpiValue,
-    .gap-card.gap-risk .kpiSub{ color: #b06013; }
+    .gap-card.gap-risk .kpiSub{ color: #b45309; }
     .gap-card.gap-delayed .kpiValue,
-    .gap-card.gap-delayed .kpiSub{ color: #9c4f0f; }
+    .gap-card.gap-delayed .kpiSub{ color: #c2410c; }
     .gap-card.gap-critical .kpiValue,
     .gap-card.gap-critical .kpiSub{ color: #9b1c23; }
 
@@ -295,7 +2117,7 @@
 
     .curve-kicker{
       font-size:10px;
-      font-weight:700;
+      font-weight: 450;
       text-transform:uppercase;
       letter-spacing:.2em;
       color:#94a3b8;
@@ -304,7 +2126,7 @@
     .curve-title{
       margin:6px 0 0;
       font-size:28px;
-      font-weight:800;
+      font-weight: 450;
       letter-spacing:-.02em;
       color:#0f172a;
     }
@@ -329,7 +2151,7 @@
 
     .curve-stat-label{
       font-size:9px;
-      font-weight:700;
+      font-weight: 450;
       text-transform:uppercase;
       letter-spacing:.2em;
       color:#94a3b8;
@@ -337,7 +2159,7 @@
 
     .curve-stat-value{
       font-size:20px;
-      font-weight:700;
+      font-weight: 450;
       color:#0f172a;
     }
 
@@ -356,18 +2178,23 @@
     }
 
     .curve-stat-gap.gap-low{
-      background: rgba(100,116,139,.12);
-      border-color: rgba(100,116,139,.25);
-      color:#64748b;
+      background: rgba(253,230,138,.35);
+      border-color: rgba(245,158,11,.30);
+      color:#92400e;
     }
 
     .curve-stat-gap.gap-risk{
-      background: rgba(245,158,11,.12);
-      border-color: rgba(245,158,11,.2);
+      background: rgba(245,158,11,.16);
+      border-color: rgba(245,158,11,.34);
       color:#b45309;
     }
 
-    .curve-stat-gap.gap-delayed,
+    .curve-stat-gap.gap-delayed{
+      background: rgba(234,88,12,.18);
+      border-color: rgba(234,88,12,.34);
+      color:#c2410c;
+    }
+
     .curve-stat-gap.gap-critical{
       background: rgba(239,68,68,.12);
       border-color: rgba(239,68,68,.24);
@@ -395,7 +2222,7 @@
       border:1px solid #e2e8f0;
       background:#fff;
       font-size:10px;
-      font-weight:700;
+      font-weight: 450;
       text-transform:uppercase;
       letter-spacing:.18em;
       color:#64748b;
@@ -470,7 +2297,7 @@
     }
     .itemName{
       font-size: 12.5px;
-      font-weight: 700;
+      font-weight: 450;
       line-height:1.2;
       overflow:hidden;
       text-overflow:ellipsis;
@@ -522,13 +2349,15 @@
       height:260px;
       border-radius:20px;
       border:1px solid #e2e8f0;
-      background:#f8fafc;
+      background:#ffffff;
       overflow:hidden;
       position: relative;
       display: flex;
       align-items: center;
       justify-content: center;
     }
+
+    .svgBox svg{ display:block; }
 
     .curve-evidence-line{
       position:absolute;
@@ -558,7 +2387,7 @@
 
     .curve-tooltip .tip-date{
       font-size:10px;
-      font-weight:700;
+      font-weight: 450;
       color:#64748b;
       margin-bottom:6px;
     }
@@ -571,19 +2400,19 @@
     }
 
     .curve-tooltip .tip-real{
-      color:#10b981;
-      font-weight:700;
+      color:#ef4444;
+      font-weight: 450;
     }
 
     .curve-tooltip .tip-base{
-      color:#0f172a;
-      font-weight:700;
+      color:#94a3b8;
+      font-weight: 450;
     }
 
     .curve-tooltip .tip-gap{
       margin-top:8px;
       font-size:13px;
-      font-weight:800;
+      font-weight: 450;
     }
 
     /* Responsivo */
@@ -597,27 +2426,17 @@
 
     /* Print/PDF */
     @page{
-      size: A4 landscape;
-      margin: 10mm;
+      size: auto;
+      margin: 0;
     }
     @media print{
-      body{ background:#fff; }
-      .op-shell{ background:#fff !important; padding:0 !important; }
-      .op-canvas{ width: var(--canvas-w) !important; margin:0 auto !important; padding:0 !important; }
-      .page{ margin:0; padding:0; }
-      .card{ box-shadow:none; }
-      .badge{ box-shadow:none; }
+      html, body{
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
     }
 
-    html.exporting .op-shell{
-      background:#fff !important;
-      padding:0 !important;
-    }
-    html.exporting .op-canvas{
-      width: var(--canvas-w) !important;
-      margin:0 auto !important;
-      padding:0 !important;
-    }
+    /* Export now uses the same screen layout (no special exporting overrides). */
 
     /* ===========================
        OnePage COMPACT (screen + PDF)
@@ -745,12 +2564,41 @@
         print-color-adjust: exact;
       }
     }
+
+    /* ------------------------------------------------------------------
+       Tone override (keep contrast, avoid the "pale" look)
+       ------------------------------------------------------------------ */
+    /* Make the report punchier overall, but keep activity lists lighter. */
+    #onepageRoot *{ font-weight: 650; }
+    #onepageRoot b, #onepageRoot strong{ font-weight: 750; }
+
+    .bi-title,
+    .kpiValue,
+    .kpiValue2,
+    .noteTitle{
+      font-weight: 750 !important;
+    }
+    .bi-sub,
+    .curveHeader p,
+    .curveLegend,
+    .metaBlock .k,
+    .kpiTitle,
+    .kpiSub2,
+    .noteMeta,
+    .miniTag{
+      color: #64748b !important;
+    }
+    .metaBlock .k,
+    .kpiTitle,
+    .noteMeta{
+      font-weight: 600 !important;
+    }
   </style>
 </head>
 
 <body>
   <div class="op-shell">
-    <div id="onepageRoot" class="op-canvas onepage-compact">
+    <div id="onepageRoot" class="op-canvas">
       <div id="app"></div>
     </div>
   </div>
@@ -803,26 +2651,57 @@
     // ------------------------------------------------------------
     // 2) Helpers (datas, status, contagens)
     // ------------------------------------------------------------
+    function isValidDate(d){
+      return d instanceof Date && !Number.isNaN(d.getTime());
+    }
+
     function parseTaskDate(v){
-      if(!v) return null;
-      // aceita "DD/MM/YYYY" ou ISO
+      if(v == null || v === "") return null;
+      // aceita "DD/MM/YYYY" (com hora opcional) ou ISO
       if(typeof v === "string"){
         const raw = v.trim();
-        if(raw.includes("/")){
-          const [dd,mm,yy] = raw.split("/").map(Number);
-          if(!dd||!mm||!yy) return null;
-          return new Date(yy, mm-1, dd);
+        if(!raw) return null;
+        // ISO completo (com hora/timezone): deixe o parser nativo lidar para evitar cortar timezone.
+        // Exemplos: "2026-01-14T00:00:00.000Z", "2026-01-14T12:30:00-03:00"
+        if (raw.includes("T") || raw.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(raw)) {
+          const dIso = new Date(raw);
+          if (isValidDate(dIso)) return dIso;
         }
-        const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        // BR: 14/01/2026 (accepts extra suffixes like timezones / milliseconds)
+        // Examples: "14/01/2026", "14/01/2026 10:30", "14/01/2026 10:30:00.000"
+        const br = raw.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\D+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+        if (br) {
+          const dd = Number(br[1]);
+          const mm = Number(br[2]);
+          const yy = Number(br[3]);
+          const hh = br[4] != null ? Number(br[4]) : 0;
+          const mi = br[5] != null ? Number(br[5]) : 0;
+          const ss = br[6] != null ? Number(br[6]) : 0;
+          if(!dd||!mm||!yy) return null;
+          const d = new Date(yy, mm-1, dd, hh, mi, ss);
+          return isValidDate(d) ? d : null;
+        }
+        // Common dash variant: 14-01-2026
+        const brDash = raw.match(/(\d{2})-(\d{2})-(\d{4})/);
+        if (brDash) {
+          const dd = Number(brDash[1]);
+          const mm = Number(brDash[2]);
+          const yy = Number(brDash[3]);
+          if(!dd||!mm||!yy) return null;
+          const d = new Date(yy, mm-1, dd);
+          return isValidDate(d) ? d : null;
+        }
+        const match = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
         if (match) {
           const yy = Number(match[1]);
           const mm = Number(match[2]);
           const dd = Number(match[3]);
-          return new Date(yy, mm - 1, dd);
+          const d = new Date(yy, mm - 1, dd);
+          return isValidDate(d) ? d : null;
         }
       }
       const d = new Date(v);
-      return isNaN(d.getTime()) ? null : d;
+      return isValidDate(d) ? d : null;
     }
 
     function fmtBR(d){
@@ -837,6 +2716,14 @@
       // b - a em dias (inteiro)
       const ms = (b.getTime() - a.getTime());
       return Math.floor(ms / (24*3600*1000));
+    }
+
+    function addDays(d, n){
+      if (!d) return null;
+      const out = new Date(d.getTime());
+      out.setDate(out.getDate() + Number(n || 0));
+      out.setHours(0,0,0,0);
+      return out;
     }
 
     function clamp(n,min,max){ return Math.max(min, Math.min(max,n)); }
@@ -856,8 +2743,8 @@
       return null;
     }
 
-    function normStatus(s){
-      const v = String(s || "")
+    function normStatusPlain(s){
+      return String(s || "")
         .trim()
         .replace(/^\d+\s*[-.:]?\s*/g, "")
         .toLowerCase()
@@ -865,10 +2752,17 @@
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/[_-]+/g, " ")
         .replace(/\s+/g, " ");
+    }
+
+    // Used by list categorization inside the OnePage itself.
+    function normStatus(s){
+      const v = normStatusPlain(s);
       if (v.includes("concl") || v.includes("done") || v.includes("finaliz") || v.includes("feito")) return "done";
       if (
         v.includes("em validacao") ||
         v.includes("validacao") ||
+        v.includes("aguardando validacao") ||
+        v.includes("aguardando aprovacao") ||
         v.includes("em andamento") ||
         v.includes("em desenvolvimento") ||
         v.includes("em execucao") ||
@@ -885,6 +2779,7 @@
         v.includes("nao iniciada") ||
         v.includes("planej") ||
         v.includes("todo") ||
+        v.includes("to do") ||
         v.includes("a fazer") ||
         v.includes("backlog") ||
         v.includes("pend")
@@ -892,6 +2787,59 @@
         return "todo";
       }
       return "todo";
+    }
+
+    // Keep progress calculation identical to the main project screen (public/app.js).
+    const STATUS_IN_PROGRESS = new Set(
+      ["em andamento", "em desenvolvimento", "em execucao", "em progresso", "in progress", "doing", "atrasado"].map(normStatusPlain)
+    );
+    const STATUS_VALIDATION = new Set(
+      ["em validacao", "validacao", "aguardando validacao", "aguardando aprovacao"].map(normStatusPlain)
+    );
+    const STATUS_DONE = new Set(["concluido", "concluida", "done", "finalizado", "finalizada", "feito", "feita"].map(normStatusPlain));
+    const STATUS_BLOCKED = new Set(["parado", "parada", "bloqueado", "bloqueada", "blocked"].map(normStatusPlain));
+    const STATUS_PLANNED = new Set(
+      [
+        "planejado",
+        "planejada",
+        "nao iniciado",
+        "nao iniciada",
+        "todo",
+        "to do",
+        "a fazer",
+        "backlog",
+        "pendente",
+        "pendencia",
+        "pendencias"
+      ].map(normStatusPlain)
+    );
+
+    function getTaskStatusLocal(task){
+      return task?.status ?? task?.state ?? task?.activityStatus ?? task?.situacao ?? "";
+    }
+
+    function normalizeTaskStatusLocal(status){
+      const raw = normStatusPlain(status);
+      if (STATUS_DONE.has(raw)) return "concluido";
+      if (STATUS_VALIDATION.has(raw)) return "em_validacao";
+      if (STATUS_IN_PROGRESS.has(raw)) return "em_andamento";
+      if (STATUS_BLOCKED.has(raw) || raw.includes("parad") || raw.includes("bloque")) return "parado";
+      if (STATUS_PLANNED.has(raw)) return "planejado";
+      // fallback: treat unknown as planned
+      return "planejado";
+    }
+
+    function isDoneTaskLocal(task){
+      return normalizeTaskStatusLocal(getTaskStatusLocal(task)) === "concluido";
+    }
+
+    function projectMetricsLocal(tasks = []){
+      const list = Array.isArray(tasks) ? tasks : [];
+      const total = list.length;
+      const done = list.filter((t) => isDoneTaskLocal(t)).length;
+      const pending = Math.max(total - done, 0);
+      const progress = total ? Math.round((done / total) * 100) : 0;
+      return { total, done, pending, progress };
     }
 
     function healthFromCounts(lateCount){
@@ -909,7 +2857,7 @@
     }
 
     // ------------------------------------------------------------
-    // 3) Curva S (baseline diario linear + realizado por conclusao)
+    // 3) Curva S (PV/EV acumulados por data)
     // ------------------------------------------------------------
     function downsample(points, maxPoints=60){
       if(points.length <= maxPoints) return points;
@@ -934,80 +2882,277 @@
       const clampedReport = reportDay < startDay ? startDay : (reportDay > endDay ? endDay : reportDay);
       const totalDays = Math.max(1, daysDiff(startDay, endDay));
 
-      const taskWeight = () => 1;
+      const validTasks = Array.isArray(tasks) ? tasks : [];
 
-      // Baseline linear 0->100 por dia (periodo total)
-      const baseline = [];
-      for(let d=0; d<=totalDays; d++){
-        const day = new Date(startDay.getTime() + d*86400000);
-        const pct = (d/totalDays)*100;
-        baseline.push({ t: day, y: pct });
-      }
+      const normFieldKey = (value) =>
+        String(value || "")
+          .trim()
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^a-z0-9]+/g, "");
 
-      const resolveDoneDate = (t) => {
-        if (normStatus(t.status) !== "done") return null;
-        const explicit = parseTaskDate(
-          t.dataConclusao || t.completedAt || t.doneAt || t.finishedAt || t.completed || ""
-        );
-        const explicitDay = explicit ? new Date(explicit.getTime()) : null;
-        if (explicitDay) explicitDay.setHours(0,0,0,0);
-        const due = parseTaskDate(t.due || t.end || t.plannedEnd || t.dueDate || t.endDate || "");
-        const dueDay = due ? new Date(due.getTime()) : null;
-        if (dueDay) dueDay.setHours(0,0,0,0);
-        const explicitOk = explicitDay && explicitDay <= clampedReport;
-        const dueOk = dueDay && dueDay <= clampedReport;
-        if (explicitOk && dueOk) {
-          return dueDay <= explicitDay ? dueDay : explicitDay;
+      const pickDateField = (task, keys) => {
+        if (!task || typeof task !== "object") return null;
+        const taskKeys = Object.keys(task);
+        for (const k of keys) {
+          let raw = null;
+          try { raw = task[k]; } catch (_err) { raw = null; }
+          const dt = parseTaskDate(raw);
+          if (isValidDate(dt)) return dt;
         }
-        if (dueOk) return dueDay;
-        if (explicitOk) return explicitDay;
-        const created = parseTaskDate(
-          t.createdAt || t.created_at || t.created || t.createdOn || t.createdDate || ""
-        );
-        if (created) return created;
-        const updated = parseTaskDate(
-          t.updatedAt || t.updated_at || t.updated || t.updatedOn || t.updatedDate || ""
-        );
-        if (updated) return updated;
-        return clampedReport;
+        // Fuzzy match: handle imports that rename keys (spaces, accents, casing).
+        for (const k of keys) {
+          const want = normFieldKey(k);
+          if (!want) continue;
+          const found = taskKeys.find((kk) => {
+            const got = normFieldKey(kk);
+            return got === want || got.includes(want) || want.includes(got);
+          });
+          if (!found) continue;
+          const dt = parseTaskDate(task[found]);
+          if (isValidDate(dt)) return dt;
+        }
+        return null;
       };
 
-      // Real: acumulado por data de conclusao
-      const validTasks = Array.isArray(tasks) ? tasks : [];
-      const totalWeight = validTasks.length || 1;
-      const doneWeightByDay = new Map();
-      validTasks.forEach(t => {
-        const done = resolveDoneDate(t);
-        if (!done) return;
-        const day = new Date(done.getTime());
-        day.setHours(0,0,0,0);
-        if (day > clampedReport) return;
-        const clamped = day < startDay ? startDay : day;
-        const key = clamped.getTime();
-        doneWeightByDay.set(key, (doneWeightByDay.get(key) || 0) + 1);
-      });
+      const resolveBaselineStart = (task) =>
+        pickDateField(task, [
+          "baselineStart",
+          "baseline_start",
+          "baseline_start_date",
+          "baselineInicio",
+          "baseline_inicio",
+          "baselineBegin",
+          "Baseline Start",
+          "BaselineStart"
+        ]);
 
-      const real = [];
-      let acc = 0;
-      for(let d=0; d<=totalDays; d++){
-        const day = new Date(startDay.getTime() + d*86400000);
-        const key = day.getTime();
-        acc += doneWeightByDay.get(key) || 0;
-        const pct = (acc/totalWeight)*100;
-        real.push({ t: day, y: pct });
-      }
+      const resolveBaselineFinish = (task) =>
+        pickDateField(task, [
+          "baselineFinish",
+          "baselineEnd",
+          "baseline_finish",
+          "baseline_end",
+          "baseline_end_date",
+          "baselineTermino",
+          "baseline_termino",
+          "baselineFim",
+          "baseline_fim",
+          "baselineDue",
+          "Baseline Finish",
+          "Baseline End",
+          "BaselineFinish"
+        ]);
+
+      const resolveActualFinish = (task) =>
+        pickDateField(task, [
+          "actualFinish",
+          "actual_finish",
+          "actual_end",
+          "actualEnd",
+          "actualEndDate",
+          "terminoReal",
+          "fimReal",
+          "Fim Real",
+          "Término Real",
+          "TERMINO REAL",
+          "dataConclusao",
+          "Data Conclusao",
+          "Data Conclusão",
+          "Data de Conclusao",
+          "Data de Conclusão",
+          "Conclusao",
+          "Conclusão",
+          "completedAt",
+          "doneAt",
+          "finishedAt",
+          "Actual Finish",
+          "ActualFinish"
+        ]);
+
+      const resolveActualStart = (task) =>
+        pickDateField(task, [
+          "actualStart",
+          "actual_start",
+          "actual_begin",
+          "actualBegin",
+          "actualStartDate",
+          "Actual Start",
+          "ActualStart",
+          "dataInicioReal",
+          "actualInicio"
+        ]);
+
+      const parseWeightValue = (value) => {
+        if (value == null) return null;
+        if (typeof value === "number" && Number.isFinite(value)) return value > 0 ? value : null;
+        const s = String(value || "").trim();
+        if (!s) return null;
+        const cleaned = s.replace(",", ".").replace(/[^0-9.]+/g, "");
+        const n = Number(cleaned);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      };
+
+      const parseDurationHours = (t) => {
+        if (!t) return null;
+        const d = t?.duration;
+        if (d != null) {
+          const n = Number(d);
+          if (Number.isFinite(n) && n > 0) return n;
+        }
+        const s = resolveStartDate(t);
+        const e = resolveEndDate(t);
+        if (isValidDate(s) && isValidDate(e)) {
+          const diffMs = e.getTime() - s.getTime();
+          if (diffMs > 0) return Math.max(1, Math.round(diffMs / 3600000));
+        }
+        return null;
+      };
+      const taskWeight = (t) => {
+        const dur = parseDurationHours(t);
+        if (dur != null && dur > 0) return dur;
+        const w =
+          parseWeightValue(t?.weight) ??
+          parseWeightValue(t?.work) ??
+          parseWeightValue(t?.hours) ??
+          parseWeightValue(t?.effort) ??
+          parseWeightValue(t?.cost) ??
+          null;
+        return w ?? 1;
+      };
 
       const idxNow = Math.max(0, Math.min(totalDays, daysDiff(startDay, clampedReport)));
+      const dayIndex = (dt) => {
+        if (!isValidDate(dt)) return null;
+        const d = new Date(dt.getTime());
+        d.setHours(0, 0, 0, 0);
+        const diff = daysDiff(startDay, d);
+        if (!Number.isFinite(diff)) return null;
+        return Math.max(0, Math.min(totalDays, diff));
+      };
+
+      // Planned (PV): distribute weights linearly across baseline dates (not the mutable current schedule).
+      const plannedInc = Array.from({ length: totalDays + 1 }, () => 0);
+      let plannedWeightTotal = 0;
+      let hasAnyBaselineDates = false;
+      validTasks.forEach((t) => {
+        if (!t) return;
+        const w = taskWeight(t);
+        plannedWeightTotal += w;
+
+        const bs = resolveBaselineStart(t) || resolveStartDate(t) || startDay;
+        const bf = resolveBaselineFinish(t) || resolveEndDate(t) || endDay;
+        const s = new Date((bs instanceof Date ? bs : startDay).getTime());
+        const e = new Date((bf instanceof Date ? bf : endDay).getTime());
+        s.setHours(0, 0, 0, 0);
+        e.setHours(0, 0, 0, 0);
+        if (e < s) e.setTime(s.getTime());
+        if (resolveBaselineStart(t) || resolveBaselineFinish(t)) hasAnyBaselineDates = true;
+
+        const i0 = dayIndex(s);
+        const i1 = dayIndex(e);
+        if (i0 == null || i1 == null) return;
+        const daysInclusive = Math.max(1, i1 - i0 + 1);
+        const perDay = w / daysInclusive;
+        for (let i = i0; i <= i1; i += 1) plannedInc[i] += perDay;
+      });
+      const totalWeight = plannedWeightTotal > 0 ? plannedWeightTotal : 1;
+
+      const baseline = [];
+      let pv = 0;
+      for (let d = 0; d <= totalDays; d += 1) {
+        pv += plannedInc[d] || 0;
+        const day = new Date(startDay.getTime() + d * 86400000);
+        baseline.push({ t: day, y: clamp((pv / totalWeight) * 100, 0, 100) });
+      }
+
+      // Fallback: if we have no baseline dates at all, keep the old linear planned line.
+      if (!hasAnyBaselineDates) {
+        for (let d = 0; d <= totalDays; d += 1) {
+          const t = d / Math.max(1, totalDays);
+          baseline[d].y = t * 100;
+        }
+      }
+
+      const baseNow = (idxNow != null ? baseline[idxNow].y : 0);
+      // Realizado (sem historico): ponto no HOJE calculado do snapshot atual (ponderado por peso).
+      // Nao tentamos "reconstruir" o passado sem snapshots.
+      let sumW = 0;
+      let sumEarned = 0;
+      let nonZeroProgressCount = 0;
+      validTasks.forEach((t) => {
+        if (!t) return;
+        const w = taskWeight(t);
+        const p = clamp(Number(resolveProgressPct(t) || 0), 0, 100);
+        if (p > 0) nonZeroProgressCount += 1;
+        sumW += w;
+        sumEarned += w * (p / 100);
+      });
+      const targetNowRaw = parsePercentValue(progressPct);
+      const targetNow = targetNowRaw == null ? null : clamp(Number(targetNowRaw), 0, 100);
+      // If tasks have no progress fields at all (common on some imports), fall back to the project snapshot progress.
+      const realizedByTasks = sumW > 0 ? clamp((sumEarned / sumW) * 100, 0, 100) : 0;
+      const realizedToday =
+        nonZeroProgressCount > 0
+          ? realizedByTasks
+          : (targetNow != null ? targetNow : realizedByTasks);
+
+      // Sem historico: tendencia desligada. Usamos um criterio objetivo para acionar o "Plano de acao":
+      // maior atraso (em dias) entre tarefas abertas (due < data do report).
+      let maxOverdueDays = 0;
+      validTasks.forEach((t) => {
+        if (!t) return;
+        const p = clamp(Number(resolveProgressPct(t) || 0), 0, 100);
+        const done = isDoneTaskLocal(t) || p >= 100;
+        if (done) return;
+        const due = resolveEndDate(t);
+        if (!isValidDate(due)) return;
+        const d0 = new Date(due.getTime()); d0.setHours(0,0,0,0);
+        if (d0.getTime() >= clampedReport.getTime()) return;
+        const lateDays = Math.max(0, daysDiff(d0, clampedReport));
+        if (lateDays > maxOverdueDays) maxOverdueDays = lateDays;
+      });
+
+      const delayDays = maxOverdueDays;
+      // EAC simples: fim planejado + maior atraso atual (conservador).
+      const eac = delayDays > 0 ? addDays(endDay, delayDays) : new Date(endDay.getTime());
+      eac.setHours(0, 0, 0, 0);
+
+      const debug = {
+        mode: "no-history",
+        total: validTasks.length,
+        report: clampedReport,
+        idxNow,
+        done: validTasks.filter((t) => t && (isDoneTaskLocal(t) || Number(resolveProgressPct(t) || 0) >= 100)).length,
+        doneWithActualFinish: 0,
+        doneWithCompletedDate: 0,
+        doneWithDue: 0,
+        doneFallbackReport: 0,
+        inProgress: validTasks.filter((t) => t && (Number(resolveProgressPct(t) || 0) > 0 && Number(resolveProgressPct(t) || 0) < 100) && !isDoneTaskLocal(t)).length,
+        inProgressWithStart: 0,
+        inProgressFallbackReport: 0,
+        samples: [],
+        weightTotal: sumW,
+        realizedToday,
+        progressNonZeroCount: nonZeroProgressCount,
+        delayDays
+      };
 
       return {
         baseline: downsample(baseline, 60),
-        real: downsample(real, 60),
+        real: [],
+        trend: [],
         baselineFull: baseline,
-        realFull: real,
+        realFull: [],
+        trendFull: [],
         start: startDay, end: endDay,
         report: clampedReport,
-        baselineNow: (idxNow != null ? baseline[idxNow].y : 0),
-        realizedNow: (idxNow != null ? real[idxNow].y : 0)
+        baselineNow: baseNow,
+        realizedNow: realizedToday,
+        eacDate: eac,
+        delayDays,
+        debug
       };
     }
 
@@ -1041,77 +3186,100 @@
       return { d, toX, toY, tMin, tMax };
     }
 
-    function renderSCurveSvg({ baseline, real, start, end, today=new Date(), baselineNow, realizedNow }){
-      const w = 920, h = 240, pad = 16;
-      const footerPad = 18;
+    function renderSCurveSvg({ baseline, start, end, today=new Date(), baselineNow, realizedNow }){
+      const w = 920, h = 260;
+      const pad = 50;
+      const footerPad = 28;
       const svgH = h + footerPad;
 
       const base = buildPath(baseline, w, h, pad);
-      const realStop = real.filter(p => p.t <= today);
-      const realSafe = realStop.length ? realStop : [real[0]];
-      const rea = buildPath(realSafe, w, h, pad, { tMin: start, tMax: end });
-      const realStep = (() => {
-        if (!realSafe.length) return "";
-        let d = `M ${base.toX(realSafe[0].t)} ${base.toY(realSafe[0].y)}`;
-        for (let i = 1; i < realSafe.length; i += 1) {
-          const xx = base.toX(realSafe[i].t);
-          const yPrev = base.toY(realSafe[i - 1].y);
-          const yy = base.toY(realSafe[i].y);
-          d += ` L ${xx} ${yPrev} L ${xx} ${yy}`;
-        }
-        return d;
-      })();
-
       const t = clamp(today.getTime(), start.getTime(), end.getTime());
       const todayX = base.toX(new Date(t));
 
       const baseToday = Number.isFinite(baselineNow) ? baselineNow : interpolateAt(baseline, t);
-      const realToday = Number.isFinite(realizedNow) ? realizedNow : interpolateAt(real, t);
+      const realToday = Number.isFinite(realizedNow) ? clamp(realizedNow, 0, 100) : 0;
       const gap = Math.round((baseToday - realToday) * 10) / 10;
+      const gapInfo = gapStatusFromValue(gap, baseToday, realToday);
 
-      const xAxisY = h - pad;
-      const yTop = pad;
-      const viewW = w - pad * 2;
-      const viewH = h + footerPad;
-      const axisColor = "rgba(148,163,184,.35)";
-      const yTicks = [0, 50, 100];
+      const plannedColor = "#cbd5e1";
+      const plannedDot = "#cbd5e1";
+      const realColor = gapInfo?.color || "#ef4444";
+      const todayColor = "#ef4444";
+
+      const axisColor = "rgba(148,163,184,.18)";
+      const gridColor = "rgba(148,163,184,.18)";
+      const yTicks = [0, 25, 50, 75, 100];
+
+      const xAxisY = base.toY(0);
+      const yTop = base.toY(100);
+
+      const fmtShort = (d) => {
+        if (!d) return "";
+        const dd = String(d.getDate()).padStart(2, "0");
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        return `${dd}/${mm}`;
+      };
+
+      const tickPoints = downsample(baseline, 7);
+      const xTicks = tickPoints.map((p) => p.t);
+
+      const plannedDots = tickPoints
+        .map((p) => `<circle cx="${base.toX(p.t)}" cy="${base.toY(p.y)}" r="3.5" fill="${plannedDot}" />`)
+        .join("");
+
+      const labelPlanned = `${formatPct(baseToday)} Prev.`;
+      const labelReal = `${Math.round(realToday)}%`;
 
       return {
         svg: `
-<svg viewBox="${pad} 0 ${viewW} ${viewH}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 ${w} ${svgH}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <filter id="realGlow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="rgba(16,185,129,0.35)"/>
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="rgba(239,68,68,0.20)"/>
     </filter>
   </defs>
 
-  <line x1="${pad}" y1="${yTop}" x2="${pad}" y2="${xAxisY}" stroke="${axisColor}" stroke-width="1"/>
-  <line x1="${pad}" y1="${xAxisY}" x2="${w-pad}" y2="${xAxisY}" stroke="${axisColor}" stroke-width="1"/>
+  ${yTicks
+    .map((v) => {
+      const yy = base.toY(v);
+      return `<line x1="${pad}" y1="${yy}" x2="${w - pad}" y2="${yy}" stroke="${gridColor}" stroke-width="1" stroke-dasharray="3 4"/>`;
+    })
+    .join("")}
 
-  ${yTicks.map(v=>{
-    const yy = base.toY(v);
-    return `<line x1="${pad-6}" y1="${yy}" x2="${pad}" y2="${yy}" stroke="${axisColor}" stroke-width="1"/>`;
-  }).join("")}
-  ${yTicks.map(v=>{
-    const yy = base.toY(v);
-    return `<text x="${pad-10}" y="${yy+4}" text-anchor="end" font-size="10" fill="rgba(148,163,184,.9)" font-weight="600" style="font-variant-numeric: tabular-nums;">${v}%</text>`;
-  }).join("")}
+  <!-- axes are intentionally subtle in the BI layout -->
+  <line x1="${pad}" y1="${xAxisY}" x2="${w - pad}" y2="${xAxisY}" stroke="${axisColor}" stroke-width="1"/>
 
-  <path d="${base.d}" fill="none" stroke="#cbd5e1" stroke-width="2"/>
-  <path id="curve-real-path" d="${realStep}" fill="none" stroke="#10b981" stroke-width="4" filter="url(#realGlow)"/>
-  <path id="curve-real-hit" d="${realStep}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke"/>
+  ${yTicks
+    .map((v) => {
+      const yy = base.toY(v);
+      return `<text x="${pad - 10}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#94a3b8" font-weight="450" style="font-variant-numeric: tabular-nums;">${v}%</text>`;
+    })
+    .join("")}
 
-  <circle cx="${todayX}" cy="${base.toY(baseToday)}" r="3" fill="#cbd5e1"/>
-  <circle cx="${todayX}" cy="${rea.toY(realToday)}" r="4" fill="#10b981"/>
+  ${xTicks
+    .map((dt) => {
+      const xx = base.toX(dt);
+      return `<text x="${xx}" y="${svgH - 8}" text-anchor="middle" font-size="10" fill="#94a3b8" font-weight="450" style="font-variant-numeric: tabular-nums;">${fmtShort(dt)}</text>`;
+    })
+    .join("")}
 
-  <text x="${pad}" y="${h-4}" font-size="10" fill="rgba(100,116,139,.9)" style="font-variant-numeric: tabular-nums;">${fmtBR(start)}</text>
-  <text x="${w-pad-70}" y="${h-4}" font-size="10" fill="rgba(100,116,139,.9)" style="font-variant-numeric: tabular-nums;">${fmtBR(end)}</text>
-  <text x="${pad}" y="${svgH-4}" font-size="10" fill="rgba(100,116,139,.9)" style="font-variant-numeric: tabular-nums;">Inicio: ${fmtBR(start)}</text>
-  <text x="${w-pad}" y="${svgH-4}" text-anchor="end" font-size="10" fill="rgba(100,116,139,.9)" style="font-variant-numeric: tabular-nums;">Go-Live: ${fmtBR(end)}</text>
+  <line x1="${todayX}" y1="${yTop}" x2="${todayX}" y2="${xAxisY}" stroke="${todayColor}" stroke-width="2" stroke-dasharray="6 6"/>
+
+  <path d="${base.d}" fill="none" stroke="${plannedColor}" stroke-width="2"/>
+  ${plannedDots}
+
+  <!-- Realizado (sem historico): linha de referencia + ponto no HOJE -->
+  <line x1="${pad}" y1="${base.toY(realToday)}" x2="${w - pad}" y2="${base.toY(realToday)}" stroke="${realColor}" stroke-width="2" stroke-dasharray="5 7" opacity="0.30"/>
+
+  <circle cx="${todayX}" cy="${base.toY(baseToday)}" r="4.5" fill="${plannedDot}" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="${todayX}" cy="${base.toY(realToday)}" r="5.5" fill="${realColor}" stroke="#ffffff" stroke-width="2"/>
+
+  <text x="${todayX - 8}" y="${base.toY(baseToday) - 14}" text-anchor="end" font-size="10" fill="#94a3b8" font-weight="450">${labelPlanned}</text>
+  <text x="${todayX + 10}" y="${base.toY(realToday) + 6}" text-anchor="start" font-size="14" fill="${realColor}" font-weight="450">${labelReal}</text>
 </svg>`,
         baseToday, realToday, gap,
         baselineFull: baseline,
-        realFull: real
+        realFull: []
       };
     }
 
@@ -1143,22 +3311,81 @@
     // ------------------------------------------------------------
     // 4) ViewModel: calcula listas e contagens mantendo a logica
     // ------------------------------------------------------------
+    function resolveTasksFromPayload(data){
+      const toList = (value) => {
+        if (Array.isArray(value)) return value.filter(Boolean);
+        if (value && typeof value === "object") return Object.values(value).filter(Boolean);
+        return [];
+      };
+
+      if (Array.isArray(data?.tasks) || (data?.tasks && typeof data.tasks === "object")) {
+        const list = toList(data.tasks);
+        return { list, path: "data.tasks" };
+      }
+      if (Array.isArray(data?.items) || (data?.items && typeof data.items === "object")) {
+        const list = toList(data.items);
+        return { list, path: "data.items" };
+      }
+      if (Array.isArray(data?.activities) || (data?.activities && typeof data.activities === "object")) {
+        const list = toList(data.activities);
+        return { list, path: "data.activities" };
+      }
+
+      const project = data?.project;
+      if (project && typeof project === "object") {
+        const direct = toList(project.tasks).length ? toList(project.tasks)
+          : toList(project.items).length ? toList(project.items)
+            : toList(project.activities);
+        if (direct.length) return { list: direct, path: "data.project.(tasks/items/activities)" };
+
+        const epics = Array.isArray(project?.epics) ? project.epics : [];
+        const epicTasks = epics.flatMap((e) => (e?.tasks || e?.items || []));
+        if (epicTasks.length) return { list: epicTasks.filter(Boolean), path: "data.project.epics[].tasks" };
+      }
+
+      // Some callers may wrap the payload (defensive).
+      if (data?.payload && typeof data.payload === "object") {
+        const inner = resolveTasksFromPayload(data.payload);
+        if (inner.list.length) return { list: inner.list, path: `data.payload -> ${inner.path}` };
+      }
+
+      return { list: [], path: "none" };
+    }
+
     function buildVM(data){
-      const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+      const resolved = resolveTasksFromPayload(data || {});
+      const tasksIn = resolved.list;
+      const metaDataKeys =
+        data && typeof data === "object" ? Object.keys(data).slice(0, 80) : [];
+      const metaProjectKeys =
+        data?.project && typeof data.project === "object" ? Object.keys(data.project).slice(0, 80) : [];
+      const metaPayloadKeys =
+        data?.payload && typeof data.payload === "object" ? Object.keys(data.payload).slice(0, 80) : [];
+      // Normalize per-task progress for UI lists (some sources send only progressPct or localized fields).
+      const tasks = tasksIn.map((t) => {
+        if (!t || typeof t !== "object") return t;
+        const pct = clamp(resolveProgressPct(t), 0, 100);
+        // Keep both fields aligned; different widgets read different keys.
+        return { ...t, progress: pct, progressPct: pct };
+      });
 
       const today = new Date();
       today.setHours(0,0,0,0);
 
       const total = tasks.length;
-      const done = tasks.filter(t => normStatus(t.status)==="done");
-      const doing = tasks.filter(t => normStatus(t.status)==="doing");
-      const blocked = tasks.filter(t => normStatus(t.status)==="blocked");
-      const todo = tasks.filter(t => normStatus(t.status)==="todo");
+      const statusKey = (t) => normalizeTaskStatusLocal(getTaskStatusLocal(t));
+      const done = tasks.filter((t) => statusKey(t) === "concluido");
+      const doing = tasks.filter((t) => {
+        const k = statusKey(t);
+        return k === "em_andamento" || k === "em_validacao";
+      });
+      const blocked = tasks.filter((t) => statusKey(t) === "parado");
+      const todo = tasks.filter((t) => statusKey(t) === "planejado");
 
       const late = tasks.filter(t=>{
-        const st = normStatus(t.status);
-        if(st==="done") return false;
-        const due = parseTaskDate(t.due);
+        const k = statusKey(t);
+        if(k==="concluido") return false;
+        const due = parseTaskDate(t.due || t.dueDate || t.end || t.endDate || "");
         if(!due) return false;
         due.setHours(0,0,0,0);
         return due < today;
@@ -1167,9 +3394,9 @@
       // Progresso: prioridade para overall.progressPct (mantem regra atual)
       // Se nao existir, calcula por concluidas / total.
       const overallProgress = data?.overall ? parsePercentValue(data.overall.progressPct) : null;
-      const progressPct = total
-        ? (done.length / total) * 100
-        : (overallProgress != null ? clamp(overallProgress, 0, 100) : 0);
+      const progressPct = overallProgress != null
+        ? clamp(overallProgress, 0, 100)
+        : (total ? (done.length / total) * 100 : 0);
 
       // Ultimas concluidas: top 5 por data de conclusao (com fallback)
       const lastDone = (data.lastDone && data.lastDone.length) ? data.lastDone : done
@@ -1192,13 +3419,13 @@
 
       // Em andamento: top 5 por due asc
       const inProgress = (data.inProgress && data.inProgress.length) ? data.inProgress : doing
-        .map(t => ({...t, _d: parseTaskDate(t.due)}))
+        .map(t => ({...t, _d: parseTaskDate(t.due || t.dueDate || t.end || t.endDate || "")}))
         .sort((a,b)=>(a._d||1e15)-(b._d||1e15))
         .slice(0,5);
 
       // Proximos passos: top 5 (todo + blocked) por due asc
       const nextSteps = (data.nextSteps && data.nextSteps.length) ? data.nextSteps : [...blocked, ...todo]
-        .map(t => ({...t, _d: parseTaskDate(t.due)}))
+        .map(t => ({...t, _d: parseTaskDate(t.due || t.dueDate || t.end || t.endDate || "")}))
         .sort((a,b)=>(a._d||1e15)-(b._d||1e15))
         .slice(0,5);
 
@@ -1229,7 +3456,17 @@
       return {
         project: data.project || {},
         overall: data.overall || {},
+        epics: Array.isArray(data.epics) ? data.epics : [],
         tasks,
+        meta: {
+          tasksPath: resolved.path,
+          tasksRawTotal: tasksIn.length,
+          dataType: typeof data,
+          dataIsArray: Array.isArray(data),
+          dataKeys: metaDataKeys,
+          projectKeys: metaProjectKeys,
+          payloadKeys: metaPayloadKeys
+        },
         counts: {
           total,
           done: done.length,
@@ -1237,7 +3474,7 @@
           late: late.length,
           due7: countDueInDays(tasks, 7),
         },
-        progressPct: Math.round(progressPct),
+        progressPct: Math.round(progressPct * 10) / 10,
         health,
         lastDone,
         inProgress,
@@ -1279,209 +3516,1457 @@
       return { cls:"bad", label:"Em atraso" };
     }
 
+    function stripAccents(s){
+      try{
+        return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      }catch(_err){
+        return String(s || "");
+      }
+    }
+
+    function normKey(s){
+      return stripAccents(String(s || "").trim().toUpperCase());
+    }
+
+    function parseMembersLocal(task){
+      const raw =
+        task?.members ??
+        task?.member ??
+        task?.membros ??
+        task?.responsavel ??
+        task?.responsible ??
+        task?.assignee ??
+        task?.owner ??
+        "";
+      if (Array.isArray(raw)) return raw.map((v) => String(v || "").trim()).filter(Boolean);
+      return String(raw || "")
+        .split(/[;,]+/g)
+        .map((v) => v.trim())
+        .filter(Boolean);
+    }
+
+    function buildMilestonesFromTasks(tasks){
+      const phases = ["LEVANTAMENTO","DESENVOLVIMENTO","TESTES","DEPLOY"];
+      const labelMap = { "DEPLOY": "GO LIVE" };
+      const list = Array.isArray(tasks) ? tasks : [];
+
+      const phaseKeyOfTask = (t) => {
+        const raw = t?.phase || t?.epic || t?.epico || t?.grupo || t?.group || "";
+        const k = normKey(raw);
+        if (k.includes("LEVANT")) return "LEVANTAMENTO";
+        if (k.includes("DESENV")) return "DESENVOLVIMENTO";
+        if (k.includes("TEST")) return "TESTES";
+        if (k.includes("DEPLOY") || k.includes("IMPLANT") || k.includes("GO LIVE") || k.includes("GOLIVE")) return "DEPLOY";
+        return "";
+      };
+
+      const statusOf = (progress, total) => {
+        if (!total) return "pendente";
+        if (progress >= 100) return "concluido";
+        if (progress > 0) return "ativo";
+        return "pendente";
+      };
+
+      const result = phases.map((phase) => {
+        const inPhase = list.filter((t) => phaseKeyOfTask(t) === phase);
+        const total = inPhase.length;
+        const done = inPhase.filter((t) => normStatus(t?.status) === "done").length;
+        const progress = total ? clamp((done / total) * 100, 0, 100) : 0;
+        return {
+          key: phase,
+          label: labelMap[phase] || phase,
+          total,
+          done,
+          progress: Math.round(progress),
+          status: statusOf(progress, total)
+        };
+      });
+
+      const activeIdx = result.findIndex((m) => m.status !== "concluido" && (m.total > 0 || m.progress > 0));
+      if (activeIdx >= 0) result[activeIdx].active = true;
+      else if (result.length) result[result.length - 1].active = true;
+      return result;
+    }
+
+    function summarizeEpicFromTasks(phase, tasks){
+      const p = String(phase || "").toUpperCase();
+      if (p === "LEVANTAMENTO") return "Requisitos consolidados.";
+      if (p === "DESENVOLVIMENTO") return "Codigo sendo construido.";
+      if (p === "TESTES") return "Execucao de QA e validacoes do usuario.";
+      if (p === "DEPLOY") return "Liberacao do Ambiente Produtivo.";
+      return "";
+    }
+
+    function buildFlowCards({ project, tasks }){
+      const proj = project || {};
+      const list = Array.isArray(tasks) ? tasks : [];
+      const ms = buildMilestonesFromTasks(list);
+      const byPhase = (key) => list.filter((t) => phaseKeyOfTaskLocal(t) === key);
+
+      const month = ["JAN","FEV","MAR","ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"];
+      const fmtShort = (d) => {
+        if (!d) return "-";
+        const dd = String(d.getDate()).padStart(2, "0");
+        const mm = month[d.getMonth()] || "";
+        return `${dd} ${mm}`.trim();
+      };
+      const maxEnd = (ts) => {
+        let best = null;
+        (ts || []).forEach((t) => {
+          const d = resolveEndDate(t);
+          if (!d) return;
+          if (!best || d > best) best = d;
+        });
+        return best;
+      };
+
+      const tagFor = (m) => {
+        if (m.status === "concluido") return "Processado";
+        if (m.status === "ativo") return "Em foco";
+        return "Agendado";
+      };
+
+      const iconSvg = (key) => {
+        const k = String(key || "").toUpperCase();
+        if (k === "LEVANTAMENTO") {
+          return `<svg viewBox="0 0 24 24" fill="none"><path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16Z" stroke="currentColor" stroke-width="2"/></svg>`;
+        }
+        if (k === "DESENVOLVIMENTO") {
+          return `<svg viewBox="0 0 24 24" fill="none"><path d="M8 9l-3 3 3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 9l3 3-3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 6l-4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+        }
+        if (k === "TESTES") {
+          return `<svg viewBox="0 0 24 24" fill="none"><path d="M9 3h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10 3v5l-5 8a4 4 0 0 0 3.4 6h7.2A4 4 0 0 0 19 16l-5-8V3" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`;
+        }
+        return `<svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 2a10 10 0 1 0 0 20" stroke="currentColor" stroke-width="2" opacity=".25"/></svg>`;
+      };
+
+      const ownerShort = (s) => ownerShortLabel(String(s || "").trim() || "-");
+      const leader = String(proj.leader || proj.responsible || "-").trim();
+      const dev = String(proj.developer || "-").trim();
+
+      const pickOwner = (phase) => {
+        const p = String(phase || "").toUpperCase();
+        if (p === "LEVANTAMENTO") return leader && leader !== "-" ? ownerShort(leader) : "-";
+        if (p === "DESENVOLVIMENTO") return dev && dev !== "-" ? ownerShort(dev) : (leader && leader !== "-" ? ownerShort(leader) : "-");
+        if (p === "TESTES") return "TIME QA";
+        return "GESTAO";
+      };
+
+      const mk = (phaseKey) => {
+        const m = ms.find((x) => x.key === phaseKey) || { progress: 0, status: "pendente", label: phaseKey };
+        const phaseTasks = byPhase(phaseKey);
+        const endDate = maxEnd(phaseTasks) || parseTaskDate(proj.goLiveDate || proj.goLive || proj.end);
+        const statusCls = m.status === "concluido" ? "completed" : m.status === "ativo" ? "active" : "pending";
+        const label = phaseKey === "DEPLOY" ? "GO LIVE" : phaseKey;
+        const desc = summarizeEpicFromTasks(phaseKey, phaseTasks);
+        return {
+          key: phaseKey,
+          label,
+          statusCls,
+          progress: clamp(m.progress ?? 0, 0, 100),
+          date: fmtShort(endDate),
+          tag: tagFor(m),
+          owner: pickOwner(phaseKey),
+          icon: iconSvg(phaseKey),
+          desc
+        };
+      };
+
+      return [mk("LEVANTAMENTO"), mk("DESENVOLVIMENTO"), mk("TESTES"), mk("DEPLOY")];
+    }
+
+    function buildFlowCardsFromEpics(epics, proj) {
+      const iconPool = [
+        `<svg viewBox="0 0 24 24" fill="none"><path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16Z" stroke="currentColor" stroke-width="2"/></svg>`,
+        `<svg viewBox="0 0 24 24" fill="none"><path d="M8 9l-3 3 3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 9l3 3-3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 6l-4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+        `<svg viewBox="0 0 24 24" fill="none"><path d="M9 3h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10 3v5l-5 8a4 4 0 0 0 3.4 6h7.2A4 4 0 0 0 19 16l-5-8V3" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`,
+        `<svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 2a10 10 0 1 0 0 20" stroke="currentColor" stroke-width="2" opacity=".25"/></svg>`,
+        `<svg viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M2 17l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`,
+        `<svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="2"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      ];
+      return epics.map((epic, idx) => {
+        const pct = epic.progress ?? 0;
+        const statusCls = pct >= 100 ? "completed" : pct > 0 ? "active" : "pending";
+        const tag = pct >= 100 ? "Processado" : pct > 0 ? "Em foco" : "Agendado";
+        return {
+          key: epic.name,
+          label: epic.name,
+          statusCls,
+          progress: Math.round(pct),
+          date: "",
+          tag,
+          owner: "",
+          icon: iconPool[idx % iconPool.length],
+          desc: `${epic.done || 0} de ${epic.total || 0} concluidas`
+        };
+      });
+    }
+
+    function buildWorkloadFromTasks(tasks){
+      const list = Array.isArray(tasks) ? tasks : [];
+      const counts = new Map();
+      for (const t of list) {
+        if (normStatus(t?.status) === "done") continue;
+        const members = parseMembersLocal(t);
+        for (const m of members) {
+          const key = String(m || "").trim();
+          if (!key) continue;
+          counts.set(key, (counts.get(key) || 0) + 1);
+        }
+      }
+      const palette = ["#6366f1", "#8b5cf6", "#ec4899", "#0ea5e9", "#f59e0b"];
+      const sorted = [...counts.entries()]
+        .map(([name, tasksCount]) => ({ name, tasksCount }))
+        .sort((a, b) => b.tasksCount - a.tasksCount)
+        .slice(0, 5);
+      return sorted.map((item, idx) => ({ ...item, color: palette[idx % palette.length] }));
+    }
+
+    function phaseKeyOfTaskLocal(t){
+      const raw = t?.phase || t?.epic || t?.epico || t?.grupo || t?.group || "";
+      const k = normKey(raw);
+      if (k.includes("LEVANT")) return "LEVANTAMENTO";
+      if (k.includes("DESENV")) return "DESENVOLVIMENTO";
+      if (k.includes("TEST")) return "TESTES";
+      if (k.includes("DEPLOY") || k.includes("IMPLANT") || k.includes("GO LIVE") || k.includes("GOLIVE")) return "DEPLOY";
+      return "";
+    }
+    
+    function epicLabelForCard(t){
+      const key = phaseKeyOfTaskLocal(t);
+      if (!key) return { label: "", cls: "" };
+      if (key === "DEPLOY") return { label: "GO LIVE", cls: "dep" };
+      if (key === "DESENVOLVIMENTO") return { label: "DESENVOLVIMENTO", cls: "dev" };
+      if (key === "LEVANTAMENTO") return { label: "LEVANTAMENTO", cls: "disc" };
+      if (key === "TESTES") return { label: "TESTES", cls: "test" };
+      return { label: key, cls: "" };
+    }
+
+    function buildActionPlan({ tasks, reportDate, startDate, goLiveDate, curveData, projectTeam, delayDays, gapValue, blockers=[] }){
+      const list = Array.isArray(tasks) ? tasks : [];
+      const today = parseTaskDate(reportDate) || new Date();
+      today.setHours(0,0,0,0);
+
+      const start = parseTaskDate(startDate) || today;
+      const end = parseTaskDate(goLiveDate) || addDays(today, 14);
+      start.setHours(0,0,0,0);
+      end.setHours(0,0,0,0);
+
+      const isBusinessDay = (d) => {
+        const day = d.getDay();
+        return day !== 0 && day !== 6;
+      };
+      const businessDaysBetween = (a, b) => {
+        if (!a || !b) return 0;
+        const from = new Date(a.getTime()); from.setHours(0,0,0,0);
+        const to = new Date(b.getTime()); to.setHours(0,0,0,0);
+        if (to.getTime() === from.getTime()) return 0;
+        const dir = to > from ? 1 : -1;
+        let cur = new Date(from.getTime());
+        let days = 0;
+        while (cur.getTime() !== to.getTime()) {
+          cur = addDays(cur, dir);
+          if (dir > 0) {
+            if (cur <= to && isBusinessDay(cur)) days += 1;
+          } else {
+            if (cur >= to && isBusinessDay(cur)) days -= 1;
+          }
+        }
+        return days;
+      };
+
+      const progressOf = (t) => clamp(Number(resolveProgressPct(t) || 0), 0, 100);
+      const isDone = (t) => normStatus(t?.status) === "done" || progressOf(t) >= 100;
+
+      const normalizeMember = (value) => String(value || "").trim().replace(/\s+/g, " ");
+
+      const team = Array.isArray(projectTeam) ? projectTeam : [];
+      const devList = team
+            .filter((m) => String(m?.role || "").toLowerCase() === "desenvolvedor")
+            .map((m) => normalizeMember(m?.name))
+            .filter(Boolean)
+        ;
+
+      const phaseTasks = (phase) => list.filter((t) => phaseKeyOfTaskLocal(t) === phase);
+      const dev = phaseTasks("DESENVOLVIMENTO");
+      const test = phaseTasks("TESTES");
+
+      const maxEnd = (ts) => {
+        let best = null;
+        for (const t of ts) {
+          const d = resolveEndDate(t);
+          if (!d) continue;
+          if (!best || d > best) best = d;
+        }
+        return best;
+      };
+      const minStart = (ts) => {
+        let best = null;
+        for (const t of ts) {
+          const d = resolveStartDate(t);
+          if (!d) continue;
+          if (!best || d < best) best = d;
+        }
+        return best;
+      };
+
+      const totalDays = Math.max(1, daysDiff(start, end));
+      const approxDevEnd = addDays(start, Math.floor(totalDays * 0.60));
+      const approxTestStart = addDays(start, Math.floor(totalDays * 0.60) + 1);
+
+      const plannedDevEnd = maxEnd(dev) || approxDevEnd;
+      const plannedTestStart = minStart(test) || approxTestStart || addDays(plannedDevEnd, 1);
+
+      // Target: keep testing start and GoLive; pull-in dev finish if possible.
+      const targetDevFinish = addDays(plannedTestStart, -1);
+
+      const openDev = dev.filter((t) => normStatus(t?.status) !== "done").length;
+      const daysToDevFinish = Math.max(0, daysDiff(today, targetDevFinish));
+      const devPerDay = daysToDevFinish > 0 ? Math.ceil(openDev / daysToDevFinish) : openDev;
+
+      const dd = Math.round(Math.max(0, delayDays || 0));
+      const gapTxt = formatGapPlain(gapValue || 0);
+
+      const openTasks = list.filter((t) => !isDone(t));
+      const overdueTasks = openTasks.filter((t) => {
+        const due = resolveEndDate(t);
+        if (!due) return false;
+        const d0 = new Date(due.getTime()); d0.setHours(0,0,0,0);
+        return d0 < today;
+      });
+      overdueTasks.sort((a, b) => {
+        const da = resolveEndDate(a); const db = resolveEndDate(b);
+        return (da ? da.getTime() : 1e15) - (db ? db.getTime() : 1e15);
+      });
+
+      // Workload / bottlenecks: count open tasks per assigned member (each member gets 1 unit per task).
+      const load = new Map();
+      for (const t of openTasks) {
+        const members = parseMembersLocal(t);
+        const assigned = members.length ? members : [resolveOwnerLabel(t)].filter((x) => x && x !== "-");
+        if (!assigned.length) continue;
+        assigned.forEach((name) => {
+          const key = String(name || "").trim();
+          if (!key || key === "-") return;
+          load.set(key, (load.get(key) || 0) + 1);
+        });
+      }
+
+      const loadList = [...load.entries()]
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count);
+
+      const normalizeKey = (s) =>
+        String(s || "")
+          .trim()
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "");
+
+      const devKeySet = new Set(devList.map((n) => normalizeKey(n)));
+      const devLoadList = devKeySet.size
+        ? loadList.filter((x) => devKeySet.has(normalizeKey(x.name)))
+        : loadList;
+
+      const devCount = devKeySet.size ? devList.length : Math.max(1, new Set(devLoadList.map((x) => normalizeKey(x.name))).size);
+      const totalDevOpen = devLoadList.reduce((sum, x) => sum + x.count, 0);
+      const avgDevOpen = devCount > 0 ? totalDevOpen / devCount : 0;
+      const overloadedDevs = devLoadList.filter((x) => x.count >= Math.max(6, Math.ceil(avgDevOpen * 1.5)));
+      const topBottleneck = devLoadList[0] || null;
+
+      const remainingUnits = openTasks.reduce((sum, t) => sum + (1 - progressOf(t) / 100), 0);
+      const totalUnits = Math.max(1, list.length);
+      const daysAvail = Math.max(0, businessDaysBetween(today, end));
+
+      const realizedSeries = Array.isArray(curveData?.realFull) ? curveData.realFull : [];
+      const reportDay = curveData?.report instanceof Date ? curveData.report : today;
+      const idxNow = realizedSeries.reduce((idx, p, i) => (p?.t && p.t.getTime() <= reportDay.getTime() ? i : idx), 0);
+      const N = Math.min(7, idxNow + 1);
+      const idxStart = Math.max(0, idxNow - (N - 1));
+      const p0 = realizedSeries[idxStart];
+      const p1 = realizedSeries[idxNow];
+      const spanDays = p0?.t && p1?.t ? Math.max(1, daysDiff(p0.t, p1.t)) : Math.max(1, daysDiff(start, today));
+      const deltaPct = (p0 && p1) ? clamp((p1.y - p0.y), 0, 100) : 0;
+      const ratePctPerDay = deltaPct / spanDays;
+      const curUnitsPerDay = (ratePctPerDay / 100) * totalUnits;
+      const reqUnitsPerDay = daysAvail > 0 ? (remainingUnits / daysAvail) : remainingUnits;
+      const reqPctPerDay = (reqUnitsPerDay / totalUnits) * 100;
+
+      const forecast = curveData?.eacDate instanceof Date ? curveData.eacDate : null;
+      const gapDaysUteis = forecast && forecast > end ? businessDaysBetween(end, forecast) : 0;
+
+      const problems = [];
+      problems.push(`Atividades em aberto: <b>${openTasks.length}</b> (vencidas: <b>${overdueTasks.length}</b>).`);
+      if (topBottleneck) {
+        problems.push(`Gargalo de desenvolvimento: <b>${escapeHTML(topBottleneck.name)}</b> com <b>${topBottleneck.count}</b> atividade(s) em aberto.`);
+      }
+      if (overloadedDevs.length) {
+        const top = overloadedDevs
+          .slice(0, 2)
+          .map((x) => `${escapeHTML(x.name)} (${x.count})`)
+          .join(" / ");
+        problems.push(`Superalocacao estimada (WIP alto): <b>${top}</b>.`);
+      } else if (devLoadList.length) {
+        problems.push(`Carga atual (devs): media de <b>${avgDevOpen.toFixed(1)}</b> atividade(s) abertas por dev.`);
+      }
+      if (daysAvail > 0 && remainingUnits > 0) {
+        problems.push(
+          `Ritmo atual vs necessario: atual ~<b>${curUnitsPerDay.toFixed(2)}</b> unid/dia util, necessario <b>${reqUnitsPerDay.toFixed(
+            2
+          )}</b> unid/dia util para manter Go Live.`
+        );
+      }
+
+      const firstBlockers = (Array.isArray(blockers) ? blockers : []).slice(0, 2);
+      const blockerText = firstBlockers
+        .map((b) => String(b?.title || b?.name || b?.text || "").trim())
+        .filter(Boolean)
+        .slice(0, 2);
+
+      const actions = [];
+      actions.push(`Concluir <b>DESENVOLVIMENTO</b> ate <b>${escapeHTML(fmtBR(targetDevFinish))}</b> para iniciar <b>TESTES</b> em <b>${escapeHTML(fmtBR(plannedTestStart))}</b> sem impactar o cliente.`);
+
+      if (overdueTasks.length) {
+        const top = overdueTasks.slice(0, 2).map((t) => escapeHTML(t.title || t.name || "-")).join(" / ");
+        actions.push(`Zerar backlog de atraso: <b>${overdueTasks.length}</b> atividade(s) vencida(s). Prioridade imediata: <b>${top}</b>.`);
+      } else {
+        actions.push(`Manter disciplina de prazos: nao ha atividades vencidas no status report.`);
+      }
+
+      if (daysAvail > 0 && remainingUnits > 0) {
+        actions.push(`Capacidade vs prazo: restam <b>${Math.ceil(remainingUnits)}</b> unidade(s) de trabalho e <b>${daysAvail}</b> dia(s) uteis ate Go Live. Ritmo minimo: <b>${reqUnitsPerDay.toFixed(1)}</b> unidade(s)/dia util.`);
+      } else if (remainingUnits > 0) {
+        actions.push(`Capacidade vs prazo: Go Live sem dias uteis restantes. Necessario plano de contingencia (corte/onda) imediatamente.`);
+      } else {
+        actions.push(`Trabalho restante baixo/zerado pelo apontamento atual; validar checklist de Go Live e criterios de pronto.`);
+      }
+
+      if (blockerText.length) {
+        actions.push(`Remover impedimentos prioritarios: <b>${escapeHTML(blockerText.join(" / "))}</b>.`);
+      } else {
+        actions.push(`Checar impedimentos: se houver dependencias externas, registrar e atribuir responsavel com SLA.`);
+      }
+
+      const options = [];
+      // Option A: productivity
+      const openCount = openTasks.length;
+      const reqTasksPerDay = daysAvail > 0 ? (openCount / daysAvail) : openCount;
+      const curTasksPerDay = daysAvail > 0 ? (curUnitsPerDay) : 0; // units/day ~= tasks/day when tasks are 0% remaining
+      options.push(
+        `Opcao A (produtividade): elevar ritmo para <b>${reqUnitsPerDay.toFixed(1)}</b> unidade(s)/dia util (${reqTasksPerDay.toFixed(
+          1
+        )} atividade(s)/dia) ate <b>${escapeHTML(fmtBR(end))}</b>. Alavancas: reforco de squad, overtime pontual, remover fila de aprovacao/validacao.`
+      );
+
+      // Option B: replan/waves
+      options.push(
+        `Opcao B (replanejamento): executar em ondas (paralelismo controlado). Iniciar TESTES por pacote assim que cada entrega de DESENV concluir, mantendo uma fila diaria de homologacao e correcoes; antecipar preparacao de DEPLOY/Go Live em paralelo (checklist, acessos, janelas, rollback).`
+      );
+
+      // Option C: scope cut (only if needed)
+      if (daysAvail > 0 && curUnitsPerDay > 0.0001) {
+        const targetUnits = curUnitsPerDay * daysAvail;
+        const cutUnits = Math.max(0, remainingUnits - targetUnits);
+        if (cutUnits > 0.25) {
+          const cutCount = Math.max(1, Math.ceil(cutUnits));
+          const candidates = openTasks
+            .slice()
+            .sort((a, b) => {
+              const pa = progressOf(a);
+              const pb = progressOf(b);
+              if (pa !== pb) return pa - pb;
+              const da = resolveEndDate(a);
+              const db = resolveEndDate(b);
+              return (db ? db.getTime() : -1) - (da ? da.getTime() : -1);
+            })
+            .slice(0, 3)
+            .map((t) => escapeHTML(t.title || t.name || "-"));
+          options.push(
+            `Opcao C (escopo): mover <b>${cutCount}</b> item(ns) para pos Go Live para caber no ritmo atual. Candidatos iniciais (para decisao): <b>${candidates.join(
+              " / "
+            )}</b>.`
+          );
+        }
+      }
+
+      return {
+        delayDays: gapDaysUteis > 0 ? Math.round(gapDaysUteis) : dd,
+        gapTxt,
+        forecastDate: forecast,
+        goLive: end,
+        actions,
+        options,
+        impediments: blockerText,
+        problems
+      };
+    }
+
+    function resolveOwnerLabel(t){
+      const members = parseMembersLocal(t);
+      const raw = members.length ? members[0] : (t?.responsavel || t?.responsible || t?.assignee || t?.owner || "");
+      const name = String(raw || "").trim();
+      return name || "-";
+    }
+
+    function ownerShortLabel(name){
+      const parts = String(name || "").trim().split(/\s+/g).filter(Boolean);
+      if (!parts.length || parts[0] === "-") return "-";
+      const first = parts[0];
+      const last = parts.length > 1 ? parts[parts.length - 1] : "";
+      const lastInit = last ? `${last[0]}.` : "";
+      return `${first} ${lastInit}`.trim().toUpperCase();
+    }
+
+    function initialsFromNameLocal(name){
+      const parts = String(name || "").trim().split(/\s+/g).filter(Boolean);
+      if (!parts.length || parts[0] === "-") return "-";
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+    }
+
+    function resolveCompletedDate(t){
+      const d = parseTaskDate(
+        t?.dataConclusao ||
+        t?.completedAt ||
+        t?.doneAt ||
+        t?.finishedAt ||
+        t?.completed ||
+        t?._c ||
+        ""
+      ) || parseTaskDate(
+        t?.actualFinish ||
+        t?.ActualFinish ||
+        t?.Fim ||
+        t?.FIM ||
+        t?.["Fim"] ||
+        t?.["Finish"] ||
+        t?.finish ||
+        t?.Finish ||
+        t?.end ||
+        t?.due ||
+        ""
+      );
+      return d;
+    }
+
+    function resolveStartDate(t){
+      return parseTaskDate(
+        t?.start ||
+        t?.inicio ||
+        t?.begin ||
+        t?.startDate ||
+        t?.dataInicio ||
+        t?.Inicio ||
+        t?.INICIO ||
+        t?.["Inicio"] ||
+        t?.["INICIO"] ||
+        t?.["Início"] ||
+        t?.["INÍCIO"] ||
+        t?.Start ||
+        t?.START ||
+        t?.["Start"] ||
+        t?.["START"] ||
+        t?.["Start Date"] ||
+        t?.["START DATE"] ||
+        ""
+      );
+    }
+
+    function resolveEndDate(t){
+      return parseTaskDate(
+        t?.end ||
+        t?.termino ||
+        t?.due ||
+        t?.endDate ||
+        t?.dataFim ||
+        t?.dueDate ||
+        t?.Fim ||
+        t?.FIM ||
+        t?.["Fim"] ||
+        t?.["FIM"] ||
+        t?.["Término"] ||
+        t?.["TERMINO"] ||
+        t?.finish ||
+        t?.Finish ||
+        t?.FINISH ||
+        t?.["Finish"] ||
+        t?.["FINISH"] ||
+        t?.["Finish Date"] ||
+        t?.["FINISH DATE"] ||
+        ""
+      );
+    }
+
+    function resolveProgressPct(t){
+      if (!t || typeof t !== "object") return 0;
+      // If status already indicates "done", force 100% to avoid relying on missing % fields.
+      try {
+        if (isDoneTaskLocal(t)) return 100;
+      } catch (_err) {}
+
+      const candidates = [
+        t?.progress,
+        t?.progressPct,
+        t?.progresso,
+        t?.percent,
+        t?.percentage,
+        t?.pct,
+
+        // Common import variants (case/localized keys)
+        t?.Progress,
+        t?.PROGRESS,
+        t?.Progresso,
+        t?.PROGRESSO,
+        t?.percentComplete,
+        t?.PercentComplete,
+        t?.["Progresso"],
+        t?.["PROGRESSO"],
+        t?.["Progress"],
+        t?.["PROGRESS"],
+        t?.["Percent Complete"],
+        t?.["% Complete"],
+        t?.["% Concluido"],
+        t?.["% Concluído"]
+      ];
+
+      for (const value of candidates) {
+        const v = parsePercentValue(value);
+        if (v != null) return clamp(v, 0, 100);
+      }
+
+      // Fuzzy scan: find a key that looks like progress/percent complete.
+      try {
+        const normKey = (value) =>
+          String(value || "")
+            .trim()
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-z0-9]+/g, "");
+        const keys = Object.keys(t);
+        const hit = keys.find((k) => {
+          const nk = normKey(k);
+          return (
+            nk.includes("progress") ||
+            nk.includes("progresso") ||
+            nk.includes("percentcomplete") ||
+            nk.includes("percentualconcluido") ||
+            nk === "percentual" ||
+            nk === "porcentagem"
+          );
+        });
+        if (hit) {
+          const v = parsePercentValue(t[hit]);
+          if (v != null) return clamp(v, 0, 100);
+        }
+      } catch (_err) {}
+
+      return 0;
+    }
+
+    let __cardProjectCtx = null;
+
+    function normMacroKey(value){
+      return String(value || "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "");
+    }
+
+    function pickMacroLabelForTask(t){
+      if (!t || typeof t !== "object") return "";
+      const candidates = [
+        t.package,
+        t.pkg,
+        t.macro,
+        t.pacote,
+        t.subEpic,
+        t.subepic,
+        t.sub_epic
+      ];
+      for (const c of candidates) {
+        const s = String(c || "").trim();
+        if (s) return s;
+      }
+      return "";
+    }
+
+    function getMacroParentsMap(proj){
+      if (!proj || typeof proj !== "object") return {};
+      if (proj.__macroParentsNorm && typeof proj.__macroParentsNorm === "object") return proj.__macroParentsNorm;
+      const raw = proj.packageParents || proj.package_parents || {};
+      const out = {};
+      try {
+        if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+          Object.entries(raw).forEach(([k, v]) => {
+            const kk = normMacroKey(k);
+            const vv = String(v || "").trim();
+            if (!kk) return;
+            if (vv) out[kk] = vv;
+          });
+        }
+      } catch (_err) {}
+      proj.__macroParentsNorm = out;
+      return out;
+    }
+
+    function macroPathForTask(t, proj){
+      const macro = pickMacroLabelForTask(t);
+      if (!macro) return "";
+      const map = getMacroParentsMap(proj);
+      const parts = [macro];
+      let cur = macro;
+      const seen = new Set([normMacroKey(cur)]);
+      for (let guard = 0; guard < 12; guard += 1) {
+        const parent = map[normMacroKey(cur)] || "";
+        if (!parent) break;
+        const pk = normMacroKey(parent);
+        if (!pk || seen.has(pk)) break;
+        parts.unshift(parent);
+        seen.add(pk);
+        cur = parent;
+      }
+      return parts.join(" > ");
+    }
+
+    function renderBiDoneItem(t){
+      const name = escapeHTML(t.title || t.name || t.item || "-");
+      const epic = epicLabelForCard(t);
+      const macroPath = macroPathForTask(t, __cardProjectCtx);
+      const ownerFull = resolveOwnerLabel(t);
+      const ownerOk = ownerFull && ownerFull !== "-" ? true : false;
+      const ownerAvatar = ownerOk ? escapeHTML(initialsFromNameLocal(ownerFull)) : "";
+      const ownerName = ownerOk ? escapeHTML(ownerFull) : "";
+      const start = resolveStartDate(t);
+      const end = resolveEndDate(t);
+      const startTxt = escapeHTML(fmtBR(start) || "-");
+      const endTxt = escapeHTML(fmtBR(end) || "-");
+      const sched = scheduleTagForCard(t, "done");
+      return `
+        <div class="bi-item bi-item--done" title="${name}">
+          <div class="bi-itemHead">
+            <div class="bi-itemTags">
+              ${epic.label ? `<span class="bi-epicTag ${escapeHTML(epic.cls)}">${escapeHTML(epic.label)}</span>` : ``}
+              ${macroPath ? `<span class="bi-macroTag" title="Macro: ${escapeHTML(macroPath)}">Macro: ${escapeHTML(macroPath)}</span>` : ``}
+              <span class="bi-statusTag ${escapeHTML(sched.cls)}">${escapeHTML(sched.text)}</span>
+            </div>
+          </div>
+          <div class="bi-itemTitle">${name}</div>
+          <div class="bi-itemFoot">
+            <div class="bi-itemDates">
+              <span class="bi-dateChip" title="Inicio">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M8 7V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M16 7V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M4 11h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M6 21h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+                ${startTxt}
+              </span>
+              <span class="bi-dateChip" title="Fim">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                  <path d="M12 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+                ${endTxt}
+              </span>
+            </div>
+            ${ownerOk ? `
+              <div class="bi-assignee" title="${escapeHTML(ownerFull)}">
+                <span class="bi-assigneeAvatar">${ownerAvatar}</span>
+                <span class="bi-assigneeName">${ownerName}</span>
+              </div>
+            ` : ``}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderBiDoingItem(t){
+      const name = escapeHTML(t.title || t.name || t.item || "-");
+      const epic = epicLabelForCard(t);
+      const macroPath = macroPathForTask(t, __cardProjectCtx);
+      const ownerFull = resolveOwnerLabel(t);
+      const ownerOk = ownerFull && ownerFull !== "-" ? true : false;
+      const ownerAvatar = ownerOk ? escapeHTML(initialsFromNameLocal(ownerFull)) : "";
+      const ownerName = ownerOk ? escapeHTML(ownerFull) : "";
+      const start = resolveStartDate(t);
+      const end = resolveEndDate(t);
+      const startTxt = escapeHTML(fmtBR(start) || "-");
+      const endTxt = escapeHTML(fmtBR(end) || "-");
+      const sched = scheduleTagForCard(t, "doing");
+      return `
+        <div class="bi-item bi-item--doing" title="${name}">
+          <div class="bi-itemHead">
+            <div class="bi-itemTags">
+              ${epic.label ? `<span class="bi-epicTag ${escapeHTML(epic.cls)}">${escapeHTML(epic.label)}</span>` : ``}
+              ${macroPath ? `<span class="bi-macroTag" title="Macro: ${escapeHTML(macroPath)}">Macro: ${escapeHTML(macroPath)}</span>` : ``}
+              <span class="bi-statusTag ${escapeHTML(sched.cls)}">${escapeHTML(sched.text)}</span>
+            </div>
+          </div>
+          <div class="bi-itemTitle">${name}</div>
+          <div class="bi-itemFoot">
+            <div class="bi-itemDates">
+              <span class="bi-dateChip" title="Inicio">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M8 7V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M16 7V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M4 11h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M6 21h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+                ${startTxt}
+              </span>
+              <span class="bi-dateChip" title="Fim">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                  <path d="M12 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+                ${endTxt}
+              </span>
+            </div>
+            ${ownerOk ? `
+              <div class="bi-assignee" title="${escapeHTML(ownerFull)}">
+                <span class="bi-assigneeAvatar">${ownerAvatar}</span>
+                <span class="bi-assigneeName">${ownerName}</span>
+              </div>
+            ` : ``}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderBiNextItem(t){
+      const name = escapeHTML(t.title || t.name || t.item || "-");
+      const epic = epicLabelForCard(t);
+      const macroPath = macroPathForTask(t, __cardProjectCtx);
+      const start = resolveStartDate(t);
+      const end = resolveEndDate(t);
+      const startTxt = escapeHTML(fmtBR(start) || "-");
+      const endTxt = escapeHTML(fmtBR(end) || "-");
+      const ownerFull = resolveOwnerLabel(t);
+      const ownerOk = ownerFull && ownerFull !== "-" ? true : false;
+      const ownerAvatar = ownerOk ? escapeHTML(initialsFromNameLocal(ownerFull)) : "";
+      const ownerName = ownerOk ? escapeHTML(ownerFull) : "";
+      const sched = scheduleTagForCard(t, "next");
+
+      return `
+        <div class="bi-item bi-item--next" title="${name}">
+          <div class="bi-itemHead">
+            <div class="bi-itemTags">
+              ${epic.label ? `<span class="bi-epicTag ${escapeHTML(epic.cls)}">${escapeHTML(epic.label)}</span>` : ``}
+              ${macroPath ? `<span class="bi-macroTag" title="Macro: ${escapeHTML(macroPath)}">Macro: ${escapeHTML(macroPath)}</span>` : ``}
+              <span class="bi-statusTag ${escapeHTML(sched.cls)}">${escapeHTML(sched.text)}</span>
+            </div>
+          </div>
+          <div class="bi-itemTitle">${name}</div>
+          <div class="bi-itemFoot">
+            <div class="bi-itemDates">
+              <span class="bi-dateChip" title="Inicio">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M8 7V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M16 7V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M4 11h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M6 21h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+                ${startTxt}
+              </span>
+              <span class="bi-dateChip" title="Fim">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                  <path d="M12 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+                ${endTxt}
+              </span>
+            </div>
+            ${ownerOk ? `
+              <div class="bi-assignee" title="${escapeHTML(ownerFull)}">
+                <span class="bi-assigneeAvatar">${ownerAvatar}</span>
+                <span class="bi-assigneeName">${ownerName}</span>
+              </div>
+            ` : ``}
+          </div>
+        </div>
+      `;
+    }
+
+    function scheduleTagForCard(t, kind){
+      // Reference layout uses a "health" tag separate from the workflow column.
+      // Keep it deterministic and cheap: overdue => ATRASADO, due soon => EM RISCO, else EM DIA.
+      if (kind === "done") return { cls: "em-dia", text: "EM DIA" };
+      const lateDays = calcLateDays(t, true);
+      if (Number.isFinite(lateDays) && lateDays > 0) return { cls: "atrasado", text: "ATRASADO" };
+      const today = new Date(); today.setHours(0,0,0,0);
+      const due = parseTaskDate(t?.due || t?.end || t?.endDate || t?.dataFim || "");
+      if (due) {
+        due.setHours(0,0,0,0);
+        const daysToDue = daysDiff(today, due); // due - today
+        if (daysToDue >= 0 && daysToDue <= 3) return { cls: "em-risco", text: "EM RISCO" };
+      }
+      return { cls: "em-dia", text: "EM DIA" };
+    }
+
     function render(app, vm){
       const proj = vm.project;
-      const goLive = parseTaskDate(proj.goLiveDate || proj.goLive || proj.end);
-      const start = parseTaskDate(proj.startDate || proj.start);
-      const statusHealth = healthTag(vm.health);
+      __cardProjectCtx = proj || null;
 
-      // Curva S
+      // Tab title (and export default filename): BBP_<CLIENTE> - <PROJETO>
+      try {
+        const clientLabel = String(proj?.client || proj?.cliente || "-").trim() || "-";
+        const projectLabel = String(proj?.name || proj?.nome || "Projeto").trim() || "Projeto";
+        document.title = `BBP_${clientLabel} - ${projectLabel}`;
+      } catch (_err) {}
+
+      const goLive = parseTaskDate(proj.goLiveDate || proj.goLive || proj.end);
+      const statusHealth = healthTag(vm.health);
+      const statusHealthCls = statusHealth.cls || "ok";
+
+      const curveTasks = Array.isArray(vm?.tasks) && vm.tasks.length
+        ? vm.tasks
+        : resolveTasksFromPayload({ project: proj, tasks: vm.tasks }).list;
+
       const curveData = computeSCurveDaily({
         startDate: proj.startDate || proj.start,
         goLiveDate: proj.goLiveDate || proj.goLive || proj.end,
         reportDate: proj.reportDate,
-        tasks: vm.tasks,
+        tasks: curveTasks,
         progressPct: vm.progressPct
       });
-      const curve = renderSCurveSvg({ ...curveData, today: curveData.report || new Date() });
+      const payloadBaseline = vm?.overall?.baselinePct;
+      const overrideBaseline = payloadBaseline != null && Number.isFinite(Number(payloadBaseline))
+        ? Number(payloadBaseline) : null;
+
+      const curve = renderSCurveSvg({
+        baseline: curveData.baseline,
+        start: curveData.start,
+        end: curveData.end,
+        today: curveData.report || new Date(),
+        baselineNow: overrideBaseline != null ? overrideBaseline : curveData.baselineNow,
+        realizedNow: curveData.realizedNow
+      });
+
+      const debugFlag = (() => {
+        try { return new URLSearchParams(location.search).get("debug") === "1"; } catch (_err) { return false; }
+      })();
+
+      const effectiveBaseline = overrideBaseline != null
+        ? overrideBaseline
+        : Math.round(curve.baseToday * 10) / 10;
+      const effectiveRealized = vm.progressPct != null ? vm.progressPct : Math.round(curve.realToday * 10) / 10;
+      const gapValue = Math.round((effectiveBaseline - effectiveRealized) * 10) / 10;
+      const gapStatus = gapStatusFromValue(gapValue, effectiveBaseline, effectiveRealized);
+      const gapLabel = formatGapPlain(gapValue);
+      const realizedLabel = `${Math.round(effectiveRealized * 10) / 10}%`;
+      const baselineLabel = `${Math.round(effectiveBaseline * 10) / 10}%`;
+
+      const payloadEpics = Array.isArray(vm?.overall?.epics) ? vm.overall.epics
+        : Array.isArray(vm?.epics) ? vm.epics : null;
+      const flowCards = payloadEpics && payloadEpics.length
+        ? buildFlowCardsFromEpics(payloadEpics, proj)
+        : buildFlowCards({ project: proj, tasks: vm.tasks });
+
+      const debugHtml = debugFlag ? `
+        <details class="debugPanel" style="margin-top:10px;">
+          <summary style="cursor:pointer; color:#64748b; font-size:12px;">Debug Curva S</summary>
+          <pre style="white-space:pre-wrap; font-size:11px; color:#0f172a; background:rgba(148,163,184,.10); border:1px solid rgba(148,163,184,.20); border-radius:12px; padding:10px; overflow:auto;">${escapeHTML(JSON.stringify({
+            ...(curveData.debug || {}),
+            input: {
+              vmTasks: Array.isArray(vm?.tasks) ? vm.tasks.length : 0,
+              curveTasks: Array.isArray(curveTasks) ? curveTasks.length : 0,
+              tasksPath: vm?.meta?.tasksPath || "",
+              tasksRawTotal: vm?.meta?.tasksRawTotal || 0,
+              dataType: vm?.meta?.dataType || "",
+              dataIsArray: Boolean(vm?.meta?.dataIsArray),
+              dataKeys: Array.isArray(vm?.meta?.dataKeys) ? vm.meta.dataKeys : [],
+              projectKeys: Array.isArray(vm?.meta?.projectKeys) ? vm.meta.projectKeys : [],
+              payloadKeys: Array.isArray(vm?.meta?.payloadKeys) ? vm.meta.payloadKeys : []
+            }
+          }, null, 2))}</pre>
+        </details>
+      ` : ``;
+      const flowHtml = `
+        <div class="bi-flowWrap">
+          <div class="bi-flowLine" aria-hidden="true"></div>
+          <div class="bi-flow">
+            ${flowCards
+              .map((c) => {
+                return `
+                  <div class="bi-flowCard ${escapeHTML(c.statusCls)}">
+                    <div class="bi-flowTop">
+                      <div class="bi-flowIcon" aria-hidden="true">${c.icon}</div>
+                      <div class="bi-flowMeta">
+                        <div class="bi-flowDate">${escapeHTML(c.date)}</div>
+                        <div class="bi-flowTag">${escapeHTML(c.tag)}</div>
+                      </div>
+                    </div>
+                    <div class="bi-flowName" title="${escapeHTML(c.label)}">${escapeHTML(c.label)}</div>
+                    <div class="bi-flowDesc" title="${escapeHTML(c.desc)}">${escapeHTML(c.desc)}</div>
+                    <div class="bi-flowFoot">
+                      <div class="bi-flowPct">${escapeHTML(String(Math.round(c.progress)))}%</div>
+                    </div>
+                    <div class="bi-flowBar" aria-hidden="true"><i style="width:${escapeHTML(String(Math.round(c.progress)))}%"></i></div>
+                  </div>
+                `;
+              })
+              .join("")}
+          </div>
+        </div>
+      `;
+
+      const blockersRaw = vm.project?.blockers || vm.project?.impediments || vm.project?.impedimentos || vm.project?.issues || [];
+      const blockers = Array.isArray(blockersRaw) ? blockersRaw : [];
+      const blockersCount = blockers.length;
+      const blockersTop = blockers.slice(0, 5);
+
+      const blockersHtml = blockersTop.length
+        ? `<div class="bi-blockersList">${blockersTop
+            .map((b) => {
+              const title = escapeHTML(b?.title || b?.name || b?.text || "-");
+              const owner = escapeHTML(b?.owner || b?.responsible || b?.resp || "-");
+              const type = escapeHTML(b?.type || b?.category || "Impedimento");
+              const aging = escapeHTML(b?.aging || b?.days || b?.sla || "");
+              const agingLabel = aging ? `+${aging}` : "";
+              return `
+                <div class="bi-blocker">
+                  <div class="bi-blockerTop">
+                    <div class="bi-blockerTitle">${title}</div>
+                    ${agingLabel ? `<span class="bi-badgeDays">${agingLabel}</span>` : ""}
+                  </div>
+                  <div class="bi-blockerMeta">${type} • Resp: ${owner}</div>
+                </div>
+              `;
+            })
+            .join("")}</div>`
+        : `<div class="emptyHint">Sem impedimentos ativos.</div>`;
+
+      const workload = buildWorkloadFromTasks(vm.tasks);
+      const maxLoad = workload.reduce((acc, x) => Math.max(acc, x.tasksCount), 0) || 1;
+      const workloadHtml = workload.length
+        ? `<div class="bi-bars">${workload
+            .slice(0, 5)
+            .map((p) => {
+              const w = Math.round((p.tasksCount / maxLoad) * 100);
+              return `
+                <div class="bi-barRow">
+                  <b title="${escapeHTML(p.name)}">${escapeHTML(p.name)}</b>
+                  <div class="bi-bar" title="${p.tasksCount} tarefa(s)">
+                    <i style="width:${w}%; background:${escapeHTML(p.color)}"></i>
+                  </div>
+                </div>
+              `;
+            })
+            .join("")}</div>`
+        : `<div class="emptyHint">Sem dados de carga por responsavel.</div>`;
+
+      const eac = curveData?.eacDate instanceof Date ? curveData.eacDate : null;
+      const delayDays = Number.isFinite(curveData?.delayDays) ? curveData.delayDays : 0;
+      const isLate = delayDays > 0.5;
+
+      const deadlineTone =
+        delayDays <= 0
+          ? "ok"
+          : delayDays <= 7
+            ? "warn"
+            : delayDays <= 20
+              ? "delayed"
+              : "bad";
+
+      const deadlineChipCls = deadlineTone;
+      const deadlineChipText =
+        deadlineTone === "ok"
+          ? "No prazo"
+          : deadlineTone === "warn"
+            ? "Baixo risco"
+            : deadlineTone === "delayed"
+              ? "Alto risco"
+              : "Critico";
+
+      const perfTone =
+        gapStatus.cls === "gap-ok"
+          ? "ok"
+          : gapStatus.cls === "gap-low" || gapStatus.cls === "gap-risk"
+            ? "warn"
+            : gapStatus.cls === "gap-delayed"
+              ? "delayed"
+              : "bad";
+
+      const goLiveShort = (goLive instanceof Date)
+        ? `${String(goLive.getDate()).padStart(2,"0")}/${String(goLive.getMonth()+1).padStart(2,"0")}`
+        : (String(proj.goLiveDate||"").slice(0,5) || "-");
+      const eacLabel = escapeHTML(fmtBR(eac) || "-");
+      const baselineLabelWide = escapeHTML(fmtBR(goLive) || proj.goLiveDate || "-");
+      const eacWide = escapeHTML(fmtBR(eac) || "-");
+      const deltaLabel =
+        delayDays > 0
+          ? `+${Math.round(delayDays)}d`
+          : delayDays < 0
+            ? `${Math.round(delayDays)}d`
+            : "0d";
+
+      const confidencePct = (() => {
+        const list = Array.isArray(vm?.tasks) ? vm.tasks : [];
+        const total = list.length || 0;
+        if (!total) return 0;
+        let dueCount = 0;
+        let progCount = 0;
+        for (const t of list) {
+          if (!t) continue;
+          if (isValidDate(resolveEndDate(t))) dueCount += 1;
+          const p = clamp(Number(resolveProgressPct(t) || 0), 0, 100);
+          if (p > 0 || isDoneTaskLocal(t)) progCount += 1;
+        }
+        let score = 50;
+        score += dueCount / Math.max(1, total) >= 0.7 ? 12 : dueCount / Math.max(1, total) >= 0.4 ? 6 : -8;
+        score += progCount / Math.max(1, total) >= 0.7 ? 18 : progCount / Math.max(1, total) >= 0.4 ? 10 : -6;
+        if (delayDays === 0) score += 8;
+        if (delayDays > 20) score -= 8;
+        return clamp(Math.round(score), 20, 95);
+      })();
+
+      const lastUpdateWide = escapeHTML(String(proj.reportDate || fmtBR(curveData?.report) || "-"));
+
+      const statusDotCls = statusHealthCls === "bad" ? "bad" : statusHealthCls === "warn" ? "warn" : "";
+
+      const doneHtml = vm.lastDone.length
+        ? vm.lastDone.map((t) => renderBiDoneItem(t)).join("")
+        : `<div class="emptyHint">Sem atividades.</div>`;
+      const doingHtml = vm.inProgress.length
+        ? vm.inProgress.map((t) => renderBiDoingItem(t)).join("")
+        : `<div class="emptyHint">Nenhuma atividade.</div>`;
+      const nextHtml = vm.nextSteps.length
+        ? vm.nextSteps.map((t) => renderBiNextItem(t)).join("")
+        : `<div class="emptyHint">Sem atividades.</div>`;
+
+
+      const exportSvg = `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 3v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M8 11l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 17v3h16v-3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      `;
+
+      const actionPlan = buildActionPlan({
+        tasks: vm.tasks,
+        reportDate: proj.reportDate,
+        startDate: proj.startDate || proj.start,
+        goLiveDate: proj.goLiveDate || proj.goLive || proj.end,
+        curveData,
+        projectTeam: proj.team,
+        delayDays,
+        gapValue,
+        blockers
+      });
+
+      const actionPlanHtml = actionPlan
+        ? `
+          <div class="bi-plan">
+            <div class="bi-planLead">
+              ${actionPlan.delayDays > 0
+                ? `Projeto em atraso: <span class="bad">+${escapeHTML(String(actionPlan.delayDays))} dia(s)</span> (GAP ${escapeHTML(actionPlan.gapTxt)}).`
+                : `Projeto no prazo (GAP ${escapeHTML(actionPlan.gapTxt)}).`}
+            </div>
+            <div class="bi-planMeta">Forecast atual: <b>${escapeHTML(fmtBR(actionPlan.forecastDate) || "-")}</b></div>
+            <div class="bi-planHint">Problemas</div>
+            <ul class="bi-planProblems">
+              ${(actionPlan.problems || []).map((p) => `<li>${p}</li>`).join("")}
+            </ul>
+            <div class="bi-planHint">Plano de acao sugerido</div>
+            <ul class="bi-planOpt">
+              ${(actionPlan.options || []).map((o) => `<li>${o}</li>`).join("")}
+            </ul>
+            <div class="bi-planFoot">
+              <span class="goal">Objetivo: manter Go Live</span>
+              <span class="date">${escapeHTML(fmtBR(actionPlan.goLive))}</span>
+            </div>
+          </div>
+        `
+        : null;
 
       app.innerHTML = "";
       app.appendChild(el(`
-        <div class="header">
-          <div class="title">
-            <h1>${escapeHTML(proj.name || "OnePage")}</h1>
+        <div class="bi">
+          <div class="bi-header">
+            <div class="bi-brand">
+              <div style="min-width:0">
+                <div class="bi-brandTop">
+                  <span class="bi-title">${escapeHTML(proj.name || "Projeto")}</span>
+                </div>
+                <div class="bi-sub">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 3l9 4.5-9 4.5-9-4.5L12 3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                    <path d="M3 12.5V17l9 4.5 9-4.5v-4.5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                  </svg>
+                  ${escapeHTML(proj.client || "-")}
+                </div>
+              </div>
+            </div>
+
+            <div class="bi-headPills">
+              <div class="bi-pill">
+                <small>Lider do Projeto</small>
+                <b>${escapeHTML(proj.leader || proj.responsible || "-")}</b>
+                <small style="margin-top:8px;">Desenvolvedor do Projeto</small>
+                <b>${escapeHTML((Array.isArray(proj.developers) && proj.developers.length ? proj.developers.join(" / ") : (proj.developer || "-")))}</b>
+              </div>
+              <div class="bi-pill">
+                <small>Status do projeto</small>
+                <div class="bi-pillRow">
+                  <span class="bi-dot ${statusDotCls}"></span>
+                  <b>${escapeHTML(proj.statusLabel || "-")}</b>
+                </div>
+              </div>
+              <div class="bi-pill">
+                <small>Data report</small>
+                <b>${escapeHTML(proj.reportDate || "-")}</b>
+              </div>
+              <button class="bi-export" type="button" id="exportBtn" title="Extrair PDF">
+                ${exportSvg} Extrair PDF
+              </button>
+            </div>
           </div>
 
-          <div class="headerRight">
-            <div class="chips header-chips">
-              <div class="chip"><small>Cliente</small><b>${escapeHTML(proj.client||"-")}</b></div>
-              <div class="chip"><small>Responsavel</small><b>${escapeHTML(proj.responsible||"-")}</b></div>
-              <div class="chip"><small>Data report</small><b>${escapeHTML(proj.reportDate||"-")}</b></div>
+          <div class="bi-card">
+            <div class="bi-cardHead">PIPELINE</div>
+            ${flowHtml}
+          </div>
+
+          <div class="bi-kpis">
+            <div class="bi-card bi-perf">
+              <div class="bi-kpiTop">
+                <div>
+                  <div class="bi-kpiTitle">Performance Fisica</div>
+                  <span class="bi-rating ${perfTone}">Rating: ${escapeHTML(gapStatus.label || "-")}</span>
+                </div>
+                <div aria-hidden="true" style="display:grid;place-items:center;width:40px;height:40px;border-radius:16px;background:rgba(148,163,184,.10);color:${escapeHTML(gapStatus.color || '#0f172a')}">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M4 14l4-4 4 4 8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M4 20h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                </div>
+              </div>
+
+              <div class="bi-perfGrid">
+                <div class="bi-metric">
+                  <small>Previsto</small>
+                  <b style="color:#94a3b8">${escapeHTML(baselineLabel)}</b>
+                </div>
+                <div class="bi-metric">
+                  <small>Realizado</small>
+                  <b>${escapeHTML(realizedLabel)}</b>
+                </div>
+                <div class="bi-metric bordered">
+                  <small>GAP acumulado</small>
+                  <b style="color:${escapeHTML(gapStatus.color || '#0f172a')}">${escapeHTML(gapLabel)}</b>
+                </div>
+              </div>
+
+              <div class="bi-perfBar">
+                <div class="bi-progress">
+                  <i style="width:${effectiveRealized}%; background:${escapeHTML(gapStatus.color || '#6366f1')}"></i>
+                </div>
+              </div>
             </div>
-            <div class="badge">
-              <i class="dot ${healthDot(vm.health)}"></i>
-              <strong>Status:</strong>
-              <span>${escapeHTML(proj.statusLabel||"-")}</span>
+
+            <div class="bi-card bi-deadlineWide deadlineWide tone-${deadlineTone}">
+              <div class="dw-topMeta">
+                <div>
+                  <div class="bi-kpiTitle">Prazo Estimado</div>
+                  <span class="dw-chip ${deadlineChipCls}">${deadlineChipText}</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+                  <div style="font-size:10px;font-weight:450;letter-spacing:.10em;text-transform:uppercase;color:#94a3b8;">
+                    Atualizado: <b style="color:#0f172a; font-weight:750; letter-spacing:0;">${lastUpdateWide}</b>
+                  </div>
+                  <div style="font-size:10px;font-weight:450;letter-spacing:.10em;text-transform:uppercase;color:#94a3b8;">
+                    Confianca: <b style="color:#0f172a; font-weight:750; letter-spacing:0;">${confidencePct}%</b>
+                  </div>
+                </div>
+              </div>
+
+              <div class="dw-dates">
+                <div>
+                  <div class="dw-dateLabel">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M5 21h14a2 2 0 0 0 2-2V7l-9-4-9 4v12a2 2 0 0 0 2 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                      <path d="M9 22V12h6v10" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                    </svg>
+                    Baseline (meta)
+                  </div>
+                  <div class="dw-dateValue">${baselineLabelWide}</div>
+                  <div class="dw-delta">Meta aprovada no kick-off</div>
+                </div>
+
+                <div style="text-align:right;">
+                  <div class="dw-dateLabel" style="justify-content:flex-end;">
+                    Forecast (EAC)
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M8 2v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                      <path d="M16 2v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                      <path d="M3 10h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                      <path d="M5 6h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <div class="dw-dateValue">${eacWide}</div>
+                  <div class="dw-delta">Delta: <b>${escapeHTML(deltaLabel)}</b> (baseline vs EAC)</div>
+                </div>
+              </div>
+
+              <div class="dw-confidence">
+                <div class="dw-bar" aria-hidden="true">
+                  <i style="width:${confidencePct}%"></i>
+                </div>
+                <div style="display:flex; justify-content:space-between; font-size:10px; font-weight:450; color:#94a3b8; letter-spacing:.10em; text-transform:uppercase;">
+                  <span>Baixa</span><span>Alta</span>
+                </div>
+              </div>
             </div>
-            <div class="badge">
-              <i class="dot ${healthDot(vm.health)}"></i>
-              <strong>Saude:</strong>
-              <span>${escapeHTML(statusHealth.label)}</span>
+          </div>
+
+          <div class="bi-main">
+            <div class="bi-card bi-curve">
+              <div class="bi-curveHead">
+                <div>
+                  <div class="bi-curveTitleTop">Monitoramento de Preditividade</div>
+                  <div class="bi-curveTitle">Curva S: Planejado vs Realizado (Hoje)</div>
+                </div>
+                <div class="bi-legend">
+                  <span class="bi-legendItem"><i class="bi-key"></i> Planejado</span>
+                  <span class="bi-legendItem" style="color:${escapeHTML(gapStatus.color || '#0f172a')}"><i class="bi-key real" style="background:${escapeHTML(gapStatus.color || '#0f172a')}"></i> Realizado (hoje)</span>
+                  <span class="bi-legendItem"><i class="bi-key today"></i> Hoje</span>
+                </div>
+              </div>
+
+              <div class="svgBox curve-canvas">
+                ${curve.svg}
+                <div class="curve-evidence-line"></div>
+                <div class="curve-tooltip"></div>
+              </div>
+              ${debugHtml}
             </div>
-            <div class="badge">
-              <i class="dot ${healthDot(vm.health)}"></i>
-              <strong>GoLive:</strong>
-              <span>${escapeHTML(fmtBR(goLive) || proj.goLiveDate || "-")}</span>
+
+            <div class="bi-side">
+              <div class="bi-card bi-planCard">
+                <div class="bi-cardHead">${actionPlanHtml ? "Plano de Acao" : "Carga de Trabalho"}</div>
+                ${actionPlanHtml || workloadHtml}
+              </div>
             </div>
-            <button class="action-btn" type="button" id="exportBtn">Exportar</button>
+          </div>
+
+          <div class="bi-lists">
+            <div class="bi-listCol">
+              <div class="bi-listHead done">
+                <div class="bi-listHeadLeft">
+                  <span class="bi-listIcon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M9 12l2 2 4-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M12 22a10 10 0 1 0-10-10 10 10 0 0 0 10 10Z" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                  </span>
+                  <h3>Concluido</h3>
+                </div>
+                <span class="bi-listCount">${escapeHTML(String(vm.lastDone.length))}</span>
+              </div>
+              <div class="bi-listWrap">${doneHtml}</div>
+            </div>
+            <div class="bi-listCol">
+              <div class="bi-listHead doing">
+                <div class="bi-listHeadLeft">
+                  <span class="bi-listIcon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M12 8v5l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M12 22a10 10 0 1 0-10-10 10 10 0 0 0 10 10Z" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                  </span>
+                  <h3>Em andamento</h3>
+                </div>
+                <span class="bi-listCount">${escapeHTML(String(vm.inProgress.length))}</span>
+              </div>
+              <div class="bi-listWrap">${doingHtml}</div>
+            </div>
+            <div class="bi-listCol">
+              <div class="bi-listHead next">
+                <div class="bi-listHeadLeft">
+                  <span class="bi-listIcon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M12 9v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                      <path d="M12 17h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                      <path d="M10.3 3.5L2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.5a2 2 0 0 0-3.4 0Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                    </svg>
+                  </span>
+                  <h3>Proximos passos</h3>
+                </div>
+                <span class="bi-listCount">${escapeHTML(String(vm.nextSteps.length))}</span>
+              </div>
+              <div class="bi-listWrap">${nextHtml}</div>
+            </div>
+          </div>
+
+          <div class="bi-card bi-footer">
+            <div class="bi-footerLeft">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 21V4h8l2 2h6v15H4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                <path d="M8 10h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M8 14h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <div class="bi-footerTitle">Escala de Performance (GAP)</div>
+            </div>
+            <div class="bi-footLegend">
+              <span><i class="bi-dotSmall ok"></i> Em dia (<= 3pp)</span>
+              <span><i class="bi-dotSmall low"></i> Baixo risco (&gt; 3pp a 10pp)</span>
+              <span><i class="bi-dotSmall risk"></i> Potencial risco (&gt; 10pp a 19pp)</span>
+              <span><i class="bi-dotSmall delayed"></i> Alto risco (20pp a 29pp)</span>
+              <span><i class="bi-dotSmall bad"></i> Critico (30pp+)</span>
+            </div>
           </div>
         </div>
       `));
 
-      const gapValue = Math.round((curve.baseToday - vm.progressPct) * 10) / 10;
-      const gapStatus = gapStatusFromValue(gapValue, curve.baseToday, vm.progressPct);
-      const gapLabel = formatGapPlain(gapValue);
-      const realizedLabel = formatPct(curve.realToday);
-      const baselineLabel = formatPct(curve.baseToday);
-      const gapTone = gapStatus.cls;
-
-      // KPIs
-      const kpis = el(`
-        <div class="kpis">
-          <div class="card kpi-card">
-            <div class="cardHeader">
-              <h2>Progresso</h2>
-              <span class="pill"><b>${vm.counts.done}</b> / ${vm.counts.total} concluidas</span>
-            </div>
-            <div class="cardBody">
-              <div class="kpiTop">
-                <div class="kpiValue">${vm.progressPct}%</div>
-                <span class="healthTag ${statusHealth.cls}">${statusHealth.label}</span>
-              </div>
-              <div class="bar"><i style="width:${vm.progressPct}%"></i></div>
-              <div class="kpiSub">${escapeHTML(vm.overall.phaseLabel || "Em execucao")}</div>
-            </div>
-          </div>
-
-          <div class="card kpi-card">
-            <div class="cardHeader">
-              <h2>Previsto</h2>
-              <span class="pill">Baseline</span>
-            </div>
-            <div class="cardBody">
-              <div class="kpiTop">
-                <div class="kpiValue">${baselineLabel}</div>
-              </div>
-              <div class="kpiSub">Meta para hoje</div>
-            </div>
-          </div>
-
-          <div class="card kpi-card gap-card ${gapStatus.cls}">
-            <div class="cardHeader">
-              <h2>GAP (pp)</h2>
-              <span class="pill">${gapStatus.label}</span>
-            </div>
-            <div class="cardBody">
-              <div class="kpiTop">
-                <div class="kpiValue">${gapLabel}</div>
-              </div>
-              <div class="kpiSub">Desvio atual</div>
-            </div>
-          </div>
-
-          <div class="card kpi-card">
-            <div class="cardHeader">
-              <h2>Cronograma</h2>
-              <span class="healthTag ${statusHealth.cls}">${statusHealth.label}</span>
-            </div>
-            <div class="cardBody">
-              <div class="kpiTop">
-                <div class="kpiValue" style="font-size:22px">${vm.counts.late} atrasada(s)</div>
-                <span class="pill">+ <b>${vm.counts.due7}</b> vencem em 7 dias</span>
-              </div>
-              <div class="kpiSub">
-                Total: <b>${vm.counts.total}</b> • Em andamento: <b>${vm.counts.doing}</b> • Concluidas: <b>${vm.counts.done}</b>
-              </div>
-            </div>
-          </div>
-        </div>
-      `);
-      app.appendChild(kpis);
-
-      // Mid: Curva + Mais urgente
-      const mid = el(`
-        <div class="mid">
-          <div class="card curve-card">
-            <div class="curve-head">
-              <div>
-                <span class="curve-kicker">Desempenho fisico</span>
-                <h2 class="curve-title">Curva S <span class="curve-dot">.</span></h2>
-              </div>
-              <div class="curve-head-stats">
-                <div class="curve-stat">
-                  <span class="curve-stat-label">Realizado</span>
-                  <span class="curve-stat-value">${realizedLabel}</span>
-                </div>
-                <div class="curve-stat curve-stat-gap ${gapTone}">
-                  <span class="curve-stat-label">GAP</span>
-                  <span class="curve-stat-value">${gapLabel}</span>
-                </div>
-              </div>
-            </div>
-            <div class="curve-legend">
-              <div class="legend-card">
-                <span class="legend-line"></span>
-                Planejado
-              </div>
-              <div class="legend-card">
-                <span class="legend-line actual"></span>
-                Realizado
-              </div>
-            </div>
-            <div class="svgBox curve-canvas">
-              ${curve.svg}
-              <div class="curve-evidence-line"></div>
-              <div class="curve-tooltip"></div>
-            </div>
-          </div>
-
-
-        </div>
-      `);
-      app.appendChild(mid);
       setupCurveEvidence(app, curveData);
+    }
 
-      // Bottom lists
-      const bottom = el(`
-        <div class="bottom">
-          <div class="card">
-            <div class="cardHeader">
-              <h2>Ultimas concluidas</h2>
-              <span class="pill">Top <b>${vm.lastDone.length}</b></span>
+    function renderRowItem(t, kind){
+      const name = escapeHTML(t.title || t.name || t.item || "-");
+      const due = parseTaskDate(t.due);
+      const dueTxt = escapeHTML(fmtBR(due) || t.due || "-");
+      if (kind === "done") {
+        return `
+          <div class="rowItem">
+            <div class="rowItemText">
+              <div class="rowItemTitle">${name}</div>
+              <div class="rowItemMeta">Concluido em: ${dueTxt}</div>
             </div>
-            <div class="cardBody">
-              <div class="items">
-                ${vm.lastDone.map(t => renderItem(t, false, "ok")).join("")}
-              </div>
-            </div>
+            <span class="statusSmall ok">Concluido</span>
           </div>
-
-          <div class="card">
-            <div class="cardHeader">
-              <h2>Em andamento</h2>
-              <span class="pill">Top <b>${vm.inProgress.length}</b></span>
+        `;
+      }
+      if (kind === "doing") {
+        const pct = parsePercentValue(t.progress) ?? parsePercentValue(t.status) ?? null;
+        const pctLabel = pct != null ? `${Math.round(pct)}%` : "";
+        return `
+          <div class="rowItem">
+            <div class="rowItemText">
+              <div class="rowItemTitle">${name}</div>
+              <div class="rowItemMeta">${pctLabel ? `Progresso: ${escapeHTML(pctLabel)}` : `Venc.: ${dueTxt}`}</div>
             </div>
-            <div class="cardBody">
-              <div class="items">
-                ${vm.inProgress.map(t => renderItem(t, true)).join("")}
-              </div>
-            </div>
+            <span class="statusSmall warn">Em andamento</span>
           </div>
-
-          <div class="card">
-            <div class="cardHeader">
-              <h2>Proximos passos</h2>
-              <span class="pill">Top <b>${vm.nextSteps.length}</b></span>
-            </div>
-            <div class="cardBody">
-              <div class="items">
-                ${vm.nextSteps.map(t => renderItem(t, true)).join("")}
-              </div>
-            </div>
+        `;
+      }
+      // next
+      const lateDays = calcLateDays(t, true);
+      const delay = lateDays > 0 ? `Atrasada +${lateDays}d` : "Planejada";
+      const delayCls = lateDays > 0 ? "bad" : "ok";
+      return `
+        <div class="rowItem">
+          <div class="rowItemText">
+            <div class="rowItemTitle">${name}</div>
+            <div class="rowItemMeta">Venc.: ${dueTxt} • planejado</div>
           </div>
+          <span class="statusSmall ${delayCls}">${escapeHTML(delay)}</span>
         </div>
-      `);
-      app.appendChild(bottom);
+      `;
     }
 
     function setupCurveEvidence(root, curveData){
@@ -1514,11 +4999,13 @@
       const plotLeft = vbMinX;
       const plotRight = vbMinX + vbWidth;
 
-      const gapColor = (cls) => {
+      const gapColor = (info) => {
+        if (info?.color) return info.color;
+        const cls = info?.cls;
         if (cls === "gap-ok") return "#2f8f61";
-        if (cls === "gap-low") return "#64748b";
-        if (cls === "gap-risk") return "#b06013";
-        if (cls === "gap-delayed") return "#9c4f0f";
+        if (cls === "gap-low") return "#d97706";
+        if (cls === "gap-risk") return "#b45309";
+        if (cls === "gap-delayed") return "#ea580c";
         return "#9b1c23";
       };
 
@@ -1556,7 +5043,7 @@
         const ratio = clamp((xSvg - plotLeft) / Math.max(1, plotRight - plotLeft), 0, 1);
         const t = start.getTime() + ratio * (end.getTime() - start.getTime());
         const baseNow = interpolateAt(baselinePoints, t);
-        const realNow = valueAtStep(realPoints, t);
+        const realNow = interpolateAt(realPoints, t);
         const gap = Math.round((baseNow - realNow) * 10) / 10;
         const gapInfo = gapStatusFromValue(gap, baseNow, realNow);
         const ySvgFallback = pad + (1 - clamp(realNow, 0, 100) / 100) * (plotHeight - pad * 2);
@@ -1588,7 +5075,7 @@
           <div class="tip-date">${fmtBR(new Date(t))}</div>
           <div class="tip-row"><span>Realizado</span> <span class="tip-real">${realLabel}</span></div>
           <div class="tip-row"><span>Planejado</span> <span class="tip-base">${baseLabel}</span></div>
-          <div class="tip-gap" style="color:${gapColor(gapInfo.cls)}">GAP ${gapLabel}</div>
+          <div class="tip-gap" style="color:${gapColor(gapInfo)}">GAP ${gapLabel}</div>
         `;
         const tipW = tooltip.offsetWidth || 180;
         const tipH = tooltip.offsetHeight || 80;
@@ -1661,16 +5148,18 @@
       const sign = v > 0 ? "+" : (v < 0 ? "-" : "");
       const abs = Math.abs(v);
       const status = gapStatusFromValue(v, baselinePct, realizedPct);
-      const tone = status.cls === "gap-ok"
-        ? "#2f8f61"
-        : status.cls === "gap-low"
-          ? "#64748b"
-          : status.cls === "gap-risk"
-            ? "#b06013"
-            : status.cls === "gap-delayed"
-              ? "#9c4f0f"
-              : "#9b1c23";
-      return `<span style="color:${tone}; font-weight:800">${sign}${abs}pp</span>`;
+      const tone = status?.color
+        ? status.color
+        : status.cls === "gap-ok"
+          ? "#2f8f61"
+          : status.cls === "gap-low"
+            ? "#d97706"
+            : status.cls === "gap-risk"
+              ? "#b45309"
+              : status.cls === "gap-delayed"
+                ? "#ea580c"
+                : "#9b1c23";
+      return `<span style="color:${tone}; font-weight: 450">${sign}${abs}pp</span>`;
     }
 
     function formatGapPlain(g){
@@ -1692,14 +5181,17 @@
       if (Number.isFinite(base) && Number.isFinite(real)) {
         const baseRounded = Math.round(base);
         if (baseRounded >= 100 && real < 100) {
-          return { cls: "gap-critical", label: "Atraso critico" };
+          return { cls: "gap-critical", label: "Critico", color: "#9b1c23" };
         }
       }
-      if (g <= 0) return { cls: "gap-ok", label: "Em dia" };
-      if (g <= 10) return { cls: "gap-low", label: "Baixo risco" };
-      if (g <= 20) return { cls: "gap-risk", label: "Risco" };
-      if (g <= 30) return { cls: "gap-delayed", label: "Em atraso" };
-      return { cls: "gap-critical", label: "Atraso critico" };
+      const val = Number(g);
+      if (!Number.isFinite(val)) return { cls: "gap-ok", label: "Em dia", color: "#2f8f61" };
+      // Rule (PP): <=3 => Em dia (includes negative), >3-10 baixo, >10-19 potencial, 20-29 alto, 30+ critico.
+      if (val <= 3) return { cls: "gap-ok", label: "Em dia", color: "#2f8f61" };
+      if (val <= 10) return { cls: "gap-low", label: "Baixo risco", color: "#d97706" };
+      if (val <= 19) return { cls: "gap-risk", label: "Potencial risco", color: "#b45309" };
+      if (val <= 29) return { cls: "gap-delayed", label: "Alto risco", color: "#ea580c" };
+      return { cls: "gap-critical", label: "Critico", color: "#9b1c23" };
     }
 
     function escapeHTML(s){
@@ -1718,25 +5210,110 @@
       const vm = buildVM(getData());
       render(app, vm);
       setupExportButton();
+      wireInboundData(app);
     })();
 
     function setupExportButton(){
       const btn = document.getElementById("exportBtn");
       if (!btn) return;
       btn.addEventListener("click", () => {
-        document.documentElement.classList.add("exporting");
-        requestAnimationFrame(() => {
-          try {
-            window.print();
-          } finally {
-            document.documentElement.classList.remove("exporting");
+        // Prefer export via parent app (PDF snapshot) to keep the exact screen layout.
+        try {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({ type: "export-onepage-pdf" }, "*");
+            return;
           }
-        });
+        } catch (_err) {}
+
+        // Standalone (new tab): export locally when libs are available; fallback to print.
+        exportOnePagePdfLocal().catch(() => window.print());
+      });
+    }
+
+    async function exportOnePagePdfLocal(){
+      const root = document.getElementById("onepageRoot") || document.body;
+      if (!root) throw new Error("Conteudo do relatorio nao encontrado.");
+      if (!window.html2canvas) throw new Error("html2canvas nao carregou.");
+      const JsPDF = window.jspdf?.jsPDF || window.jsPDF;
+      if (!JsPDF) throw new Error("jsPDF nao carregou.");
+
+      const prevWidth = root.style.width;
+      // Stabilize layout for consistent capture.
+      root.style.width = root.style.width || "1440px";
+
+      const canvas = await window.html2canvas(root, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#f3f6f9"
+      });
+
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new JsPDF("p", "mm", "a4");
+      const pageW = 210;
+      const pageH = 297;
+      const imgW = pageW;
+      const imgH = (canvas.height * imgW) / canvas.width;
+
+      let y = 0;
+      let remaining = imgH;
+      while (remaining > 0) {
+        pdf.addImage(imgData, "PNG", 0, y, imgW, imgH);
+        remaining -= pageH;
+        if (remaining > 0) {
+          pdf.addPage();
+          y -= pageH;
+        }
+      }
+
+      const nameRaw = (document.title || "OnePage").replace(/\s+/g, " ").trim();
+      const nameSafe = nameRaw.replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") || "OnePage";
+      pdf.save(`AXON_${nameSafe}.pdf`);
+
+      root.style.width = prevWidth;
+    }
+
+    function wireInboundData(app){
+      if (!app || window.__onepageInboundWired) return;
+      window.__onepageInboundWired = true;
+      // Expose a direct hook for the parent app (same-origin iframe) to push data reliably.
+      window.__applyOnePageData = (payload) => {
+        const nextVm = buildVM(payload || {});
+        render(app, nextVm);
+        setupExportButton();
+      };
+      window.addEventListener("message", (ev) => {
+        const data = ev?.data;
+        if (!data || data.type !== "onepage-data") return;
+        const payload = data.payload;
+        if (!payload || typeof payload !== "object") return;
+        try {
+          window.__applyOnePageData(payload);
+        } catch (err) {
+          console.warn("Falha ao aplicar dados no OnePage.", err);
+        }
       });
     }
 
     function getData(){
       // Dados reais (localStorage do sistema) com fallback para o mock.
+      // If the parent app opened this page in a new tab, it can pass a payloadKey
+      // that points to a temporary localStorage entry.
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const payloadKey = params.get("payloadKey");
+        if (payloadKey) {
+          const raw = localStorage.getItem(payloadKey);
+          if (raw) {
+            const parsed = safeJsonParse(raw);
+            const payload = parsed?.payload && typeof parsed.payload === "object" ? parsed.payload : parsed;
+            if (payload && typeof payload === "object") {
+              // Cleanup: the report is immutable after load.
+              try { localStorage.removeItem(payloadKey); } catch (_err) {}
+              return payload;
+            }
+          }
+        }
+      } catch (_err) {}
       const fromWindow = window.ONEPAGE_DATA;
       if (fromWindow && typeof fromWindow === "object") return fromWindow;
       const systemData = getSystemData();
@@ -1782,11 +5359,44 @@
       const tasks = extractProjectTasks(project);
       const progressPct = resolveProgressPct(project, tasks);
       const statusLabel = resolveStatusLabel(project, tasks, progressPct);
+      const normalizeMember = (value) => String(value || "").trim().replace(/\s+/g, " ");
+      const roleKey = (v) =>
+        String(v || "")
+          .trim()
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/\s+/g, "_");
+      const team = Array.isArray(project?.team) ? project.team : [];
+      const leaders = team
+        .filter((m) => roleKey(m?.role) === "lider_projeto")
+        .map((m) => normalizeMember(m?.name))
+        .filter(Boolean);
+      const devs = team
+        .filter((m) => roleKey(m?.role) === "desenvolvedor")
+        .map((m) => normalizeMember(m?.name))
+        .filter(Boolean);
+      const leaderLabel =
+        leaders[0] ||
+        project?.responsible ||
+        project?.leader ||
+        project?.lead ||
+        "-";
+      const fallbackDev = String(project?.developer || project?.dev || "").trim();
+      const devList = devs.length
+        ? devs
+        : (fallbackDev ? fallbackDev.split(/[;,|/]+/g).map((s) => s.trim()).filter(Boolean) : []);
+      const developersLabel = devList.length ? devList.join(" / ") : "-";
       return {
         project: {
           name: project?.name || "Projeto",
           client: client?.name || "-",
-          responsible: project?.developer || project?.responsible || "-",
+          leader: leaderLabel,
+          developer: developersLabel,
+          developers: devList,
+          team: Array.isArray(project?.team) ? project.team : [],
+          // Back-compat
+          responsible: leaderLabel,
           reportDate: project?.reportDate || fmtBR(new Date()),
           statusLabel,
           startDate: project?.start || project?.startDate || "",
@@ -1801,9 +5411,6 @@
     }
 
     function extractProjectTasks(project){
-      const epicTasks = Array.isArray(project?.epics)
-        ? project.epics.flatMap((epic) => epic?.tasks || epic?.items || [])
-        : [];
       const directTasks = Array.isArray(project?.tasks)
         ? project.tasks
         : project?.tasks && typeof project.tasks === "object"
@@ -1813,26 +5420,46 @@
             : Array.isArray(project?.activities)
               ? project.activities
               : [];
-      return [...epicTasks, ...directTasks].filter(Boolean);
+
+      // Some persisted project payloads store tasks grouped under fixed epics.
+      // Prefer `project.tasks` when present to match the main project screen, but
+      // fall back to `project.epics[].tasks` when `project.tasks` is missing/empty.
+      const epicTasks = Array.isArray(project?.epics)
+        ? project.epics.flatMap((epic) => epic?.tasks || epic?.items || [])
+        : [];
+
+      const chosen = directTasks.length ? directTasks : epicTasks;
+      const list = (Array.isArray(chosen) ? chosen : []).filter(Boolean);
+      if (!list.length) return list;
+
+      // Remove "macro/package parent" tasks to avoid showing rollup headers (they often have 0%)
+      // when the platform uses children tasks (package=macroTitle) as the source of truth.
+      const normKey = (value) =>
+        String(value ?? "")
+          .trim()
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[_-]+/g, " ")
+          .replace(/\s+/g, " ");
+
+      const packageTitles = new Set(
+        list
+          .map((t) => t?.package || t?.pacote || "")
+          .filter(Boolean)
+          .map((v) => normKey(v))
+          .filter(Boolean)
+      );
+
+      if (!packageTitles.size) return list;
+      const leaf = list.filter((t) => !packageTitles.has(normKey(t?.title || t?.name || "")));
+      return leaf.length ? leaf : list;
     }
 
     function resolveProgressPct(project, tasks){
       const list = Array.isArray(tasks) ? tasks : [];
-      if (list.length) {
-        const doneCount = list.filter((t) =>
-          normStatus(t?.status ?? t?.state ?? t?.activityStatus ?? t?.situacao) === "done"
-        ).length;
-        return clamp((doneCount / list.length) * 100, 0, 100);
-      }
-      const directProgress = parsePercentValue(
-        project?.progress ??
-        project?.progressPct ??
-        project?.percentual ??
-        project?.percent ??
-        project?.percentage
-      );
-      if (directProgress != null) return clamp(directProgress, 0, 100);
-      return 0;
+      // Same as the project screen: progress is based on done/total tasks.
+      return clamp(projectMetricsLocal(list).progress, 0, 100);
     }
 
     function resolveStatusLabel(project, tasks, progressPct){
@@ -1855,3 +5482,6 @@
   </script>
 </body>
 </html>
+
+
+
