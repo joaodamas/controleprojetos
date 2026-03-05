@@ -38,7 +38,7 @@ export default function EpicManagement() {
         <div className="min-h-screen w-full bg-slate-50 dark:bg-[#0B0F1A] p-8 font-['Outfit']">
             <header className="mb-12">
                 <div className="flex justify-start gap-1 mb-4 opacity-80">
-                    <span className="text-3xl font-[900] italic tracking-tighter uppercase text-slate-900 dark:text-white">Axon</span>
+                    <span className="text-3xl font-[900] italic tracking-tighter uppercase text-slate-900 dark:text-white">JP</span>
                     <span className="text-3xl font-[100] italic tracking-tighter uppercase text-slate-400">Projects</span>
                 </div>
                 <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Gestão de Épicos e Detalhes</h2>

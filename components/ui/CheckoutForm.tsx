@@ -62,7 +62,7 @@ export default function CheckoutForm() {
         <div className="max-w-xl mx-auto py-20 px-6 font-['Outfit']" id="pricing">
             {/* Centered Logo */}
             <div className="flex justify-center gap-1 mb-12 opacity-50">
-                <span className="text-2xl font-[900] italic tracking-tighter uppercase text-slate-900 dark:text-white">Axon</span>
+                <span className="text-2xl font-[900] italic tracking-tighter uppercase text-slate-900 dark:text-white">JP</span>
                 <span className="text-2xl font-[100] italic tracking-tighter uppercase text-slate-400">Projects</span>
             </div>
 

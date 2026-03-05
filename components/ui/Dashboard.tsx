@@ -249,7 +249,7 @@ const ReportPanel = ({ project, onClose }: { project: typeof reportProject; onCl
   </div>
 );
 
-// This represents the main dashboard for AXON Projects
+// This represents the main dashboard for JP Projects
 export default function Dashboard() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isReportVisible, setIsReportVisible] = useState(false);

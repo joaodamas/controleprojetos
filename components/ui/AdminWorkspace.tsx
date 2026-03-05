@@ -37,7 +37,7 @@ const USERS: UserRecord[] = [
   {
     id: "user-1",
     name: "Joao Damas",
-    email: "joao@axon.com.br",
+    email: "joao@jpprojects.com.br",
     role: "Owner",
     status: "active",
     lastLogin: "2026-01-18 08:45",
@@ -67,7 +67,7 @@ const USERS: UserRecord[] = [
   {
     id: "user-3",
     name: "Lucas Svizzero",
-    email: "lucas@axon.com.br",
+    email: "lucas@jpprojects.com.br",
     role: "Member",
     status: "pending",
     lastLogin: "Invite sent",
@@ -82,7 +82,7 @@ const USERS: UserRecord[] = [
   {
     id: "user-4",
     name: "Fernanda Silva",
-    email: "fernanda@axon.com.br",
+    email: "fernanda@jpprojects.com.br",
     role: "Member",
     status: "suspended",
     lastLogin: "2025-12-20 17:02",
@@ -218,7 +218,7 @@ export default function AdminWorkspace() {
         <aside className="border-r border-[#27272a] bg-[#0b0b0f] px-6 py-8">
           <div className="mb-10">
             <p className="text-xs uppercase tracking-[0.4em] text-emerald-400">
-              AXON Projects
+              JP Projects
             </p>
             <h2 className="mt-3 text-2xl font-bold text-white">Workspace</h2>
           </div>

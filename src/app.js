@@ -13,7 +13,7 @@ let db = null;
 let auth = null;
 let appInitialized = false;
 
-const THEME_STORAGE_KEY = "axon-theme";
+const THEME_STORAGE_KEY = "jp-theme";
 
 const state = {
   clients: [
@@ -1640,7 +1640,7 @@ function exportMonitorPdf() {
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(12);
     pdf.setFont("helvetica", "bold");
-    pdf.text("AXON", margin, 7);
+    pdf.text("JP", margin, 7);
     pdf.setFont("helvetica", "normal");
     pdf.text(" Projects", margin + 14, 7);
     pdf.setFontSize(10);
@@ -1659,7 +1659,7 @@ function exportMonitorPdf() {
   const addFooter = () => {
     pdf.setFontSize(7);
     pdf.setTextColor(148, 163, 184);
-    pdf.text("AXON Projects - " + dateStr, margin, pageH - 5);
+    pdf.text("JP Projects - " + dateStr, margin, pageH - 5);
     pdf.text("Pagina " + pageNum, pageW - margin - tw("Pagina " + pageNum), pageH - 5);
     pdf.setTextColor(0, 0, 0);
   };
@@ -5590,28 +5590,59 @@ function renderImprovementsDashboard(container) {
 
     const cards = items
       .map((it) => {
+        const info = improvementStageInfo(it);
         const stageId = normalizeImprovementStage(it?.stage || it?.status || st.id);
+        const idLabel = escapeHtml(improvementDisplayId(it));
         const title = escapeHtml(it?.name || "(Sem titulo)");
-        const client = escapeHtml(it?.client || "-");
+        const company = escapeHtml(it?.client || "-");
         const exec = String(it?.executor || it?.owner || "").trim();
-        const initials = escapeHtml(initialsFromName(exec || "Equipe"));
-        const execLabel = escapeHtml(exec || "A definir");
-        const est = it?.estimateHours;
-        const estLabel = est != null && Number.isFinite(est) ? `${est}h` : "-";
-        const originIcon = improvementOriginIcon(it?.origin);
-        const originTitle = improvementOriginLabel(it?.origin);
+        const initials = escapeHtml(initialsFromName(exec || ""));
+        const pct = info?.progress ?? 0;
+        const showProgress = pct > 0 && stageId !== "triagem";
+        const tags = Array.isArray(it?.tags) ? it.tags : [];
+        const comments = typeof it?.comments === "number" ? it.comments : 0;
+        const attachments = typeof it?.attachments === "number" ? it.attachments : 0;
+        const endDate = it?.end || it?.dueDate || it?.due;
+        const dueLabel = endDate ? formatDateBR(endDate) : "";
+        const isEmExecucao = stageId === "implementacao" || stageId === "validacao";
+        const tagsHtml =
+          tags.length > 0
+            ? tags
+                .map((tag) => `<span class="impr-card-tag">${escapeHtml(String(tag))}</span>`)
+                .join("")
+            : "";
         return `
           <button type="button" class="impr-card impr-card--stage-${escapeHtml(stageId)}" data-improvement-card="${escapeHtml(String(it.id || ""))}">
-            <div class="impr-card-top">
-              <span class="impr-card-origin" title="${escapeHtml(originTitle)}"><i data-lucide="${originIcon}"></i></span>
-              <span class="impr-card-client">${client}</span>
-              <button type="button" class="impr-card-menu" data-improvement-card-menu="${escapeHtml(String(it.id || ""))}" onclick="event.stopPropagation()" aria-label="Menu"><i data-lucide="more-vertical"></i></button>
+            <div class="impr-card-head">
+              <span class="impr-card-id">${idLabel}</span>
+              <div class="impr-card-head-right">
+                ${isEmExecucao ? '<span class="impr-card-zap" aria-hidden="true"><i data-lucide="zap"></i></span>' : ""}
+                <button type="button" class="impr-card-menu" data-improvement-card-menu="${escapeHtml(String(it.id || ""))}" onclick="event.stopPropagation()" aria-label="Menu"><i data-lucide="more-vertical"></i></button>
+              </div>
             </div>
-            <h4 class="impr-card-title">${title}</h4>
+            <div class="impr-card-body">
+              <h3 class="impr-card-title">${title}</h3>
+              <p class="impr-card-company">${company}</p>
+            </div>
+            ${tagsHtml ? `<div class="impr-card-tags">${tagsHtml}</div>` : ""}
+            ${showProgress ? `
+            <div class="impr-card-progress-wrap">
+              <div class="impr-card-progress-head">
+                <span class="impr-card-progress-label">Progresso</span>
+                <span class="impr-card-progress-pct">${pct}%</span>
+              </div>
+              <div class="impr-card-progress-bar"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i></div>
+            </div>
+            ` : ""}
             <div class="impr-card-foot">
-              <span class="impr-avatar">${initials}</span>
-              <span class="impr-exec">${execLabel}</span>
-              <span class="impr-estimate"><i data-lucide="clock"></i>${estLabel}</span>
+              <div class="impr-card-meta">
+                <span class="impr-card-meta-item"><i data-lucide="message-square"></i>${comments}</span>
+                <span class="impr-card-meta-item"><i data-lucide="paperclip"></i>${attachments}</span>
+                ${dueLabel ? `<span class="impr-card-meta-item"><i data-lucide="clock"></i>${escapeHtml(dueLabel)}</span>` : ""}
+              </div>
+              <div class="impr-card-avatar-wrap">
+                ${exec ? `<span class="impr-card-avatar">${initials}</span>` : '<span class="impr-card-avatar impr-card-avatar--empty"><i data-lucide="user"></i></span>'}
+              </div>
             </div>
           </button>
         `;
@@ -11196,7 +11227,7 @@ function renderBoardApp(container) {
       }
       try {
         const payload = buildOnePagePayload(project, client);
-        const key = `AXON_ONEPAGE_PAYLOAD:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+        const key = `JP_ONEPAGE_PAYLOAD:${Date.now()}:${Math.random().toString(16).slice(2)}`;
         localStorage.setItem(key, JSON.stringify({ createdAt: Date.now(), payload }));
         const basePath = `onepage.html${buildOnePageQuery(project, client)}`;
         const url = `${basePath}${basePath.includes("?") ? "&" : "?"}payloadKey=${encodeURIComponent(key)}`;
@@ -13665,7 +13696,7 @@ function exportImprovementsReportPdf(data) {
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(12);
     pdf.setFont("helvetica", "bold");
-    pdf.text("AXON", margin, 7);
+    pdf.text("JP", margin, 7);
     pdf.setFont("helvetica", "normal");
     pdf.text(" Projects", margin + 14, 7);
     pdf.setFontSize(10);
@@ -13676,7 +13707,7 @@ function exportImprovementsReportPdf(data) {
     pdf.setTextColor(203, 213, 225);
     const tw = (t) => (typeof pdf.getTextWidth === "function" ? pdf.getTextWidth(t) : t.length * 1.5);
     pdf.text("Gerado em " + dateStr, pageW - margin - tw("Gerado em " + dateStr), 7);
-    pdf.text("AXON Projects", pageW - margin - tw("AXON Projects"), 10.5);
+    pdf.text("JP Projects", pageW - margin - tw("JP Projects"), 10.5);
     pdf.setTextColor(0, 0, 0);
     y = 20;
   };
@@ -13871,8 +13902,8 @@ function exportImprovementsReportPdf(data) {
     const footerW = typeof pdf.getTextWidth === "function" ? pdf.getTextWidth(footerText) : 25;
     pdf.text(footerText, pageW / 2 - footerW / 2, pageH - 10);
     pdf.setFontSize(6);
-    const axW = typeof pdf.getTextWidth === "function" ? pdf.getTextWidth("AXON Projects") : 25;
-    pdf.text("AXON Projects", pageW - margin - axW, pageH - 10);
+    const axW = typeof pdf.getTextWidth === "function" ? pdf.getTextWidth("JP Projects") : 25;
+    pdf.text("JP Projects", pageW - margin - axW, pageH - 10);
   };
 
   addHeader();
@@ -14021,7 +14052,7 @@ function openImprovementsReportModal() {
           <div>
             <div class="flex items-center gap-2 mb-1">
               <div class="w-6 h-6 bg-[#1A2B4B] rounded flex items-center justify-center"><span class="text-white font-bold text-[10px]">A</span></div>
-              <h1 class="font-bold text-lg tracking-tight">AXON Projects</h1>
+              <h1 class="font-bold text-lg tracking-tight">JP Projects</h1>
             </div>
             <h2 class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Relatorio de Melhorias</h2>
           </div>
@@ -14052,7 +14083,7 @@ function openImprovementsReportModal() {
         </table>
 
         <div class="impr-export-footer">
-          <p>AXON Projects - Gestao de Backlog de Valor</p>
+          <p>JP Projects - Gestao de Backlog de Valor</p>
           <p>Pagina 1 de 1</p>
         </div>
       </div>
@@ -16819,7 +16850,7 @@ document.addEventListener("DOMContentLoaded", () => {
     tag.style.cssText =
       "position:fixed;right:10px;bottom:10px;z-index:99999;background:#0f172a;color:#fff;border:1px solid #334155;border-radius:8px;padding:4px 8px;font:11px/1.2 monospace;opacity:.9;";
     document.body.appendChild(tag);
-    console.info("[AXON]", "build", APP_BUILD);
+    console.info("[JP]", "build", APP_BUILD);
   } catch (_err) {
     // ignore
   }

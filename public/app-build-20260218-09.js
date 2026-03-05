@@ -15,7 +15,7 @@ let db = null;
 let auth = null;
 let appInitialized = false;
 
-const THEME_STORAGE_KEY = "axon-theme";
+const THEME_STORAGE_KEY = "jp-theme";
 
 const state = {
   clients: [
@@ -10484,7 +10484,7 @@ function wireNav() {
       }
       try {
         const payload = buildOnePagePayload(project, client);
-        const key = `AXON_ONEPAGE_PAYLOAD:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+        const key = `JP_ONEPAGE_PAYLOAD:${Date.now()}:${Math.random().toString(16).slice(2)}`;
         localStorage.setItem(key, JSON.stringify({ createdAt: Date.now(), payload }));
         const basePath = `onepage.html${buildOnePageQuery(project, client)}`;
         const url = `${basePath}${basePath.includes("?") ? "&" : "?"}payloadKey=${encodeURIComponent(key)}`;
@@ -12477,7 +12477,7 @@ function exportImprovementsReportPdf(data) {
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(12);
     pdf.setFont("helvetica", "bold");
-    pdf.text("AXON", margin, 7);
+    pdf.text("JP", margin, 7);
     pdf.setFont("helvetica", "normal");
     pdf.text(" Projects", margin + 14, 7);
     pdf.setFontSize(10);
@@ -12488,7 +12488,7 @@ function exportImprovementsReportPdf(data) {
     pdf.setTextColor(203, 213, 225);
     const tw = (t) => (typeof pdf.getTextWidth === "function" ? pdf.getTextWidth(t) : t.length * 1.5);
     pdf.text("Gerado em " + dateStr, pageW - margin - tw("Gerado em " + dateStr), 7);
-    pdf.text("AXON Projects", pageW - margin - tw("AXON Projects"), 10.5);
+    pdf.text("JP Projects", pageW - margin - tw("JP Projects"), 10.5);
     pdf.setTextColor(0, 0, 0);
     y = 20;
   };
@@ -12682,8 +12682,8 @@ function exportImprovementsReportPdf(data) {
     const footerW = typeof pdf.getTextWidth === "function" ? pdf.getTextWidth(footerText) : 25;
     pdf.text(footerText, pageW / 2 - footerW / 2, pageH - 10);
     pdf.setFontSize(6);
-    const axW = typeof pdf.getTextWidth === "function" ? pdf.getTextWidth("AXON Projects") : 25;
-    pdf.text("AXON Projects", pageW - margin - axW, pageH - 10);
+    const axW = typeof pdf.getTextWidth === "function" ? pdf.getTextWidth("JP Projects") : 25;
+    pdf.text("JP Projects", pageW - margin - axW, pageH - 10);
   };
 
   addHeader();
@@ -12832,7 +12832,7 @@ function openImprovementsReportModal() {
           <div>
             <div class="flex items-center gap-2 mb-1">
               <div class="w-6 h-6 bg-[#1A2B4B] rounded flex items-center justify-center"><span class="text-white font-bold text-[10px]">A</span></div>
-              <h1 class="font-bold text-lg tracking-tight">AXON Projects</h1>
+              <h1 class="font-bold text-lg tracking-tight">JP Projects</h1>
             </div>
             <h2 class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Relatorio de Melhorias</h2>
           </div>
@@ -12863,7 +12863,7 @@ function openImprovementsReportModal() {
         </table>
 
         <div class="impr-export-footer">
-          <p>AXON Projects - Gestao de Backlog de Valor</p>
+          <p>JP Projects - Gestao de Backlog de Valor</p>
           <p>Pagina 1 de 1</p>
         </div>
       </div>
@@ -15612,7 +15612,7 @@ document.addEventListener("DOMContentLoaded", () => {
     tag.style.cssText =
       "position:fixed;right:10px;bottom:10px;z-index:99999;background:#0f172a;color:#fff;border:1px solid #334155;border-radius:8px;padding:4px 8px;font:11px/1.2 monospace;opacity:.9;";
     document.body.appendChild(tag);
-    console.info("[AXON]", "build", APP_BUILD);
+    console.info("[JP]", "build", APP_BUILD);
   } catch (_err) {
     // ignore
   }

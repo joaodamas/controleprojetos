@@ -5267,7 +5267,7 @@
 
       const nameRaw = (document.title || "OnePage").replace(/\s+/g, " ").trim();
       const nameSafe = nameRaw.replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") || "OnePage";
-      pdf.save(`AXON_${nameSafe}.pdf`);
+      pdf.save(`JP_${nameSafe}.pdf`);
 
       root.style.width = prevWidth;
     }

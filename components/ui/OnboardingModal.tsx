@@ -153,7 +153,7 @@ export function OnboardingModal({ isOpen, isDarkMode = true, onComplete }: Onboa
                 <div className="mx-auto w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
                   <Building2 className={`w-6 h-6 ${theme.accent}`} />
                 </div>
-                <h2 className="text-2xl font-bold">Bem vindo ao AXON</h2>
+                <h2 className="text-2xl font-bold">Bem vindo ao JP Projects</h2>
                 <p className={theme.muted}>Vamos configurar sua companhia em poucos passos.</p>
               </div>
 
@@ -163,7 +163,7 @@ export function OnboardingModal({ isOpen, isDarkMode = true, onComplete }: Onboa
                   <input
                     value={companyName}
                     onChange={(event) => setCompanyName(event.target.value)}
-                    placeholder="Ex: AXON Tech"
+                    placeholder="Ex: JP Tech"
                     className={`w-full rounded-lg px-4 py-2 border focus:ring-2 focus:ring-emerald-500 outline-none ${theme.input}`}
                   />
                 </div>

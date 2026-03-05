@@ -107,7 +107,7 @@ export default App;
 
 ---
 
-# AXON - Projects
+# JP Projects
 
 Script em Python para cadastrar projetos, atividades, acompanhar percentual de avanco (conforme conclusao das atividades) e enviar alertas por e-mail quando ha tarefas proximas do vencimento.
 

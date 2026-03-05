@@ -15,14 +15,14 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     if (!user) return;
-    const localCompleted = window.localStorage.getItem('axon_onboarding_completed') === 'true';
+    const localCompleted = window.localStorage.getItem('jp_onboarding_completed') === 'true';
     if (!localCompleted && !user.has_completed_onboarding) {
       setShowOnboarding(true);
     }
   }, [user]);
 
   const handleOnboardingComplete = (payload: OnboardingPayload) => {
-    window.localStorage.setItem('axon_onboarding_completed', 'true');
+    window.localStorage.setItem('jp_onboarding_completed', 'true');
     setShowOnboarding(false);
     console.log('Onboarding payload:', payload);
   };

@@ -1,4 +1,4 @@
-# AGENTS.md — ControleProjetos (Axon Project)
+# AGENTS.md — ControleProjetos (JP Projects)
 
 Este repositório é o produto **ControleProjetos**: gestão de execução com **baseline → riscos → intervenções → inbox**.
 Sem buzzword. Sem “SaaS genérico pra tudo”. O objetivo é: reduzir atraso operacional com governança simples e rastreável.
